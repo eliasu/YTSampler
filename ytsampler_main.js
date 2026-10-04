@@ -15,7 +15,7 @@ var DIVS = [
 ];
 var NPADS = 16;
 var KEY_CHANNEL = 16;    // Schreibmaschine: Noten auf diesem Kanal sind Tasten (Notennummer = Zeichencode)
-var IR_CHANNEL = 15;     // IR-Fernbedienung: rohe Codes, Node übersetzt sie (ir.json)
+var IR_CHANNEL = 15;     // IR-Fernbedienung: liest die Teletext-Seite selbst (Web MIDI), hier ignorieren
 var NFAV = 64;           // Favoriten-Plätze (4 Bänke à 16)
 var BANKS = ["A", "B", "C", "D"];
 var HOLD_MAX = 10000;   // Hold-Modus: maximale Länge in ms
@@ -419,10 +419,7 @@ function note(p, v, ch) {
         if (v > 0) outlet(1, "key", Math.floor(p));
         return;
     }
-    if (ch === IR_CHANNEL) {
-        if (v > 0) outlet(1, "ir", Math.floor(p), Math.floor(v));
-        return;
-    }
+    if (ch === IR_CHANNEL) return;
     var i = Math.floor(p) - P.base;
     if (i < 0 || i >= NPADS) return;
     hit(i, v);

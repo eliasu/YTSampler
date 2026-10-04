@@ -359,6 +359,21 @@
     send(k);
   });
 
+  // IR-Fernbedienung: Pro Micro direkt lesen (Web MIDI), Note-On auf Kanal 15
+  // Note = Code & 127, Velocity = 1 + Bit 7 + 2 bei Wiederholung
+  function onMidi(e) {
+    const [st, note, vel] = e.data;
+    if (st !== 0x9E || !vel) return;
+    send(`ir:${note + 128 * ((vel - 1) & 1)}:${(vel - 1) & 2 ? 1 : 0}`);
+  }
+  if (navigator.requestMIDIAccess) {
+    navigator.requestMIDIAccess().then((m) => {
+      const hook = () => m.inputs.forEach((i) => { i.onmidimessage = onMidi; });   // auch neu eingesteckte
+      hook();
+      m.onstatechange = hook;
+    }).catch(() => {});
+  }
+
   // Doppelklick: Vollbild
   addEventListener('dblclick', () => {
     if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});

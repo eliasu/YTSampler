@@ -877,8 +877,8 @@ function multitap(d) {
   tap.t = now;
 }
 
-// IR-Fernbedienung: der Pro Micro schickt rohe Codes auf Kanal 15
-// (Note = Code & 127, Velocity = 1 + Bit 7 + 2 bei Wiederholung).
+// IR-Fernbedienung: der Pro Micro schickt rohe Codes als MIDI auf Kanal 15.
+// Die Teletext-Seite liest sie per Web MIDI (an Live vorbei) und schickt "ir:<code>:<wiederholung>".
 // Die Zuordnung lernt der Merkmodus (Cmd+Shift+M auf der Teletext-Seite).
 const IR_FILE = path.join(os.homedir(), 'Music', 'YTSampler', 'ir.json');
 const IR_STEPS = [
@@ -892,9 +892,14 @@ let irMap = {};
 try { irMap = JSON.parse(fs.readFileSync(IR_FILE, 'utf8')); } catch (e) { /* noch nichts gelernt */ }
 let irNew = {};
 
-Max.addHandler('ir', (note, vel) => {
-  const code = (note & 127) + 128 * ((vel - 1) & 1);
-  const rep = ((vel - 1) & 2) !== 0;
+// Sind mehrere Teletext-Fenster offen, schickt jedes denselben Code
+const IR_DEDUP_MS = 60;
+let irLast = { code: -1, rep: false, t: 0 };
+
+function irInput(code, rep) {
+  const now = Date.now();
+  if (code === irLast.code && rep === irLast.rep && now - irLast.t < IR_DEDUP_MS) return;
+  irLast = { code, rep, t: now };
   if (ui.learn !== null) {
     if (rep || code in irNew) return;                  // gehalten oder doppelt gedrückt
     irNew[code] = IR_STEPS[ui.learn][0];
@@ -914,7 +919,7 @@ Max.addHandler('ir', (note, vel) => {
   if (!k || (rep && !IR_REPEAT.has(k))) return;
   if (ui.tvOff && k !== 'power') return;               // Fernseher aus: nur An/Aus geht
   handleKey(k);
-});
+}
 
 Max.addHandler('favinfo', (...parts) => { ui.fav = parts.join(' '); pushUi(); });
 
@@ -933,7 +938,12 @@ function startWeb(port, tries) {
       let body = '';
       req.on('data', (d) => { body += d; if (body.length > 1000) req.destroy(); });
       req.on('end', () => {
-        try { handleKey(String(JSON.parse(body).k || '')); } catch (e) { /* ignorieren */ }
+        try {
+          const k = String(JSON.parse(body).k || '');
+          const ir = /^ir:(\d+):([01])$/.exec(k);
+          if (ir) irInput(+ir[1], ir[2] === '1');
+          else handleKey(k);
+        } catch (e) { /* ignorieren */ }
         res.writeHead(204); res.end();
       });
       return;
