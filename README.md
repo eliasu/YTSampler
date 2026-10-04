@@ -48,9 +48,9 @@ Das Device auf eine MIDI-Spur ziehen. Wenn alles läuft: Device im Editor öffne
 | Quant | Input-Quantize: Pad-Anschläge warten auf die nächste 1/16 von Lives Transport. Bis knapp ⅓ einer 1/16 zu spät gespielt klingt sofort. Läuft der Transport nicht, wirkt Quant nicht. |
 | Rate | 0.25–2×, ändert Tonhöhe, die rhythmische Länge bleibt gleich |
 | Attack / Release | Fades gegen Knackser |
-| Trigger / Hold | Trigger: spielt genau einen Slice (Notenwert). Hold: spielt, solange gedrückt, max. 10 s (`HOLD_MAX` in `ytsampler_main.js`) |
+| Trigger / Hold | Trigger: spielt genau einen Slice (Notenwert). Hold: spielt, solange gedrückt, längstens bis Songende |
 | Rev | rückwärts |
-| Shuffle | alle nicht gesperrten Pads neu würfeln |
+| Shuffle | alle nicht gesperrten Pads neu würfeln. Die Pads sind chronologisch (Pad 1 = früheste Stelle), starten möglichst auf einer „1“ und nie in reiner Stille. Gesperrte Pads bleiben, wo sie sind. |
 | Reroll Pad / ◀ ▶ / Lock | wirkt auf das zuletzt gespielte Pad (◀ ▶ = 1/8 Slice verschieben) |
 
 **Pads spielen:** per MIDI-Noten, nicht per Cmd+M-Mapping. Controller-Pads senden ohnehin Noten. Fürs Rechner-Keyboard in Live die Computer-MIDI-Tastatur aktivieren (Taste M) und entweder Base Note auf C3 stellen oder mit Z zwei Oktaven runter gehen.
@@ -122,8 +122,9 @@ Grenzen: Timestretching verschmiert Transienten leicht, hat etwas Latenz und bra
 
 ## Grid (Beat-Raster)
 
-Beim Laden sucht ein Beat-Tracker die Schläge im Video. Er folgt leichten Tempo-Schwankungen, eine echte Band ist also kein Problem. Dazu schätzt er, wo die „1“ jedes Takts liegt: aus der Kick und aus Harmoniewechseln. Über der Waveform zeigen orange Linien die Takte, feine weiße Linien die Schläge (nur wenn genug Platz ist), und oben markieren kleine Dreiecke die 16 Pads. Das gewählte Pad ist weiß.
+Beim Laden sucht ein Beat-Tracker die Schläge im Video. Er folgt leichten Tempo-Schwankungen, eine echte Band ist also kein Problem. Dazu schätzt er, wo die „1“ jedes Takts liegt: aus der Kick und aus Harmoniewechseln. Ein Intro ohne Beat (Stille, Gerede, Flächen) wird dabei übersprungen, Takt 1 ist dort, wo der Beat einsetzt. Über der Waveform zeigen orange Linien die Takte, feine weiße Linien die Schläge (nur wenn genug Platz ist), und oben markieren kleine Dreiecke die 16 Pads. Das gewählte Pad ist weiß.
 
+- **Würfeln:** Ist ein sicherer Beat erkannt, starten neue Pads auf Taktanfängen, auch bei ausgeschaltetem Grid. Beim Laden eines neuen Videos wird nach der Analyse einmal nachgewürfelt. Reroll bleibt zwischen den Nachbar-Pads, damit die Reihenfolge stimmt.
 - **Grid an:** Shuffle und Reroll wählen nur Rasterpunkte, ◀ ▶ springt eine Rasterstufe. Die Zeile unter der Waveform zeigt die Position als Takt.Schlag, z. B. „T6.1“.
 - **Gespeichert wird die freie Position.** Grid rastet erst beim Abspielen ein. Snap oder Notenwert umschalten und zurück verändert also nichts dauerhaft.
 - **Warp + Grid:** Jeder Slice ist genau ein Notenwert des Original-Grooves, von Raster zu Raster. Schwankt das Original, passt sich der Streckfaktor pro Slice an. Das Ergebnis läuft trotzdem exakt in deinem Tempo.

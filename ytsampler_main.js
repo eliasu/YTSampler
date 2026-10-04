@@ -49,6 +49,11 @@ function engOut(e) { return e ? 3 : 0; }
 // Beat-Raster (kommt vom Node-Teil): Schlagzeiten in ms, Index der ersten "1"
 var beats = [], beatsIn = [], beatsDown = 0, beatsReady = 0, beatsDone = 0;
 
+// Stille (kommt vom Node-Teil): [von, bis, von, bis, …] in ms
+var silent = [];
+// Neues Video: Pads nach der Analyse noch einmal würfeln (dann mit Takten und Stille)
+var autoRoll = 0;
+
 // Tonart pro Pad (kommt vom Node-Teil) und daraus berechnete Verschiebung
 var keys = [], shifts = [];
 var tuningCents = 0, analysisReady = 0;
@@ -178,12 +183,48 @@ function effStart(i) {
     return clamp(s, 0, Math.max(0, durMs - 1));
 }
 
-// zufälliger Rasterpunkt, von dem aus noch ein ganzer Slice Material übrig ist
-function randomGridStart() {
-    var stp = gridStep();
-    var g0 = Math.ceil(xAt(0) / stp), g1 = Math.floor(xAt(Math.max(0, durMs - spanMs())) / stp);
+// Beats bekannt und Tempo vertrauenswürdig (auch bei ausgeschaltetem Grid)
+function beatsOK() { return beatsReady && beats.length >= 4 && tempoTrusted(); }
+
+// zufälliger Rasterpunkt (Abstand stp Schläge) in lo…hi, von dem aus noch ein ganzer Slice übrig ist
+function randomGridStart(stp, lo, hi) {
+    var g0 = Math.ceil(xAt(Math.max(0, lo)) / stp), g1 = Math.floor(xAt(Math.min(hi, durMs - spanMs())) / stp);
     if (g1 < g0) return -1;
     return clamp(timeAt((g0 + Math.floor(Math.random() * (g1 - g0 + 1))) * stp), 0, durMs);
+}
+
+// Slice ab t liegt komplett in Stille
+function isSilent(t) {
+    var e = t + Math.max(spanMs(), 1);
+    for (var k = 0; k + 1 < silent.length; k += 2) if (silent[k] <= t && e <= silent[k + 1]) return true;
+    return false;
+}
+
+// Startpunkt schon von einem anderen Pad belegt
+function taken(t) {
+    for (var j = 0; j < NPADS; j++) if (Math.abs(st.pads[j] - t) < 1) return true;
+    return false;
+}
+
+// Gewürfelte Pads chronologisch auf die freien (nicht gesperrten) Pads verteilen
+function sortPads() {
+    var idx = [], t = [], i;
+    for (i = 0; i < NPADS; i++) if (!st.locks[i]) { idx.push(i); t.push(st.pads[i]); }
+    t.sort(function (a, b) { return a - b; });
+    for (i = 0; i < idx.length; i++) st.pads[idx[i]] = t[i];
+}
+
+// Alle freien Pads neu würfeln
+function rollAll() {
+    autoRoll = 0;
+    var i;
+    for (i = 0; i < NPADS; i++) if (!st.locks[i]) st.pads[i] = -1;
+    for (i = 0; i < NPADS; i++) if (!st.locks[i]) st.pads[i] = randomStart();
+    sortPads();
+    save();
+    requestAll();
+    sendPadMarks();
+    updateSel();
 }
 
 function requestBeats() {
@@ -200,6 +241,7 @@ function beatsdone(down, n) {
     beatsDown = Math.floor(down) || 0;
     beatsReady = beats.length >= 4 ? 1 : 0;
     if (beatsReady && beatsDown >= beats.length) beatsDown = 0;
+    if (autoRoll) rollAll();
     requestAll();
     sendGridUI();
     updateSel();
@@ -260,10 +302,21 @@ function padSpan(i) {
 // Fenster, das der Node-Teil pro Pad analysiert (mind. 2 s, macht der Node-Teil)
 function analysisSpan() { return P.mode ? HOLD_ANALYSIS : spanMs(); }
 
-function randomStart() {
-    if (gridOK()) { var g = randomGridStart(); if (g >= 0) return g; }
-    var m = durMs - spanMs();
-    return m > 0 ? Math.random() * m : 0;
+// Zufälliger Startpunkt in lo…hi (ms): bevorzugt auf einer "1", nie ein Slice aus reiner Stille,
+// möglichst kein Startpunkt, den schon ein anderes Pad hat
+function randomStart(lo, hi) {
+    if (lo === undefined) { lo = 0; hi = durMs; }
+    var t = 0;
+    for (var n = 0; n < 40; n++) {
+        t = (n < 20 && beatsOK()) ? randomGridStart(4, lo, hi) : -1;     // Taktanfang
+        if (t < 0 && gridOK()) t = randomGridStart(gridStep(), lo, hi);  // sonst Rasterpunkt
+        if (t < 0) {
+            var m = Math.min(hi, durMs - spanMs());
+            t = m > lo ? lo + Math.random() * (m - lo) : Math.max(0, Math.min(lo, m));
+        }
+        if (!isSilent(t) && !taken(t)) return t;
+    }
+    return t;
 }
 
 function fmt(ms) {
@@ -361,7 +414,12 @@ function scaleints() {
     recomputeShifts();
 }
 function tuning(c) { tuningCents = c; updateSel(); }
-function analysisready() { analysisReady = 1; requestBeats(); requestAll(); }
+function silence() { silent = arrayfromargs(arguments); }
+function analysisready() {
+    analysisReady = 1;
+    if (autoRoll && !(st.srcBpm > 0)) rollAll();   // ohne Tempo kommen keine Beats -> gleich würfeln
+    requestBeats(); requestAll();
+}
 
 // Ergebnis vom Node-Teil: padinfo <i> <konfidenz> <grundton> <moll> <chroma x12>
 function padinfo() {
@@ -500,17 +558,16 @@ function noteoff(i) {
 // ---------- Slices bearbeiten ----------
 function shuffle() {
     if (!ready()) return;
-    for (var i = 0; i < NPADS; i++) if (!st.locks[i]) st.pads[i] = randomStart();
-    save();
-    requestAll();
-    sendPadMarks();
-    updateSel();
+    rollAll();
     status(gridOK() ? "Pads neu gewürfelt (auf Raster)" : "Pads neu gewürfelt");
 }
 
 function reroll() {
     if (!ready()) return;
-    st.pads[sel] = randomStart();
+    autoRoll = 0;
+    // zwischen den Nachbar-Pads bleiben, damit die Reihenfolge chronologisch bleibt
+    var lo = sel > 0 ? st.pads[sel - 1] + 1 : 0, hi = sel < NPADS - 1 ? st.pads[sel + 1] - 1 : durMs;
+    st.pads[sel] = hi > lo ? randomStart(lo, hi) : randomStart();
     save();
     requestPad(sel);
     trigger(sel, 100);
@@ -518,6 +575,7 @@ function reroll() {
 
 function nudge(d) {
     if (!ready()) return;
+    autoRoll = 0;
     if (gridOK()) {                            // eine Rasterstufe weiter
         var stp = gridStep();
         st.pads[sel] = clamp(timeAt((Math.round(xAt(effStart(sel)) / stp) + d) * stp), 0, Math.max(0, durMs - 1));
@@ -543,6 +601,7 @@ function loaded() {
     tuningCents = 0;
     resetKeys();
     beats = []; beatsIn = []; beatsReady = 0; beatsDone = 0;
+    silent = []; autoRoll = 0;
     var id = String(a[2]);
     var title = a.slice(3).join(" ");
     var i;
@@ -561,6 +620,8 @@ function loaded() {
         st.srcBpm = 0; st.srcAuto = 1; st.bpmConf = 0;   // Tempo kommt gleich aus der Analyse
         st.pads = []; st.locks = [];
         for (i = 0; i < NPADS; i++) { st.pads.push(randomStart()); st.locks.push(0); }
+        sortPads();
+        autoRoll = 1;
         if (st.fav >= 0 && (!st.favs[st.fav] || st.favs[st.fav].id !== id)) st.fav = -1;
     } else {
         // gleiches Video (z. B. Set neu geöffnet): Positionen behalten
@@ -598,6 +659,7 @@ function recallFav(idx) {
     if (!f) { status("Platz " + favName(idx) + " ist leer – mit „+ Neu“ belegen"); updateFavUI(); return; }
     st.fav = idx;
     st.bank = Math.floor(idx / 16);
+    autoRoll = 0;
     if (f.id === st.id && durMs > 0) {           // gleiches Video: nur Slices umschalten
         var oldBpm = st.srcBpm;
         applyPads(f);

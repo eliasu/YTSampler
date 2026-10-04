@@ -60,7 +60,7 @@ Ablage unter `~/Music/YTSampler/`: `cache/` (`<id>.wav` 44,1 kHz/16 Bit/Stereo, 
 
 **IR-Fernbedienung:** läuft an Live vorbei. `teletext.html` liest den Pro Micro per Web MIDI (Note-On Kanal 15) und schickt `POST /key {k: "ir:<code>:<wiederholung>"}`. Mehrere offene Fenster → Node verwirft Dubletten (`IR_DEDUP_MS`). In Live beim Pro Micro „Spur“ ausschalten. Code = Note + 128 × Bit 0 von (Velocity − 1), Wiederholung = Bit 1. Node übersetzt per `ir.json` in `handleKey`-Tasten (`up`, `down`, `pgup`, `pgdn`, `enter`, `back`, `tap:0`–`tap:9`, `power`). Merkmodus: Cmd+Shift+M (oder Strg+Shift+M) auf der Teletext-Seite → `learn`, Esc bricht ab. Ziffern tippen wie beim Handy (`TAP`, 1 = abc … 9 = yz, 0 = Leerzeichen, `TAP_MS`). `power` schaltet `ui.tvOff` → Abschalt-/Einschalt-Animation; aus = nur An/Aus wirkt.
 **Patch → Node:** `search`/`text`, `pick <menüindex>` (0 = Kopfzeile), `load <url|id>`, `maxlen <min>`. Unverdrahtet: `opencache`.
-**Node → `[js]`:** `loaded <pfad> <ms> <id> <titel…>`, `needsession`, `newsession <nr>`, `state <kodiert>`, `statenone`, `tuning <cent>`, `tempo <bpm> <konf>`, `analysisready`, `padinfo <i> <konf> <grundton> <moll> <12 chroma>`, `beatsclear`, `beatsadd <ms…>` (Blöcke à 200), `beatsdone <down> <anzahl>`.
+**Node → `[js]`:** `loaded <pfad> <ms> <id> <titel…>`, `needsession`, `newsession <nr>`, `state <kodiert>`, `statenone`, `tuning <cent>`, `tempo <bpm> <konf>`, `analysisready`, `silence <von> <bis> …` (Stille in ms, vor `analysisready`), `padinfo <i> <konf> <grundton> <moll> <12 chroma>`, `beatsclear`, `beatsadd <ms…>` (Blöcke à 200), `beatsdone <down> <anzahl>`.
 **`[js]` → UI (Ausgang 2):** `selinfo`, `lockset`, `wsel <von> <bis>`, `status`, `grid <clear|dur|beats|down|show|pads …>`, sowie `padflash`, `padlight`, `padsel` ans Pad-jsui.
 
 ## Patch und `.amxd` bearbeiten
@@ -97,6 +97,7 @@ So geschrieben bleiben beide Dateien byte-identisch zum bisherigen Format. Aus d
 - **Kein Shell-PATH unter Live.** Node ergänzt die Homebrew-Pfade selbst (`EXTRA_PATHS`).
 - **Max-Symbole vertragen keine Kommas, Semikolons oder Klammern.** Titel laufen durch `clean()`, der Zustand als `encodeURIComponent(JSON)`.
 - **Onset-Timing:** Der Versatz durch den gleitenden Mittelwert und die Fensterposition (0,78 × Fensterlänge) ist korrigiert. Die Konstanten N=512, HOP=64, 0,78 stehen dreifach (`estimateTempo`, `trackBeats`, `findDownbeat`). Wer an der Analyse dreht, muss die Beat-Positionen neu messen.
+- **Würfeln (`randomStart`):** bevorzugt Taktanfänge (wenn `beatsOK()`), sonst Rasterpunkt, sonst frei. Verwirft Slices ganz in Stille und schon belegte Starts. `sortPads()` hält die freien Pads chronologisch. Neues Video → `autoRoll`, nachgewürfelt wird bei `beatsdone` (bzw. `analysisready` ohne Tempo). Die „1“: `findIntro()` überspringt den Anfang ohne Kick/Einsätze, `beatsDown` ist die erste „1“ danach.
 - **Cache-Format geändert → `AN.VERSION` erhöhen**, sonst werden alte `.chroma` falsch gelesen.
 - **Webserver:** Ist 8765 belegt (zweites Device), weicht er auf bis zu 8770 aus. `Teletext öffnen.command` kennt nur 8765.
 

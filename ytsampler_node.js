@@ -427,18 +427,42 @@ function trackBeats(a, bpm) {
   const N = 512, HOP = 64;
   const toMs = (f) => ((f * HOP + 0.78 * N) / a.srd) * 1000;
   const beats = frames.map((f) => Math.max(0, Math.round(toMs(f) - BEAT_LEAD_MS)));
-  return { beats, frames, down: findDownbeat(a, frames, period) };
+  return { beats, frames, down: findDownbeat(a, frames, period, findIntro(a, frames)) };
+}
+
+// Größter Wert einer Kurve um Frame f (±2 Frames)
+function peakAt(env, f) {
+  let mx = 0;
+  for (let k = -2; k <= 2; k++) { const j = f + k; if (j >= 0 && j < env.length && env[j] > mx) mx = env[j]; }
+  return mx;
+}
+
+// Intro: Schläge am Anfang, bevor Kick und Einsätze richtig da sind (Stille, Gerede, Flächen).
+// Ergebnis: Index des ersten Schlags danach (0 = kein Intro).
+// ponytail: einfache Schwelle am Median; Intros mit vollem Schlagzeug werden nicht erkannt
+function findIntro(a, frames) {
+  const nb = frames.length;
+  if (nb < 16) return 0;
+  const B = frames.map((f) => peakAt(a.bass, f)), O = frames.map((f) => peakAt(a.onset, f));
+  const bm = Math.max(...B) || 1, om = Math.max(...O) || 1;
+  const s = B.map((b, i) => b / bm + O[i] / om);
+  const thr = 0.6 * [...s].sort((x, y) => x - y)[Math.floor(nb / 2)];
+  for (let i = 0; i + 8 <= nb && i <= nb / 2; i++) {
+    if (s[i] < thr) continue;
+    let m = 0;
+    for (let j = i; j < i + 8; j++) m += s[j];
+    if (m / 8 >= thr) return i;
+  }
+  return 0;
 }
 
 // Welcher von 4 Schlägen ist die "1"? Bass-Einsätze (Kick) + Harmoniewechsel am Taktanfang.
-function findDownbeat(a, frames, period) {
+// Gezählt wird erst ab dem Intro-Ende; Ergebnis ist die erste "1" ab dort (= Takt 1).
+function findDownbeat(a, frames, period, from) {
   const nb = frames.length;
+  if (nb - from < 8) from = 0;
   if (nb < 8) return 0;
-  const bassAt = (f) => {
-    let mx = 0;
-    for (let k = -2; k <= 2; k++) { const j = f + k; if (j >= 0 && j < a.bass.length && a.bass[j] > mx) mx = a.bass[j]; }
-    return mx;
-  };
+  const bassAt = (f) => peakAt(a.bass, f);
   // Chroma-Frames liegen im 1024er-Raster bei TARGET_SR
   const chromaAt = (ms0, ms1) => {
     const c = new Array(12).fill(0);
@@ -462,13 +486,31 @@ function findDownbeat(a, frames, period) {
   const norm = (arr) => { const mx = Math.max(...arr) || 1; return arr.map((x) => x / mx); };
   const B = norm(bass), V = norm(nov);
   let best = -1, down = 0;
-  for (let k = 0; k < 4; k++) {
+  for (let k = from; k < from + 4; k++) {
     let s = 0, c = 0;
     for (let i = k; i < nb; i += 4) { s += B[i] + 0.7 * V[i]; c++; }
     s /= c || 1;
     if (s > best) { best = s; down = k; }
   }
   return down;
+}
+
+// Stille: Bereiche (ms), in denen die Analyse-Frames über 40 dB leiser sind als die lauten Stellen.
+// Liefert flach [von, bis, von, bis, …]; Stille am Ende reicht bis 1e9.
+function silentRanges(a) {
+  const S = AN.STRIDE, nf = a.nf, e = [];
+  for (let f = 0; f < nf; f++) e.push(a.frames[f * S + 13]);
+  const thr = 0.01 * [...e].sort((x, y) => x - y)[Math.floor(nf * 0.95)];
+  const hopMs = AN.HOP / a.srd * 1000;
+  const mid = (f) => (f * AN.HOP + AN.N / 2) / a.srd * 1000;
+  const out = [];
+  for (let f = 0; f < nf; f++) {
+    if (e[f] >= thr) continue;
+    const f0 = f;
+    while (f + 1 < nf && e[f + 1] < thr) f++;
+    out.push(f0 === 0 ? 0 : Math.round(mid(f0) - hopMs / 2), f === nf - 1 ? 1e9 : Math.round(mid(f) + hopMs / 2));
+  }
+  return out.slice(0, 1000);   // ponytail: bei sehr zerhackter Musik nur die ersten 500 Bereiche
 }
 
 function sendBeats(bpm) {
@@ -517,6 +559,7 @@ async function ensureAnalysis(id, wav, title) {
   const cents = Math.round(a.tuning * 100);
   Max.outlet('tuning', cents);
   Max.outlet('tempo', a.bpm, a.bpmConf);
+  Max.outlet('silence', ...silentRanges(a));
   Max.outlet('analysisready');
   const tempoTxt = a.bpm ? ` · ${a.bpm} BPM${a.bpmConf < 0.3 ? ' (unsicher)' : ''}` : '';
   status(`Bereit: ${title}${tempoTxt} · Stimmung ${cents >= 0 ? '+' : ''}${cents} ct`);
