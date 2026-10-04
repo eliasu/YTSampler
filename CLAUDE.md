@@ -30,7 +30,7 @@ Ablage unter `~/Music/YTSampler/`: `cache/` (`<id>.wav` 44,1 kHz/16 Bit/Stereo, 
 ## Git und Versionen
 
 - Entwickelt wird hier, Live benutzt eine Kopie unter `~/Music/Ableton/User Library/YTSampler/`. Dort nie direkt arbeiten.
-- Claude darf nach jeder abgeschlossenen Änderung selbständig committen (kurze deutsche Commit-Message). Nicht pushen, es gibt kein Remote.
+- Claude darf nach jeder abgeschlossenen Änderung selbständig committen (kurze deutsche Commit-Message). Nicht pushen ohne Rückfrage.
 - Kleine Fixes sind nur Commits. Eine neue Version (Tag `vX.Y`) gibt es nur für einen Stand, der in Live getestet werden soll. Claude schlägt die Version vor und sagt dem Nutzer Bescheid, wenn kopiert wurde.
 - Release: `tools/release.sh X.Y`. Das Skript prüft den Sync von `.amxd` und `.maxpat`, die Verbindungen und die Syntax. Danach taggt es und ersetzt den Live-Ordner per `rsync --delete`. `tools/` und `CLAUDE.md` werden nicht kopiert.
 - Nach dem Release muss der Nutzer das Device in Live neu laden (siehe `poly~` unten).
