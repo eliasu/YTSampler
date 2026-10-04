@@ -22,11 +22,14 @@ for f in ('YT Sampler.maxpat', 'ytvoice.maxpat', 'ytwarpvoice.maxpat'):
 EOF
 for f in *.js; do node --check "$f"; done
 
+echo "$V" > VERSION
+git add VERSION
+git commit -q -m "Version $V"
 git tag -a "v$V" -m "Version $V"
 
 # nur, was das Device braucht; alles andere im Ziel wird ersetzt bzw. entfernt
 mkdir -p "$DEST"
 rsync -a --delete --exclude .DS_Store \
-  *.amxd *.maxpat *.js teletext.html "Teletext öffnen.command" README.md "$DEST/"
+  *.amxd *.maxpat *.js teletext.html "Teletext öffnen.command" README.md VERSION "$DEST/"
 
 echo "v$V → $DEST"
