@@ -1,13 +1,14 @@
 #!/bin/bash
-# Neue Version: prüft, taggt und kopiert die Device-Dateien in die Ableton User Library.
-# Aufruf aus dem Projektordner:  tools/release.sh 1.1
+# Jede Änderung = neue Version: prüft, committet alles als "X.Y.Z: Nachricht", taggt
+# und kopiert die Device-Dateien in die Ableton User Library.
+# Aufruf aus dem Projektordner:  tools/release.sh 1.0.2 "Grid-Overlay bekommt wieder Daten"
 set -euo pipefail
 
-V="${1:?Version angeben, z. B. tools/release.sh 1.1}"
+V="${1:?Version angeben, z. B. tools/release.sh 1.0.2 \"Nachricht\"}"
+MSG="${2:?Commit-Nachricht angeben}"
 DEST="$HOME/Music/Ableton/User Library/YTSampler"
 cd "$(dirname "$0")/.."
 
-[ -z "$(git status --porcelain)" ] || { echo "Erst committen – Arbeitsordner ist nicht sauber."; exit 1; }
 git rev-parse -q --verify "refs/tags/v$V" >/dev/null && { echo "v$V gibt es schon."; exit 1; }
 
 # .amxd muss zur .maxpat passen
@@ -23,8 +24,8 @@ EOF
 for f in *.js; do node --check "$f"; done
 
 echo "$V" > VERSION
-git add VERSION
-git commit -q -m "Version $V"
+git add -A
+git commit -q -m "$V: $MSG"
 git tag -a "v$V" -m "Version $V"
 
 # nur, was das Device braucht; alles andere im Ziel wird ersetzt bzw. entfernt

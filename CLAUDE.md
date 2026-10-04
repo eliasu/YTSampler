@@ -30,9 +30,12 @@ Ablage unter `~/Music/YTSampler/`: `cache/` (`<id>.wav` 44,1 kHz/16 Bit/Stereo, 
 ## Git und Versionen
 
 - Entwickelt wird hier, Live benutzt eine Kopie unter `~/Music/Ableton/User Library/YTSampler/`. Dort nie direkt arbeiten.
-- Claude darf nach jeder abgeschlossenen Änderung selbständig committen (kurze deutsche Commit-Message). Nicht pushen ohne Rückfrage.
-- Kleine Fixes sind nur Commits. Eine neue Version (Tag `vX.Y`) gibt es nur für einen Stand, der in Live getestet werden soll. Claude schlägt die Version vor und sagt dem Nutzer Bescheid, wenn kopiert wurde.
-- Release: `tools/release.sh X.Y`. Das Skript prüft den Sync von `.amxd` und `.maxpat`, die Verbindungen und die Syntax. Danach schreibt es die Nummer in `VERSION`, legt den Commit „Version X.Y“ an, taggt ihn und ersetzt den Live-Ordner per `rsync --delete`. `VERSION` wird mitkopiert, damit man in Live sieht, welcher Stand installiert ist. `tools/` und `CLAUDE.md` werden nicht kopiert.
+- Jede abgeschlossene Änderung ist eine neue Version. Claude committet selbständig, und zwar immer über `tools/release.sh X.Y.Z "kurze deutsche Nachricht"`, nie per Hand. Nicht pushen ohne Rückfrage.
+- Hochzählen nach eigenem Ermessen, ausgehend von der Zahl in `VERSION`:
+  - **Patch** (`1.0.1` → `1.0.2`): Fixes, Doku, Werkzeuge, kleine Anpassungen.
+  - **Minor** (`1.0.x` → `1.1.0`): neue Funktion oder spürbar anderes Verhalten auf der Bühne.
+  - **Major** (`1.x` → `2.0.0`): bricht Bestehendes, z. B. Session-/Favoriten-Dateien, Parameternamen (MIDI-Mappings im Set) oder Bedienkonzept.
+- Das Skript prüft den Sync von `.amxd` und `.maxpat`, die Verbindungen und die Syntax. Danach schreibt es `VERSION`, committet alles als „X.Y.Z: Nachricht“, taggt `vX.Y.Z` und ersetzt den Live-Ordner per `rsync --delete`. `tools/` und `CLAUDE.md` werden nicht kopiert. Nach jedem Lauf sagt Claude dem Nutzer Bescheid, mit Version und ob sich am Device etwas geändert hat.
 - Nach dem Release muss der Nutzer das Device in Live neu laden (siehe `poly~` unten).
 
 ## Signalfluss im Hauptpatch
