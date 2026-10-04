@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YT SAMPLER TEXT</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=VT323&display=block" rel="stylesheet">
+<style>
+  /*
+    YT SAMPLER – Teletext-Ansicht
+    40 x 25 Zeichen, 4:3, kein Scrollen.
+    URL-Optionen:  ?crt=1          Scanlines/Glow zur Vorschau auf normalen Bildschirmen
+                   ?overscan=6     Sicherheitsrand in Prozent (Standard 5, Röhren-TVs schneiden am Rand ab)
+    Doppelklick = Vollbild.
+  */
+  :root {
+    --K: #000; --R: #f00; --G: #0f0; --Y: #ff0; --B: #00f; --M: #f0f; --C: #0ff; --W: #fff;
+    --ch: 20px;     /* Zellenhöhe, per JS gesetzt */
+    --kx: 1;        /* horizontale Streckung der Schrift, per JS gesetzt */
+  }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: #000; cursor: none;
+  }
+  #wrap { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+  #screen {
+    position: relative;
+    display: grid; grid-template-rows: repeat(25, 1fr);
+    background: #000;
+    font-family: "VT323", "Menlo", "Courier New", monospace;
+    font-size: calc(var(--ch) * 1.08);
+    line-height: var(--ch);
+    user-select: none;
+  }
+  .row { display: grid; grid-template-columns: repeat(40, 1fr); min-height: 0; }
+  .row.dh { grid-row: span 2; }
+  .c { position: relative; overflow: visible; }
+  .c > i {
+    position: absolute; left: 50%; top: 0;
+    font-style: normal; white-space: pre;
+    transform: translateX(-50%) scaleX(var(--kx));
+    transform-origin: 50% 0;
+  }
+  .row.dh .c > i {
+    line-height: var(--ch);
+    transform: translateX(-50%) scale(var(--kx), 2);
+  }
+  .fl { animation: flash 1s steps(1, end) infinite; }
+  @keyframes flash { 50% { visibility: hidden; } }
+
+  /* nur Vorschau: Röhren-Anmutung auf LCD */
+  body.crt #screen { filter: saturate(1.2) blur(0.35px); }
+  body.crt #screen .c > i { text-shadow: 0 0 calc(var(--ch) * 0.25) currentColor; }
+  body.crt #screen::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0, rgba(0,0,0,0) 2px, rgba(0,0,0,.35) 3px);
+  }
+</style>
+</head>
+<body>
+<div id="wrap"><div id="screen"></div></div>
+<script>
+(() => {
+  const COLS = 40, ROWS = 25;
+  const params = new URLSearchParams(location.search);
+  const OVERSCAN = Math.max(0, Math.min(20, parseFloat(params.get('overscan') ?? '5'))) / 100;
+  if (params.get('crt') === '1') document.body.classList.add('crt');
+
+  const screenEl = document.getElementById('screen');
+  let S = null;            // Zustand vom Device
+  let connected = false;
+
+  // ---------------- Raster ----------------
+  let grid, dh;
+  function clear() {
+    grid = [];
+    for (let r = 0; r < ROWS; r++) {
+      const row = [];
+      for (let c = 0; c < COLS; c++) row.push({ ch: ' ', fg: 'W', bg: 'K', fl: false });
+      grid.push(row);
+    }
+    dh = new Array(ROWS).fill(false);
+  }
+  function put(r, c, text, fg = 'W', bg = null, fl = false) {
+    const chars = Array.from(String(text));
+    for (let i = 0; i < chars.length; i++) {
+      const cc = c + i;
+      if (r < 0 || r >= ROWS || cc < 0 || cc >= COLS) continue;
+      const cell = grid[r][cc];
+      cell.ch = chars[i]; cell.fg = fg; cell.fl = fl;
+      if (bg) cell.bg = bg;
+    }
+  }
+  function fill(r, c0, c1, bg, fl = false) {
+    for (let c = c0; c <= c1 && c < COLS; c++) { grid[r][c].bg = bg; grid[r][c].fl = fl; }
+  }
+  const len = (s) => Array.from(String(s)).length;
+  function cut(s, n) {
+    const a = Array.from(String(s || ''));
+    return a.length <= n ? a.join('') : a.slice(0, n - 1).join('') + '…';
+  }
+  function right(r, cEnd, text, fg, bg, fl) { put(r, cEnd - len(text) + 1, text, fg, bg, fl); }
+  function wrap(text, width, lines) {
+    const words = String(text || '').split(/\s+/).filter(Boolean);
+    const out = [''];
+    for (const w of words) {
+      const cur = out[out.length - 1];
+      if (!cur.length) out[out.length - 1] = w;
+      else if (len(cur) + 1 + len(w) <= width) out[out.length - 1] = cur + ' ' + w;
+      else out.push(w);
+    }
+    if (out.length > lines) { out.length = lines; out[lines - 1] = cut(out[lines - 1] + ' …', width); }
+    return out.map((l) => cut(l, width));
+  }
+
+  // ---------------- Seite zeichnen ----------------
+  const DAYS = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+  const two = (n) => String(n).padStart(2, '0');
+
+  function draw() {
+    clear();
+    const now = new Date();
+
+    // Kopfzeile wie beim echten Videotext
+    put(0, 1, 'P100', 'W');
+    put(0, 6, 'YT-SAMPLER', 'Y');
+    right(0, 38, `${DAYS[now.getDay()]} ${two(now.getDate())}.${two(now.getMonth() + 1)}  ${two(now.getHours())}:${two(now.getMinutes())}:${two(now.getSeconds())}`, 'W');
+
+    // doppelt hoher Titelbalken
+    dh[1] = true;
+    fill(1, 0, 39, 'B');
+    put(1, 2, 'YT SAMPLER', 'Y', 'B');
+    fill(1, 31, 38, 'Y');
+    put(1, 32, ' TEXT ', 'B', 'Y');
+
+    // Status: Verbindung links, Laden rechts
+    if (!connected) {
+      fill(3, 1, 1, 'R', true);
+      put(3, 3, 'KEINE VERBINDUNG', 'R', null, true);
+      right(3, 38, 'WARTE AUF LIVE', 'Y');
+    } else {
+      fill(3, 1, 1, 'G');
+      put(3, 3, 'VERBUNDEN', 'G');
+    }
+
+    if (!S) {
+      put(12, 6, 'Warte auf das Device …', 'C', null, true);
+      put(14, 6, 'Live starten und YT Sampler laden', 'W');
+      fastext();
+      return render();
+    }
+
+    if (connected) {
+      if (S.loading) {
+        const t = { INFO: 'LÄDT …', DOWNLOAD: `LÄDT ${S.progress}%`, KONVERT: 'KONVERTIERT', ANALYSE: 'ANALYSIERT' }[S.phase] || 'LÄDT …';
+        right(3, 36, t, 'Y');
+        fill(3, 38, 38, 'R', true);                         // rote Lampe blinkt
+        if (S.phase === 'DOWNLOAD') {                       // Fortschrittsbalken
+          const w = Math.round(38 * S.progress / 100);
+          fill(4, 1, 38, 'B');
+          if (w > 0) fill(4, 1, w, 'Y');
+        }
+      } else if (S.searching) {
+        right(3, 36, 'SUCHT …', 'C', null, true);
+        fill(3, 38, 38, 'C', true);
+      } else {
+        right(3, 36, 'BEREIT', 'G');
+        fill(3, 38, 38, 'G');
+      }
+    }
+
+    // aktuelles Video
+    put(5, 1, 'AKTUELL', 'C');
+    if (S.fav) right(5, 38, 'FAV ' + S.fav, 'M');
+    if (S.title) wrap(S.title, 38, 2).forEach((l, i) => put(6 + i, 1, l, 'W'));
+    else put(6, 1, '- noch nichts geladen -', 'B');
+
+    // Suchfeld
+    put(9, 1, 'SUCHE', 'C');
+    right(9, 38, `MAX ${S.maxLen} MIN`, 'G');
+    fill(10, 0, 39, 'B');
+    put(10, 1, '>', 'Y', 'B');
+    const q = Array.from(S.query || '');
+    const shown = q.length > 34 ? q.slice(q.length - 34).join('') : q.join('');
+    put(10, 3, shown, 'W', 'B');
+    const cur = 3 + len(shown);
+    if (cur < 39) fill(10, cur, cur, 'Y', true);           // Blockcursor
+
+    // Trefferliste, seitenweise
+    const res = S.results || [];
+    const ps = S.pageSize || 7;
+    const pages = Math.max(1, Math.ceil(res.length / ps));
+    const page = Math.min(pages - 1, Math.floor((S.sel || 0) / ps));
+    const queryChanged = (S.query || '').trim() && (S.query || '').trim() !== S.searched;
+
+    if (S.searching) {
+      put(12, 1, 'SUCHE LÄUFT …', 'C', null, true);
+    } else if (!S.searched) {
+      put(12, 1, 'TIPPEN + ENTER = SUCHEN', 'C');
+    } else if (!res.length) {
+      put(12, 1, 'KEINE TREFFER', 'R');
+      if (S.hidden) put(13, 1, `${S.hidden} Videos länger als ${S.maxLen} min`, 'W');
+    } else {
+      const from = page * ps + 1, to = Math.min(res.length, from + ps - 1);
+      put(12, 1, `TREFFER ${from}-${to} VON ${res.length}`, 'G');
+      if (S.hidden) right(12, 38, `${S.hidden} ZU LANG`, 'R');
+      for (let k = 0; k < ps; k++) {
+        const idx = page * ps + k;
+        const r = 13 + k;
+        if (idx >= res.length) break;
+        const it = res[idx];
+        const selRow = idx === S.sel;
+        const fg = selRow ? 'K' : (k % 2 ? 'C' : 'W');
+        if (selRow) { fill(r, 0, 39, 'Y'); put(r, 0, '>', 'K', 'Y'); }
+        put(r, 1, two(idx + 1), selRow ? 'B' : 'Y', selRow ? 'Y' : null);
+        put(r, 4, cut(it.t, 29), fg, selRow ? 'Y' : null);
+        right(r, 38, it.d, selRow ? 'B' : 'G', selRow ? 'Y' : null);
+      }
+      if (pages > 1) {
+        put(20, 1, (page > 0 ? '▲ ' : '  ') + (page < pages - 1 ? '▼ MEHR' : ''), 'C');
+        right(20, 38, `SEITE ${page + 1}/${pages}`, 'W');
+      }
+    }
+
+    // Meldungszeile
+    if (S.message) {
+      const err = /^(Fehler|Keine|yt-dlp nicht)/.test(S.message);
+      put(22, 1, cut(S.message, 38), err ? 'R' : 'W');
+    }
+
+    fastext(queryChanged);
+    render();
+  }
+
+  // Fastext-Leiste: die vier Farbtasten
+  function fastext(queryChanged) {
+    const items = [
+      ['R', 'W', '◀ SEITE'],
+      ['G', 'K', 'SEITE ▶'],
+      ['Y', 'K', queryChanged ? '↵ SUCHEN' : '↵ LADEN'],
+      ['C', 'K', 'ESC NEU'],
+    ];
+    items.forEach(([bg, fg, t], i) => {
+      fill(24, i * 10, i * 10 + 9, bg);
+      put(24, i * 10 + 1, t, fg, bg);
+    });
+  }
+
+  function render() {
+    let html = '';
+    for (let r = 0; r < ROWS; r++) {
+      if (r > 0 && dh[r - 1]) continue;                    // untere Hälfte einer doppelt hohen Zeile
+      html += `<div class="row${dh[r] ? ' dh' : ''}">`;
+      for (const cell of grid[r]) {
+        const ch = cell.ch === '<' ? '&lt;' : cell.ch === '&' ? '&amp;' : cell.ch;
+        html += `<div class="c${cell.fl ? ' fl' : ''}" style="background:var(--${cell.bg})"><i style="color:var(--${cell.fg})">${ch}</i></div>`;
+      }
+      html += '</div>';
+    }
+    screenEl.innerHTML = html;
+  }
+
+  // ---------------- Größe: 4:3, Schrift auf Zellbreite strecken ----------------
+  function resize() {
+    const vw = innerWidth * (1 - 2 * OVERSCAN), vh = innerHeight * (1 - 2 * OVERSCAN);
+    const w = Math.min(vw, vh * 4 / 3), h = w * 3 / 4;
+    screenEl.style.width = w + 'px';
+    screenEl.style.height = h + 'px';
+    const cellH = h / ROWS, cellW = w / COLS;
+    document.documentElement.style.setProperty('--ch', cellH + 'px');
+    // Zeichenbreite messen und so strecken, dass die Glyphen die Zelle füllen (Teletext ist breit)
+    const probe = document.createElement('span');
+    probe.textContent = 'MMMMMMMMMM';
+    probe.style.cssText = `position:absolute;visibility:hidden;white-space:pre;font-family:${getComputedStyle(screenEl).fontFamily};font-size:${cellH * 1.08}px`;
+    document.body.appendChild(probe);
+    const charW = probe.getBoundingClientRect().width / 10;
+    probe.remove();
+    document.documentElement.style.setProperty('--kx', Math.max(0.6, Math.min(2.2, (cellW * 0.92) / charW)).toFixed(3));
+  }
+  addEventListener('resize', () => { resize(); draw(); });
+
+  // ---------------- Verbindung zum Device (Server-Sent Events) ----------------
+  function connect() {
+    const es = new EventSource('/events');
+    es.onopen = () => { connected = true; draw(); };
+    es.onmessage = (e) => { connected = true; S = JSON.parse(e.data); draw(); };
+    es.onerror = () => { connected = false; draw(); };   // EventSource verbindet sich selbst neu
+  }
+
+  // ---------------- Tastatur (wenn dieses Fenster vorne ist) ----------------
+  const KEYMAP = {
+    Enter: 'enter', Backspace: 'back', Escape: 'esc',
+    ArrowUp: 'up', ArrowDown: 'down', PageUp: 'pgup', PageDown: 'pgdn',
+    ArrowLeft: 'pgup', ArrowRight: 'pgdn',
+  };
+  addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey && e.key.length !== 1) return;   // Cmd-Shortcuts dem Browser lassen
+    let k = KEYMAP[e.key];
+    if (!k && e.key.length === 1) k = 'char:' + e.key;
+    if (!k) return;
+    e.preventDefault();
+    fetch('/key', { method: 'POST', body: JSON.stringify({ k }) }).catch(() => {});
+  });
+
+  // Doppelklick: Vollbild
+  addEventListener('dblclick', () => {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+    else document.exitFullscreen();
+  });
+
+  // Uhr in der Kopfzeile
+  setInterval(draw, 1000);
+
+  (document.fonts ? document.fonts.ready : Promise.resolve()).then(() => { resize(); draw(); });
+  resize(); draw();
+  connect();
+})();
+</script>
+</body>
+</html>
