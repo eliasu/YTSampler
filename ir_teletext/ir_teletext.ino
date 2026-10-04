@@ -1,10 +1,10 @@
 // IR-Fernbedienung → Teletext-Seite
 // Pro Micro als USB-MIDI: schickt Noten auf Kanal 16 wie die Schreibmaschine
 // (Notennummer = Zeichencode, siehe MIDI_KEYS in ytsampler_node.js).
-// Lernen: Serieller Monitor (115200) zeigt jede Taste als "cmd 0x.."
-// → Codes unten in KEYS eintragen.
+// Lernen: Serieller Monitor (115200) zeigt jedes empfangene Signal
+// (Protokoll, Address, Command) → Command unten in KEYS eintragen.
+// Alle 5 s ohne Signal: "wartet auf IR …" (zeigt, dass er läuft).
 
-#define DECODE_NEC          // die meisten Billig-Fernbedienungen; sonst DECODE_SONY, DECODE_RC5 …
 #include <IRremote.hpp>
 #include <MIDIUSB.h>
 
@@ -40,19 +40,24 @@ void setup() {
   IrReceiver.begin(IR_PIN, DISABLE_LED_FEEDBACK);  // Pin 13 ist am Pro Micro nicht herausgeführt
 }
 
+unsigned long lastMsg = 0;
+
 void loop() {
-  if (!IrReceiver.decode()) return;
+  if (!IrReceiver.decode()) {
+    if (millis() - lastMsg >= 5000) { Serial.println(F("wartet auf IR …")); lastMsg = millis(); }
+    return;
+  }
+  lastMsg = millis();
+  IrReceiver.printIRResultShort(&Serial);   // jedes Signal, auch Wiederholungen und unbekannte
   IRData &d = IrReceiver.decodedIRData;
   bool rep = d.flags & IRDATA_FLAGS_IS_REPEAT;
   if (d.protocol != UNKNOWN) {
-    bool hit = false;
     for (const Key &k : KEYS) {
-      if (k.cmd != d.command) continue;
-      hit = true;
-      if (!rep || k.repeat) send(k.code);   // nur Pfeile wiederholen beim Halten
+      if (k.cmd == d.command && (!rep || k.repeat)) {   // nur Pfeile wiederholen beim Halten
+        send(k.code);
+        Serial.print(F("  → MIDI-Note ")); Serial.println(k.code);
+      }
     }
-    if (!hit && !rep) { Serial.print(F("unbekannt: cmd 0x")); Serial.print(d.command, HEX);
-                        Serial.print(F(" adr 0x")); Serial.println(d.address, HEX); }
   }
   IrReceiver.resume();
 }
