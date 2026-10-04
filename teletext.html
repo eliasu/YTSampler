@@ -49,6 +49,28 @@
   .fl { animation: flash 1s steps(1, end) infinite; }
   @keyframes flash { 50% { visibility: hidden; } }
 
+  /* Fernseher aus/an (An/Aus-Taste der Fernbedienung) */
+  #screen::before {
+    content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+    background: #fff; opacity: 0;
+  }
+  #screen.tv-off { animation: tvoff .6s cubic-bezier(.4, 0, .2, 1) forwards; }
+  #screen.tv-off::before { animation: tvoffglow .6s forwards; }
+  @keyframes tvoff {                    /* Bild fällt zur Linie zusammen, dann zum Punkt */
+    0%   { transform: scale(1, 1); opacity: 1; }
+    45%  { transform: scale(1, .006); opacity: 1; }
+    75%  { transform: scale(.006, .006); opacity: 1; }
+    100% { transform: scale(.006, .006); opacity: 0; }
+  }
+  @keyframes tvoffglow { 0% { opacity: 0; } 40%, 100% { opacity: 1; } }
+  #screen.tv-on { animation: tvon .7s steps(1, end); }
+  #screen.tv-on::before { animation: tvonglow .7s forwards; }
+  @keyframes tvon {                     /* kurz flackern, dann steht das Bild */
+    0% { opacity: 0; } 8% { opacity: 1; } 14% { opacity: .15; } 22% { opacity: 1; }
+    30% { opacity: .4; } 36% { opacity: 1; } 48% { opacity: .7; } 56%, 100% { opacity: 1; }
+  }
+  @keyframes tvonglow { 0% { opacity: .9; } 20% { opacity: .3; } 100% { opacity: 0; } }
+
   /* nur Vorschau: Röhren-Anmutung auf LCD */
   body.crt #screen { filter: saturate(1.2) blur(0.35px); }
   body.crt #screen .c > i { text-shadow: 0 0 calc(var(--ch) * 0.25) currentColor; }
@@ -170,6 +192,8 @@
       }
     }
 
+    if (S.learn) return learnPage();
+
     // aktuelles Video
     put(5, 1, 'AKTUELL', 'C');
     if (S.fav) right(5, 38, 'FAV ' + S.fav, 'M');
@@ -233,6 +257,23 @@
     render();
   }
 
+  // Merkmodus: Fernbedienung lernen
+  function learnPage() {
+    put(5, 1, 'FERNBEDIENUNG LERNEN', 'C');
+    right(5, 38, `${S.learn.step}/${S.learn.of}`, 'W');
+    put(8, 1, 'BITTE DRÜCKEN:', 'W');
+    dh[10] = true;
+    fill(10, 0, 39, 'Y');
+    put(10, 3, S.learn.label, 'B', 'Y', true);
+    const w = Math.round(38 * (S.learn.step - 1) / S.learn.of);
+    fill(14, 1, 38, 'B');
+    if (w > 0) fill(14, 1, w, 'G');
+    put(17, 1, 'Jede Taste einmal drücken.', 'W');
+    put(18, 1, 'Gespeichert wird nach der letzten.', 'W');
+    put(20, 1, 'ESC = ABBRECHEN', 'C');
+    render();
+  }
+
   // Fastext-Leiste: die vier Farbtasten
   function fastext(queryChanged) {
     const items = [
@@ -284,8 +325,18 @@
   function connect() {
     const es = new EventSource('/events');
     es.onopen = () => { connected = true; draw(); };
-    es.onmessage = (e) => { connected = true; S = JSON.parse(e.data); draw(); };
+    es.onmessage = (e) => { connected = true; S = JSON.parse(e.data); tv(!!S.tvOff); draw(); };
     es.onerror = () => { connected = false; draw(); };   // EventSource verbindet sich selbst neu
+  }
+
+  // Fernseher aus/an: Animation nur beim Wechsel
+  let tvOff = false;
+  function tv(off) {
+    if (off === tvOff) return;
+    tvOff = off;
+    screenEl.classList.remove('tv-off', 'tv-on');
+    void screenEl.offsetWidth;                            // Animation neu starten
+    screenEl.classList.add(off ? 'tv-off' : 'tv-on');
   }
 
   // ---------------- Tastatur (wenn dieses Fenster vorne ist) ----------------
@@ -294,13 +345,18 @@
     ArrowUp: 'up', ArrowDown: 'down', PageUp: 'pgup', PageDown: 'pgdn',
     ArrowLeft: 'pgup', ArrowRight: 'pgdn',
   };
+  const send = (k) => fetch('/key', { method: 'POST', body: JSON.stringify({ k }) }).catch(() => {});
   addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === 'KeyM') {   // Cmd+Shift+M: Merkmodus
+      e.preventDefault();
+      return send('learn');
+    }
     if (e.metaKey || e.ctrlKey || e.altKey && e.key.length !== 1) return;   // Cmd-Shortcuts dem Browser lassen
     let k = KEYMAP[e.key];
     if (!k && e.key.length === 1) k = 'char:' + e.key;
     if (!k) return;
     e.preventDefault();
-    fetch('/key', { method: 'POST', body: JSON.stringify({ k }) }).catch(() => {});
+    send(k);
   });
 
   // Doppelklick: Vollbild

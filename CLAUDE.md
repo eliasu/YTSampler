@@ -21,11 +21,12 @@ Alle Dateien müssen neben der `.amxd` liegen. Abhängigkeiten: `brew install yt
 | `ytgrid.js` | jsui-Overlay über der Waveform (Takt-/Beatlinien, Pad-Marken), `ignoreclick 1`. **ES5.** |
 | `ytvoice.maxpat` / `ytwarpvoice.maxpat` | Stimmen für die zwei `poly~` (je 16). Erzeugt von `tools/build_voices.py`. |
 | `teletext.html`, `Teletext öffnen.command` | Videotext-Seite (http://localhost:8765) und Starter als randloses Chrome-Fenster. |
+| `ir_teletext/ir_teletext.ino` | Pro Micro mit IR-Empfänger an D7. Reicht rohe IR-Codes als Noten auf Kanal 15 weiter. Wird nicht nach Live kopiert. |
 | `tools/patchlib.py` | `Patch` (Box-Builder), `write_amxd()`, `check()`. |
 | `tools/release.sh` | Neue Version taggen und in die Ableton User Library kopieren. |
 | `README.md` | Anleitung für den Nutzer. Veraltet: „Device-Breite 870“ (richtig: 1378). |
 
-Ablage unter `~/Music/YTSampler/`: `cache/` (`<id>.wav` 44,1 kHz/16 Bit/Stereo, `<id>.json`, `<id>.chroma`), `sessions/` (`<nr>.json` + `<nr>.lock` mit PID), `web/` (Kopie von `teletext.html` für eingefrorene Devices), `chrome-profile/`.
+Ablage unter `~/Music/YTSampler/`: `cache/` (`<id>.wav` 44,1 kHz/16 Bit/Stereo, `<id>.json`, `<id>.chroma`), `sessions/` (`<nr>.json` + `<nr>.lock` mit PID), `ir.json` (gelernte Fernbedienung: Code → Taste), `web/` (Kopie von `teletext.html` für eingefrorene Devices), `chrome-profile/`.
 
 ## Git und Versionen
 
@@ -43,7 +44,7 @@ Ablage unter `~/Music/YTSampler/`: `cache/` (`<id>.wav` 44,1 kHz/16 Bit/Stereo, 
 - `[js]`-Ausgänge: 0 → `poly~ ytvoice 16 args ---ytbuf`, 1 → `node.script`, 2 → UI-Router `route memclear memadd selinfo lockset wsel status grid` (Rest → Pad-jsui; `memclear`/`memadd` sind tote Altlasten), 3 → `poly~ ytwarpvoice 16 args ---ytbuf`. Beide `poly~` → `live.gain~` → `plugout~`.
 - `node.script`-Ausgang 0 → `route rclear radd status loaded needmaxlen`. `rclear`/`radd` → Treffer-`umenu`, `status` → Status-Kommentar, `loaded` → `buffer~ replace <pfad>` **und** an `[js]`, `needmaxlen` → bangt das Max-Length-Feld. Alles andere geht an `[js]`.
 - `live.thisdevice` → `t b b b`: erst `init` an `[js]`, dann `set ---ytbuf` an `waveform~`, dann `live.path live_set` → Observer `tempo`, `root_note`, `scale_intervals`.
-- `notein` → `pack` → `note <pitch> <vel> <kanal>` an `[js]`.
+- `notein` → `pack` → `note <pitch> <vel> <kanal>` an `[js]`. Kanal 16 = Schreibmaschine (`key`), Kanal 15 = IR (`ir`), Rest = Pads.
 - `metro 16n @quantize 16n @active 1` → `tick` an `[js]` (Input-Quantize; läuft nur bei laufendem Transport). Pad-Anschläge gehen über `hit()`, das wartet bis zum nächsten `tick` oder sofort `trigger`/`noteoff` aufruft.
 - Suche, URL, Treffer-Auswahl, Max Len gehen **direkt vom Patch** an Node, nicht über `[js]`.
 - Achtung: `route` entfernt das erste Wort. Was hinter dem Router ankommt, hat kein Selektor-Präfix mehr.
@@ -55,7 +56,9 @@ Ablage unter `~/Music/YTSampler/`: `cache/` (`<id>.wav` 44,1 kHz/16 Bit/Stereo, 
 - Sampler: `pos <von> <bis> <dauer>` (ms) → `line~` fährt die Leseposition, `play~` liest.
 - Warp: `wplay <position> <tempo> <tonhöhe>` → `groove~ @timestretch 1`, Tempo als `sig~` (negativ = rückwärts), Tonhöhe per `pitchshift`. Die Stimme mutet sich via `thispoly~` 50 ms nach dem Release-Ende.
 
-**`[js]` → Node:** `load`, `analyze <i> <start> <span>`, `analyzeall <span> <16 starts>`, `beattrack <bpm>`, `session <nr>`, `savestate <uri-kodiertes JSON>`, `key <code>`, `favinfo <name>`.
+**`[js]` → Node:** `load`, `analyze <i> <start> <span>`, `analyzeall <span> <16 starts>`, `beattrack <bpm>`, `session <nr>`, `savestate <uri-kodiertes JSON>`, `key <code>`, `ir <note> <vel>`, `favinfo <name>`.
+
+**IR-Fernbedienung:** Code = Note + 128 × Bit 0 von (Velocity − 1), Wiederholung = Bit 1. Node übersetzt per `ir.json` in `handleKey`-Tasten (`up`, `down`, `pgup`, `pgdn`, `enter`, `back`, `tap:0`–`tap:9`, `power`). Merkmodus: Cmd+Shift+M (oder Strg+Shift+M) auf der Teletext-Seite → `learn`, Esc bricht ab. Ziffern tippen wie beim Handy (`TAP`, 1 = abc … 9 = yz, 0 = Leerzeichen, `TAP_MS`). `power` schaltet `ui.tvOff` → Abschalt-/Einschalt-Animation; aus = nur An/Aus wirkt.
 **Patch → Node:** `search`/`text`, `pick <menüindex>` (0 = Kopfzeile), `load <url|id>`, `maxlen <min>`. Unverdrahtet: `opencache`.
 **Node → `[js]`:** `loaded <pfad> <ms> <id> <titel…>`, `needsession`, `newsession <nr>`, `state <kodiert>`, `statenone`, `tuning <cent>`, `tempo <bpm> <konf>`, `analysisready`, `padinfo <i> <konf> <grundton> <moll> <12 chroma>`, `beatsclear`, `beatsadd <ms…>` (Blöcke à 200), `beatsdone <down> <anzahl>`.
 **`[js]` → UI (Ausgang 2):** `selinfo`, `lockset`, `wsel <von> <bis>`, `status`, `grid <clear|dur|beats|down|show|pads …>`, sowie `padflash`, `padlight`, `padsel` ans Pad-jsui.
@@ -114,5 +117,6 @@ Alles, was nur in echtem Max sichtbar wird, testet der Nutzer in Live. Wenn etwa
 - Warp in echtem Max: `groove~ @timestretch`, `pitchshift`, Positions-Float im linken Eingang.
 - Grid-Overlay: deckungsgleich mit der Waveform? Durchsichtig? Klickt es durch?
 - Treffsicherheit von Tonart, Tempo, Beats und „1“ auf echtem YouTube-Material (bisher nur synthetisch gemessen).
-- Reicht Live MIDI-Kanal 16 unverändert an `notein` durch?
+- Reicht Live MIDI-Kanal 15/16 unverändert an `notein` durch?
+- IR mit echter Fernbedienung; fängt Chrome Cmd+Shift+M selbst ab?
 - Geparkt: Arduino-Sketch für die Schreibmaschine (Matrix → Noten auf Kanal 16), LED-/Display-Rückmeldung per USB-Serial.

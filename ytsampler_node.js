@@ -43,6 +43,8 @@ const ui = {
   title: '',
   fav: '',
   message: '',
+  learn: null,      // Schritt im IR-Merkmodus oder null
+  tvOff: false,     // Fernseher per An/Aus-Taste "abgeschaltet"
 };
 let pushUi = () => {};  // wird unten vom Webserver gesetzt
 
@@ -798,6 +800,8 @@ function viewState() {
     maxLen: Math.round(maxLenSec / 60),
     loading: ui.loading, phase: ui.phase, progress: Math.round(ui.progress),
     title: ui.title, fav: ui.fav, message: ui.message,
+    learn: ui.learn === null ? null : { step: ui.learn + 1, of: IR_STEPS.length, label: IR_STEPS[ui.learn][1] },
+    tvOff: ui.tvOff,
   };
 }
 
@@ -815,6 +819,7 @@ pushUi = () => {
 // oder als MIDI-Noten auf Kanal 16 (Schreibmaschine, funktioniert immer).
 function handleKey(k) {
   const n = lastResults.length;
+  if (!String(k).startsWith('tap:')) tap.d = -1;     // andere Taste beendet das Mehrfachtippen
   switch (k) {
     case 'enter': {
       const q = ui.query.trim();
@@ -823,13 +828,19 @@ function handleKey(k) {
       break;
     }
     case 'back': ui.query = ui.query.slice(0, -1); break;
-    case 'esc': ui.query = ''; break;
+    case 'esc':
+      if (ui.learn !== null) { ui.learn = null; ui.message = 'Lernen abgebrochen'; }
+      else ui.query = '';
+      break;
+    case 'learn': ui.learn = 0; irNew = {}; break;
+    case 'power': ui.tvOff = !ui.tvOff; break;
     case 'up': ui.sel = Math.max(0, ui.sel - 1); break;
     case 'down': ui.sel = Math.min(Math.max(0, n - 1), ui.sel + 1); break;
     case 'pgup': ui.sel = Math.max(0, (Math.floor(ui.sel / PAGE_SIZE) - 1) * PAGE_SIZE); break;
     case 'pgdn': ui.sel = Math.min(Math.max(0, n - 1), (Math.floor(ui.sel / PAGE_SIZE) + 1) * PAGE_SIZE); break;
     default:
-      if (typeof k === 'string' && k.startsWith('char:')) {
+      if (typeof k === 'string' && k.startsWith('tap:')) multitap(+k.slice(4));
+      else if (typeof k === 'string' && k.startsWith('char:')) {
         const ch = k.slice(5);
         if (ch.length === 1 && ui.query.length < 36) ui.query += ch;
       }
@@ -845,6 +856,64 @@ Max.addHandler('key', (code) => {
   if (MIDI_KEYS[code]) handleKey(MIDI_KEYS[code]);
   else if (MIDI_CHARS[code]) handleKey('char:' + MIDI_CHARS[code]);
   else if (code >= 32 && code <= 126) handleKey('char:' + String.fromCharCode(code));
+});
+
+// Ziffern der Fernbedienung wie beim Handy: mehrmals drücken = nächster Buchstabe
+const TAP = [' 0', 'abc1', 'def2', 'ghi3', 'jkl4', 'mno5', 'pqr6', 'stu7', 'vwx8', 'yz9'];
+const TAP_MS = 1200;   // so lange zählt erneutes Drücken als "nächster Buchstabe"
+let tap = { d: -1, i: 0, t: 0 };
+function multitap(d) {
+  const set = TAP[d], now = Date.now();
+  if (!set) return;
+  if (d === tap.d && now - tap.t < TAP_MS) {
+    tap.i = (tap.i + 1) % set.length;
+    ui.query = ui.query.slice(0, -1) + set[tap.i];
+  } else {
+    const n = ui.query.length;
+    ui.query += set[0];
+    if (ui.query.length > 36) ui.query = ui.query.slice(0, 36);
+    tap = { d: ui.query.length > n ? d : -1, i: 0, t: 0 };
+  }
+  tap.t = now;
+}
+
+// IR-Fernbedienung: der Pro Micro schickt rohe Codes auf Kanal 15
+// (Note = Code & 127, Velocity = 1 + Bit 7 + 2 bei Wiederholung).
+// Die Zuordnung lernt der Merkmodus (Cmd+Shift+M auf der Teletext-Seite).
+const IR_FILE = path.join(os.homedir(), 'Music', 'YTSampler', 'ir.json');
+const IR_STEPS = [
+  ['up', 'HOCH'], ['down', 'RUNTER'], ['pgup', 'LINKS'], ['pgdn', 'RECHTS'],
+  ['enter', 'OK'], ['back', 'LÖSCHEN'],
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((d) => ['tap:' + d, String(d)]),
+  ['power', 'AN/AUS'],
+];
+const IR_REPEAT = new Set(['up', 'down', 'pgup', 'pgdn', 'back']);   // beim Halten wiederholen
+let irMap = {};
+try { irMap = JSON.parse(fs.readFileSync(IR_FILE, 'utf8')); } catch (e) { /* noch nichts gelernt */ }
+let irNew = {};
+
+Max.addHandler('ir', (note, vel) => {
+  const code = (note & 127) + 128 * ((vel - 1) & 1);
+  const rep = ((vel - 1) & 2) !== 0;
+  if (ui.learn !== null) {
+    if (rep || code in irNew) return;                  // gehalten oder doppelt gedrückt
+    irNew[code] = IR_STEPS[ui.learn][0];
+    if (++ui.learn >= IR_STEPS.length) {
+      ui.learn = null;
+      irMap = irNew;
+      try {
+        fs.mkdirSync(path.dirname(IR_FILE), { recursive: true });
+        fs.writeFileSync(IR_FILE, JSON.stringify(irMap, null, 1));
+        ui.message = 'Fernbedienung gespeichert';
+      } catch (e) { ui.message = 'Fehler beim Speichern: ' + e.message; }
+    }
+    pushUi();
+    return;
+  }
+  const k = irMap[code];
+  if (!k || (rep && !IR_REPEAT.has(k))) return;
+  if (ui.tvOff && k !== 'power') return;               // Fernseher aus: nur An/Aus geht
+  handleKey(k);
 });
 
 Max.addHandler('favinfo', (...parts) => { ui.fav = parts.join(' '); pushUi(); });
