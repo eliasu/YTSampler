@@ -18,7 +18,7 @@ var KEY_CHANNEL = 16;    // Schreibmaschine: Noten auf diesem Kanal sind Tasten 
 var IR_CHANNEL = 15;     // IR-Fernbedienung: liest die Teletext-Seite selbst (Web MIDI), hier ignorieren
 var NFAV = 64;           // Favoriten-Plätze (4 Bänke à 16)
 var BANKS = ["A", "B", "C", "D"];
-var HOLD_MAX = 10000;   // Hold-Modus: maximale Länge in ms
+var HOLD_MAX = 1e9;     // Hold-Modus: bis Songende (playRange begrenzt auf durMs bzw. 0)
 var VMAX = 16;          // Anzahl Instanzen im poly~
 var VOICE_OPTS = [1, 2, 3, 4, 5, 8, 16];
 var NOTE = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
@@ -249,7 +249,7 @@ function playRange(i) {
     return { from: from, to: to, R: R };
 }
 
-// Abgespielter Quellbereich: Trigger = Slice, Hold = bis zu HOLD_MAX
+// Abgespielter Quellbereich: Trigger = Slice, Hold = bis Songende
 // Warp: Slice = gleicher Notenwert im Tempo der Quelle
 function padSpan(i) {
     var base = P.mode ? HOLD_MAX : sliceMs();
