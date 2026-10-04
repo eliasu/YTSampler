@@ -9,7 +9,7 @@
 <style>
   /*
     YT SAMPLER – Teletext-Ansicht
-    40 x 25 Zeichen, 4:3, kein Scrollen.
+    40 x 25 Zeichen, füllt das Fenster, kein Scrollen.
     URL-Optionen:  ?crt=1          Scanlines/Glow zur Vorschau auf normalen Bildschirmen
                    ?overscan=6     Sicherheitsrand in Prozent (Standard 5, Röhren-TVs schneiden am Rand ab)
     Doppelklick = Vollbild.
@@ -302,10 +302,10 @@
     screenEl.innerHTML = html;
   }
 
-  // ---------------- Größe: 4:3, Schrift auf Zellbreite strecken ----------------
+  // ---------------- Größe: ganzes Fenster, Schrift auf Zellbreite strecken ----------------
   function resize() {
     const vw = innerWidth * (1 - 2 * OVERSCAN), vh = innerHeight * (1 - 2 * OVERSCAN);
-    const w = Math.min(vw, vh * 4 / 3), h = w * 3 / 4;
+    const w = vw, h = vh;
     screenEl.style.width = w + 'px';
     screenEl.style.height = h + 'px';
     const cellH = h / ROWS, cellW = w / COLS;
