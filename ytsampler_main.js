@@ -24,8 +24,9 @@ var NOTE = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
 var HOLD_ANALYSIS = 4000;   // Analysefenster im Hold-Modus (ms)
 
 // Einstellungen kommen von den live.*-Reglern (die speichert Live selbst)
-var P = { bpm: 120, div: 5, rate: 1, atk: 2, rel: 20, mode: 0, rev: 0, base: 36, voices: 16, tune: 0, thresh: 0.5, warp: 0, grid: 0, snap: 0 };   // snap: 0 = Slice, 1 = Beat, 2 = Bar
-var TEMPO_MIN_CONF = 0.3;   // darunter wird ein erkanntes Tempo nicht automatisch benutzt
+var P = { bpm: 120, div: 5, rate: 1, atk: 2, rel: 20, mode: 0, rev: 0, base: 36, voices: 16, tune: 0, thresh: 0.5, warp: 0, grid: 0, snap: 0, quant: 0 };   // snap: 0 = Slice, 1 = Beat, 2 = Bar
+var TEMPO_MIN_CONF = 0.3;
+var QUANT_LATE = 0.3;       // Input-Quantize: bis zu diesem Anteil einer 1/16 nach dem Raster sofort spielen (zu spät gedrückt)   // darunter wird ein erkanntes Tempo nicht automatisch benutzt
 
 // Lives globale Skala (Live 12: Song.root_note / Song.scale_intervals)
 var SC = { root: 0, ints: [0, 2, 4, 5, 7, 9, 11] };
@@ -419,12 +420,32 @@ function note(p, v, ch) {
     }
     var i = Math.floor(p) - P.base;
     if (i < 0 || i >= NPADS) return;
-    if (v > 0) trigger(i, v);
-    else noteoff(i);
+    hit(i, v);
 }
 
-function padhit(i) { trigger(clamp(Math.floor(i), 0, NPADS - 1), 100); }
-function padup(i) { noteoff(clamp(Math.floor(i), 0, NPADS - 1)); }
+function padhit(i) { hit(clamp(Math.floor(i), 0, NPADS - 1), 100); }
+function padup(i) { hit(clamp(Math.floor(i), 0, NPADS - 1), 0); }
+
+// ---------- Input-Quantize ----------
+// [metro 16n @quantize 16n] im Patch schickt tick auf jede 1/16 von Lives Transport.
+// Läuft der Transport nicht, kommen keine Ticks und alles spielt sofort.
+var qTick = 0, qQueue = [];
+function quantize(v) { P.quant = v ? 1 : 0; if (!P.quant) tick(); }
+function tick() {
+    qTick = nowMs();
+    var q = qQueue; qQueue = [];
+    for (var n = 0; n < q.length; n++) play(q[n][0], q[n][1]);
+}
+function hit(i, v) {
+    var step = 15000 / Math.max(20, P.bpm), since = nowMs() - qTick;
+    var wait = P.quant && since < step * 1.5 && since > step * QUANT_LATE;
+    if (!wait && v === 0) {                    // Note-Off hinter seinem wartenden Note-On einreihen
+        for (var n = 0; n < qQueue.length; n++) if (qQueue[n][0] === i) wait = true;
+    }
+    if (wait) qQueue.push([i, v]);
+    else play(i, v);
+}
+function play(i, v) { if (v > 0) trigger(i, v); else noteoff(i); }
 
 function trigger(i, vel) {
     sel = i;

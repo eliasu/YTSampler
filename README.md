@@ -45,6 +45,7 @@ Das Device auf eine MIDI-Spur ziehen. Wenn alles läuft: Device im Editor öffne
 | ÷2 / ×2 | korrigiert die typischen Halb/Doppelt-Fehler der Erkennung |
 | Grid | Pads starten auf dem erkannten Beat-Raster des Videos (knapp vor dem Einsatz). Kein erkennbarer Beat → bleibt aus, Anzeige „G: kein Beat“. |
 | Snap | Rasterweite: Slice (= aktueller Notenwert), Beat oder Bar (jedes Pad startet auf einer „1“) |
+| Quant | Input-Quantize: Pad-Anschläge warten auf die nächste 1/16 von Lives Transport. Bis knapp ⅓ einer 1/16 zu spät gespielt klingt sofort. Läuft der Transport nicht, wirkt Quant nicht. |
 | Rate | 0.25–2×, ändert Tonhöhe, die rhythmische Länge bleibt gleich |
 | Attack / Release | Fades gegen Knackser |
 | Trigger / Hold | Trigger: spielt genau einen Slice (Notenwert). Hold: spielt, solange gedrückt, max. 10 s (`HOLD_MAX` in `ytsampler_main.js`) |

@@ -4610,6 +4610,102 @@
    },
    {
     "box": {
+     "id": "obj-181",
+     "maxclass": "live.text",
+     "numinlets": 1,
+     "numoutlets": 2,
+     "patching_rect": [
+      1910.0,
+      600.0,
+      78.0,
+      18.0
+     ],
+     "outlettype": [
+      "",
+      ""
+     ],
+     "text": "Quant",
+     "presentation": 1,
+     "presentation_rect": [
+      1242.0,
+      136.0,
+      78.0,
+      18.0
+     ],
+     "mode": 1,
+     "texton": "Quant ✓",
+     "saved_attribute_attributes": {
+      "valueof": {
+       "parameter_longname": "Input Quantize",
+       "parameter_shortname": "Quant",
+       "parameter_type": 2,
+       "parameter_enum": [
+        "off",
+        "on"
+       ],
+       "parameter_mmax": 1
+      }
+     },
+     "parameter_enable": 1,
+     "varname": "Quantize"
+    }
+   },
+   {
+    "box": {
+     "id": "obj-182",
+     "maxclass": "newobj",
+     "numinlets": 1,
+     "numoutlets": 1,
+     "outlettype": [
+      ""
+     ],
+     "patching_rect": [
+      1910.0,
+      630.0,
+      100.0,
+      22.0
+     ],
+     "text": "prepend quantize"
+    }
+   },
+   {
+    "box": {
+     "id": "obj-183",
+     "maxclass": "newobj",
+     "numinlets": 2,
+     "numoutlets": 1,
+     "outlettype": [
+      "bang"
+     ],
+     "patching_rect": [
+      2020.0,
+      600.0,
+      170.0,
+      22.0
+     ],
+     "text": "metro 16n @quantize 16n @active 1"
+    }
+   },
+   {
+    "box": {
+     "id": "obj-184",
+     "maxclass": "message",
+     "numinlets": 2,
+     "numoutlets": 1,
+     "outlettype": [
+      ""
+     ],
+     "patching_rect": [
+      2020.0,
+      630.0,
+      35.0,
+      22.0
+     ],
+     "text": "tick"
+    }
+   },
+   {
+    "box": {
      "id": "obj-180",
      "maxclass": "jsui",
      "numinlets": 1,
@@ -6971,6 +7067,54 @@
      ],
      "destination": [
       "obj-180",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-181",
+      0
+     ],
+     "destination": [
+      "obj-182",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-182",
+      0
+     ],
+     "destination": [
+      "obj-1",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-183",
+      0
+     ],
+     "destination": [
+      "obj-184",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-184",
+      0
+     ],
+     "destination": [
+      "obj-1",
       0
      ]
     }

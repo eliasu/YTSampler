@@ -2,7 +2,7 @@
 
 Max-for-Live-Instrument (macOS, Apple Silicon, Live 12 / Max 9) nach dem Vorbild von ypc2000.fun: YouTube-Video suchen, Audio laden, 16 zufällige Slices auf Pads, per MIDI fingerdrummen.
 
-**Charakter:** Live-Werkzeug für die Bühne, kein Produktionswerkzeug. Features, die zu speziell sind oder die Bedienung komplizierter machen, lehnt der Nutzer ab. Im Zweifel einfach halten und vorher fragen. Bewusst abgelehnt: Launch-Quantisierung, Button zum Verschieben der „1“, Pads als Clip exportieren.
+**Charakter:** Live-Werkzeug für die Bühne, kein Produktionswerkzeug. Features, die zu speziell sind oder die Bedienung komplizierter machen, lehnt der Nutzer ab. Im Zweifel einfach halten und vorher fragen. Bewusst abgelehnt: Launch-Quantisierung (Clip-artig auf Takte; Input-Quantize auf 1/16 per Toggle „Quant“ gibt es seit 1.1.0), Button zum Verschieben der „1“, Pads als Clip exportieren.
 
 **Sprache:** Mit dem Nutzer Deutsch. UI-Beschriftungen und Code-Kommentare deutsch. Parameternamen (`parameter_longname`) sind englisch, so bleiben sie.
 
@@ -44,6 +44,7 @@ Ablage unter `~/Music/YTSampler/`: `cache/` (`<id>.wav` 44,1 kHz/16 Bit/Stereo, 
 - `node.script`-Ausgang 0 → `route rclear radd status loaded needmaxlen`. `rclear`/`radd` → Treffer-`umenu`, `status` → Status-Kommentar, `loaded` → `buffer~ replace <pfad>` **und** an `[js]`, `needmaxlen` → bangt das Max-Length-Feld. Alles andere geht an `[js]`.
 - `live.thisdevice` → `t b b b`: erst `init` an `[js]`, dann `set ---ytbuf` an `waveform~`, dann `live.path live_set` → Observer `tempo`, `root_note`, `scale_intervals`.
 - `notein` → `pack` → `note <pitch> <vel> <kanal>` an `[js]`.
+- `metro 16n @quantize 16n @active 1` → `tick` an `[js]` (Input-Quantize; läuft nur bei laufendem Transport). Pad-Anschläge gehen über `hit()`, das wartet bis zum nächsten `tick` oder sofort `trigger`/`noteoff` aufruft.
 - Suche, URL, Treffer-Auswahl, Max Len gehen **direkt vom Patch** an Node, nicht über `[js]`.
 - Achtung: `route` entfernt das erste Wort. Was hinter dem Router ankommt, hat kein Selektor-Präfix mehr.
 
