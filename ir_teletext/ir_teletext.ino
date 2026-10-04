@@ -8,7 +8,7 @@
 #include <IRremote.hpp>
 #include <MIDIUSB.h>
 
-const uint8_t IR_PIN = 2;   // Datenpin des IR-Empfängers
+const uint8_t IR_PIN = 7;   // Datenpin des IR-Empfängers
 const uint8_t CH = 15;      // Kanal 16 (0-basiert)
 
 // Tasten-Codes → Zeichen. Codes per Lernmodus ermitteln.
