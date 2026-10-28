@@ -275,7 +275,7 @@ Ohne Bank (Teletext, `bankgone`, 1.x-Set) gilt alles wie in 1.3.x: Buffer = ganz
 | Bibliothek neuer | „Bibliothek aus neuerer Version“ | — | stumm |
 | Analyse fehlt | `<nr>` + Name | „Analyse fehlt – Bank im Editor neu schneiden“ | spielen, ohne Tune/Grid |
 
-„kurz“ = 2 s, danach wieder die normale Zeile **(festgelegt)**. „stumm“ = Pad-Anschläge werden ignoriert und der Buffer wird geleert.
+„kurz“ = 2 s, danach wieder die normale Zeile **(festgelegt)**. „stumm“ = Pad-Anschläge werden ignoriert und der Buffer wird geleert. Das gilt nur, wenn eine Bank aktiv ist oder nichts geladen ist. Teletext und 1.x-Sets („keine Bank“) spielen weiter, nur die Statuszeile zeigt den Zustand **(Nutzer, 2026-10-28)**.
 
 ### 4.6 Rückmeldung an Node
 
