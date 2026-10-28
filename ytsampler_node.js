@@ -57,7 +57,6 @@ fs.mkdirSync(SESSIONS, { recursive: true });
 let allResults = [];   // ungefilterte Treffer der letzten Suche
 let lastResults = [];  // angezeigte Treffer (Index = Menüeintrag)
 let lastQuery = '';
-let busy = false;
 
 const status = (t) => { Max.outlet('status', t); ui.message = String(t); pushUi(); };
 
@@ -93,9 +92,12 @@ function errMsg(e) {
   return 'Fehler: ' + msg.slice(0, 140);
 }
 
-function run(cmd, args, onLine) {
+// job (optional): {aborted, child} – abort(job) beendet den laufenden Prozess
+function run(cmd, args, onLine, job) {
   return new Promise((resolve, reject) => {
+    if (job && job.aborted) { reject(new Error('abgebrochen')); return; }
     const p = spawn(cmd, args, { env: ENV });
+    if (job) job.child = p;
     let out = '', err = '';
     p.stdout.on('data', (d) => {
       const s = d.toString();
@@ -112,6 +114,11 @@ function run(cmd, args, onLine) {
       }
     });
   });
+}
+
+function abort(job) {
+  job.aborted = true;
+  if (job.child) job.child.kill();
 }
 
 function extractId(input) {
@@ -558,32 +565,61 @@ function saveAnalysis(file, a) {
   fs.writeFileSync(file, Buffer.concat([Buffer.from(head.buffer), f32(a.onset), f32(a.bass), f32(a.frames)]));
 }
 
+// Spec 2.4: Das Format ändert sich nur abwärtskompatibel. Abgelegte Analysen (D/snippets) lassen sich
+// ohne ganze WAV nicht neu rechnen. Neue Version: Felder hinten anhängen, Leser für die alten behalten.
+// Versionen 1 und 2 lagen nur im Cache (neben der WAV) und werden dort neu gerechnet.
+const AN_READABLE = [3];
+
 function readAnalysis(file) {
   try {
     const buf = fs.readFileSync(file);
     const arr = new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length - (buf.length % 4)));
-    if (arr[0] !== AN.VERSION) return null;
+    if (!AN_READABLE.includes(arr[0])) return null;
     const nf = arr[3], no = arr[7], H = 8;
-    if (arr.length !== H + 2 * no + nf * AN.STRIDE) return null;
+    if (arr.length !== H + 2 * no + nf * AN.STRIDE) return null;   // Version 3: nichts angehängt
     return { srd: arr[1], tuning: arr[2], nf, bpm: Math.round(arr[4] * 10) / 10, bpmConf: Math.round(arr[5] * 100) / 100,
              fps: arr[6], onset: arr.subarray(H, H + no), bass: arr.subarray(H + no, H + 2 * no),
-             frames: arr.subarray(H + 2 * no) };
+             frames: arr.subarray(H + 2 * no, H + 2 * no + nf * AN.STRIDE) };
   } catch (e) { return null; }
 }
 
-async function ensureAnalysis(id, wav, title) {
+const chromaCache = (v) => path.join(CACHE, `${v}.chroma`);
+const chromaBank = (v) => path.join(SNIP_DIR, `${v}.chroma`);
+const cacheWav = (v) => path.join(CACHE, `${v}.wav`);
+const hasWav = (v) => fs.existsSync(cacheWav(v));
+
+// Analyse eines Videos, null = fehlt. bank: zuerst die abgelegte aus D/snippets (Bühne ohne ganze WAV),
+// sonst Cache, sonst aus der ganzen WAV rechnen. Mit bank wird sie nach D/snippets kopiert, wenn sie dort fehlt.
+function getAnalysis(v, bank) {
+  let a = bank ? readAnalysis(chromaBank(v)) : null;
+  const inBank = !!a;
+  if (!a) a = readAnalysis(chromaCache(v));
+  if (!a && hasWav(v)) { a = computeAnalysis(cacheWav(v)); saveAnalysis(chromaCache(v), a); }
+  if (a && bank && !inBank && !newerAnalysis(chromaBank(v))) {
+    const tmp = path.join(SNIP_DIR, `${v}.${process.pid}.tmp`);
+    try { fs.copyFileSync(chromaCache(v), tmp); fs.renameSync(tmp, chromaBank(v)); } catch (e) { Max.post(`YT Sampler: Analyse nicht abgelegt: ${e.message}`); }
+  }
+  return a;
+}
+
+// abgelegt von einer neueren Device-Version: nie überschreiben
+function newerAnalysis(file) {
+  try { const b = Buffer.alloc(4); const fd = fs.openSync(file, 'r'); fs.readSync(fd, b, 0, 4, 0); fs.closeSync(fd); return b.readFloatLE(0) > AN.VERSION; } catch (e) { return false; }
+}
+
+// Analyse ans Device: tuning, tempo, silence, analysisready. bank: aus D/snippets (Spec 2.4), sonst aus L/cache.
+async function ensureAnalysis(id, title, bank) {
   analysis = null;
-  await new Promise((r) => setImmediate(r)); // "loaded" zuerst rausschicken
-  const cacheFile = path.join(CACHE, `${id}.chroma`);
-  let a = readAnalysis(cacheFile);
-  if (!a) {
+  await new Promise((r) => setImmediate(r)); // "loaded" bzw. "bank" zuerst rausschicken
+  let a = bank ? readAnalysis(chromaBank(id)) : readAnalysis(chromaCache(id));
+  if (!a && hasWav(id)) {
     status('Analysiere Tonart …');
     await new Promise((r) => setTimeout(r, 20));
     const t0 = Date.now();
-    a = computeAnalysis(wav);
-    saveAnalysis(cacheFile, a);
+    a = getAnalysis(id, bank);
     Max.post(`YT Sampler: Analyse in ${Date.now() - t0} ms`);
   }
+  if (!a) { status('Analyse fehlt – Bank im Editor neu schneiden'); return; }
   analysis = { id, ...a };
   const cents = Math.round(a.tuning * 100);
   Max.outlet('tuning', cents);
@@ -682,66 +718,84 @@ function showResults() {
   else status(`${lastResults.length} Treffer ≤ ${lim}` + (hidden > 0 ? ` (${hidden} ausgeblendet)` : ''));
 }
 
+// Ganzen Track in den Cache laden. Zwei Wege (Spec 3.1): way "dev" (Teletext) und "ed" (Editor), je ein yt-dlp.
+// Geladen wird unter <id>.dl-<way>.* und erst am Ende auf <id>.wav umbenannt: Ein abgebrochener
+// Download hinterlässt keine halbe WAV. onPhase(phase, prozent): info | long | download | convert
+async function download(id, way, job, onPhase) {
+  const url = `https://www.youtube.com/watch?v=${id}`;
+  const tmp = path.join(CACHE, `${id}.dl-${way}`);
+  try {
+    onPhase('info', 0);
+    const j = JSON.parse(await run('yt-dlp', ['-J', '--no-playlist', '--no-warnings', url], null, job));
+    const info = { id, title: clean(j.title || id), raw: String(j.title || id), duration: j.duration || 0 };
+    const args = [
+      '-f', 'bestaudio/best',
+      '-x', '--audio-format', 'wav',
+      '--postprocessor-args', 'ExtractAudio:-ar 44100 -ac 2',
+      '--no-playlist', '--newline', '--no-warnings', '--force-overwrites',
+      '-o', tmp + '.%(ext)s',
+    ];
+    if (info.duration > MAX_SECONDS) {
+      args.push('--download-sections', `*0-${MAX_SECONDS}`);
+      onPhase('long', 0);
+    }
+    args.push(url);
+    let lastPct = -10;
+    await run('yt-dlp', args, (line) => {
+      const m = line.match(/\[download\]\s+([\d.]+)%/);
+      if (m) {
+        const p = parseFloat(m[1]);
+        if (p - lastPct >= 5 || p >= 100) { lastPct = p; onPhase('download', p); }
+      } else if (/ExtractAudio/.test(line)) onPhase('convert', 100);
+    }, job);
+    if (!fs.existsSync(tmp + '.wav')) throw new Error('WAV fehlt – ist ffmpeg installiert?');
+    fs.renameSync(tmp + '.wav', cacheWav(id));
+    fs.writeFileSync(path.join(CACHE, `${id}.json`), JSON.stringify(info));
+    return info;
+  } finally {
+    // Reste (.webm, .part, …) dieses Wegs wegräumen
+    for (const n of fs.readdirSync(CACHE)) if (n.startsWith(`${id}.dl-${way}.`)) { try { fs.unlinkSync(path.join(CACHE, n)); } catch (e) { /* weg */ } }
+  }
+}
+
+// Teletext: ins Device laden. Ein neuer Wunsch bricht den laufenden ab (statt "busy").
+let devJob = null;
 async function loadVideo(input) {
   const id = extractId(input);
   if (!id) { status('Keine gültige YouTube-URL oder ID'); return; }
-  if (busy) { status('Lade noch – bitte kurz warten'); return; }
-  busy = true;
+  if (devJob) abort(devJob);
+  const job = devJob = { aborted: false, child: null };
   ui.loading = true; ui.phase = 'INFO'; ui.progress = 0; pushUi();
   try {
-    const url = `https://www.youtube.com/watch?v=${id}`;
-    const wav = path.join(CACHE, `${id}.wav`);
-    const metaFile = path.join(CACHE, `${id}.json`);
-    let info = readJson(metaFile);
-
-    if (!fs.existsSync(wav) || !info) {
-      status('Hole Video-Infos …');
-      const j = JSON.parse(await run('yt-dlp', ['-J', '--no-playlist', '--no-warnings', url]));
-      info = { id, title: clean(j.title || id), duration: j.duration || 0 };
-
-      const args = [
-        '-f', 'bestaudio/best',
-        '-x', '--audio-format', 'wav',
-        '--postprocessor-args', 'ExtractAudio:-ar 44100 -ac 2',
-        '--no-playlist', '--newline', '--no-warnings', '--force-overwrites',
-        '-o', path.join(CACHE, '%(id)s.%(ext)s'),
-      ];
-      if (info.duration > MAX_SECONDS) {
-        args.push('--download-sections', `*0-${MAX_SECONDS}`);
-        status(`Langes Video – nehme die ersten ${MAX_SECONDS / 60} Minuten`);
-      }
-      args.push(url);
-
-      let lastPct = -10;
-      await run('yt-dlp', args, (line) => {
-        const m = line.match(/\[download\]\s+([\d.]+)%/);
-        if (m) {
-          const p = parseFloat(m[1]);
-          if (p - lastPct >= 5 || p >= 100) { lastPct = p; ui.phase = 'DOWNLOAD'; ui.progress = p; status(`Lade … ${p.toFixed(0)} %`); }
-        } else if (/ExtractAudio/.test(line)) {
-          ui.phase = 'KONVERT';
-          status('Konvertiere …');
-        }
+    let info = readJson(path.join(CACHE, `${id}.json`));
+    if (!hasWav(id) || !info) {
+      info = await download(id, 'dev', job, (ph, p) => {
+        if (job.aborted) return;
+        if (ph === 'info') status('Hole Video-Infos …');
+        else if (ph === 'long') status(`Langes Video – nehme die ersten ${MAX_SECONDS / 60} Minuten`);
+        else if (ph === 'download') { ui.phase = 'DOWNLOAD'; ui.progress = p; status(`Lade … ${p.toFixed(0)} %`); }
+        else if (ph === 'convert') { ui.phase = 'KONVERT'; status('Konvertiere …'); }
       });
-      if (!fs.existsSync(wav)) throw new Error('WAV fehlt – ist ffmpeg installiert?');
-      fs.writeFileSync(metaFile, JSON.stringify(info));
+      libEvents.emit('cache', cacheSize());
     }
-
-    const ms = wavDurationMs(wav);
+    if (job.aborted) return;
+    const ms = wavDurationMs(cacheWav(id));
     analysis = null;
-    Max.outlet('loaded', wav, ms, id, info.title);
+    Max.outlet('loaded', cacheWav(id), ms, id, info.title);
     ui.title = info.title; ui.phase = 'ANALYSE';
     status(`Bereit: ${info.title}`);
     try {
-      await ensureAnalysis(id, wav, info.title);
+      await ensureAnalysis(id, info.title, false);
     } catch (e) {
       status('Tonart-Analyse fehlgeschlagen: ' + clean(e.message).slice(0, 80));
     }
   } catch (e) {
-    status(errMsg(e));
+    if (!job.aborted) status(errMsg(e));
   } finally {
-    busy = false;
-    ui.loading = false; ui.phase = ''; pushUi();
+    if (devJob === job) {
+      devJob = null;
+      ui.loading = false; ui.phase = ''; pushUi();
+    }
   }
 }
 
@@ -1111,6 +1165,329 @@ function libBackup() {
 }
 
 // =====================================================================
+// Snippets (Spec 2.3): D/snippets/<bankId>.wav + .json. 16 Fächer à 16 s, Fach i ab i × 16000 ms,
+// kürzere mit Stille aufgefüllt. Zustand snip/wav/fail nur im Speicher.
+// libEvents für Paket 4: 'status' (snip/wav/fail geändert -> SSE lib mit gleicher rev), 'job', 'msg', 'cache'.
+// =====================================================================
+const SNIP_DIR = path.join(DATA, 'snippets');
+const SNIP_MS = 16000;
+const SNIP_SR = 44100, BPF = 4;                      // 16 Bit Stereo: 4 Byte pro Frame
+const SLOT_BYTES = SNIP_MS * SNIP_SR / 1000 * BPF;   // ein Fach
+const SNIP_DEBOUNCE = 500;
+const SNIP_KEEP_MS = 7 * 86400000;                   // Snippets gelöschter Bänke (Undo)
+const CACHE_WARN = 10000000000;
+fs.mkdirSync(SNIP_DIR, { recursive: true });
+
+const snipWav = (id) => path.join(SNIP_DIR, `${id}.wav`);
+const snipJson = (id) => path.join(SNIP_DIR, `${id}.json`);
+const snipTimers = new Map();   // bankId -> Entprell-Timer (Zustand stale)
+const videoFail = {};           // video -> Grund des letzten gescheiterten Downloads
+let snipCutting = 0;            // bankId, die gerade geschnitten wird
+
+function wavHeader(dataBytes) {
+  const h = Buffer.alloc(44);
+  h.write('RIFF', 0); h.writeUInt32LE(36 + dataBytes, 4); h.write('WAVE', 8);
+  h.write('fmt ', 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(2, 22);
+  h.writeUInt32LE(SNIP_SR, 24); h.writeUInt32LE(SNIP_SR * BPF, 28); h.writeUInt16LE(BPF, 32); h.writeUInt16LE(16, 34);
+  h.write('data', 36); h.writeUInt32LE(dataBytes, 40);
+  return h;
+}
+
+// aktuell = .json passt zu video und starts der Bank
+function snipCurrent(bank) {
+  const j = readJson(snipJson(bank.id));
+  return !!j && j.video === bank.video && Array.isArray(j.starts) && j.starts.join() === bank.starts.join() && fs.existsSync(snipWav(bank.id));
+}
+
+// Für SSE lib: banks[].snip und .wav (videos[].fail steht in videoFail)
+function snipStatus(bank) {
+  const snip = snipCutting === bank.id ? 'cutting' : snipTimers.has(bank.id) ? 'stale'
+    : snipCurrent(bank) ? 'ok' : fs.existsSync(snipJson(bank.id)) ? 'stale' : 'missing';
+  return { snip, wav: hasWav(bank.video) };
+}
+
+// Quelle fürs Schneiden: die ganze WAV, sonst die Fächer der alten Snippet-Datei. Das geht nur, wenn jeder
+// Start darin vorkommt (Tauschen, Undo eines Tauschs, Duplizieren). null = keine Quelle (playonly).
+// slots[i] = [Byte-Position, Bytes] in file
+function snipSource(bank) {
+  if (hasWav(bank.video)) {
+    const w = wavInfo(cacheWav(bank.video));
+    if (w.sr !== SNIP_SR || w.channels !== 2 || w.bits !== 16) throw libErr('cutfail', 'Track nicht 44,1 kHz/16 Bit/Stereo');
+    const frames = Math.floor(w.dataSize / BPF), dur = Math.round(frames * 1000 / SNIP_SR);
+    return {
+      file: cacheWav(bank.video), dur, whole: true,
+      lens: bank.starts.map((s) => Math.max(0, Math.min(SNIP_MS, dur - s))),
+      slots: bank.starts.map((s) => {
+        const f = Math.min(frames, Math.round(s * SNIP_SR / 1000));
+        return [w.offset + f * BPF, Math.min(SLOT_BYTES, (frames - f) * BPF)];
+      }),
+    };
+  }
+  const old = readJson(snipJson(bank.id));
+  if (!old || old.video !== bank.video || !Array.isArray(old.starts) || !Array.isArray(old.lens)) return null;
+  const from = bank.starts.map((s) => old.starts.indexOf(s));
+  if (from.some((k) => k < 0)) return null;
+  let w;
+  try { w = wavInfo(snipWav(bank.id)); } catch (e) { return null; }
+  return {
+    file: snipWav(bank.id), dur: old.dur, lens: from.map((k) => old.lens[k]),
+    slots: from.map((k) => [w.offset + k * SLOT_BYTES, Math.max(0, Math.min(SLOT_BYTES, w.dataSize - k * SLOT_BYTES))]),
+  };
+}
+
+// Schneidet die Snippets einer Bank, synchron. Erst die WAV, dann die .json, beide über <id>.<pid>.tmp.
+// Wirft libErr playonly oder cutfail.
+function cutSnippets(bank) {
+  clearTimeout(snipTimers.get(bank.id));
+  snipTimers.delete(bank.id);
+  const job = (phase) => libEvents.emit('job', { kind: 'cut', bankId: bank.id, video: bank.video, phase, progress: phase === 'done' ? 100 : 0, left: 0 });
+  let src;
+  try { src = snipSource(bank); } catch (e) { throw e.code === 'cutfail' ? e : libErr('cutfail', clean(e.message).slice(0, 80)); }
+  if (!src) throw libErr('playonly');
+  const tmp = path.join(SNIP_DIR, `${bank.id}.${process.pid}.tmp`);
+  snipCutting = bank.id;
+  job('cut');
+  try {
+    const out = fs.openSync(tmp, 'w');
+    try {
+      const inp = fs.openSync(src.file, 'r');
+      try {
+        fs.writeSync(out, wavHeader(16 * SLOT_BYTES), 0, 44, 0);
+        const buf = Buffer.alloc(SLOT_BYTES);
+        src.slots.forEach(([at, n], i) => {
+          buf.fill(0);
+          if (n > 0) fs.readSync(inp, buf, 0, n, at);
+          fs.writeSync(out, buf, 0, SLOT_BYTES, 44 + i * SLOT_BYTES);
+        });
+      } finally { fs.closeSync(inp); }
+    } finally { fs.closeSync(out); }
+    fs.renameSync(tmp, snipWav(bank.id));
+    fs.writeFileSync(tmp, JSON.stringify({ video: bank.video, starts: bank.starts, lens: src.lens, dur: src.dur }));
+    fs.renameSync(tmp, snipJson(bank.id));
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (e2) { /* weg */ }
+    job('fail');
+    throw libErr('cutfail', clean(e.message).slice(0, 80));
+  } finally {
+    snipCutting = 0;
+  }
+  // Analyse einmal neben die Snippets legen (Spec 2.4)
+  if (src.whole) { try { getAnalysis(bank.video, true); } catch (e) { Max.post(`YT Sampler: Analyse fehlgeschlagen: ${e.message}`); } }
+  job('done');
+  libEvents.emit('status');
+}
+
+// select/banksel/bankopen: veraltete oder fehlende Snippets sofort schneiden.
+// -> {path, video, starts, lens, dur} aus der .json. Geht das Schneiden nicht, spielt die alte Datei weiter.
+// Ohne Snippet-Datei: libErr nosnip (keine Quelle) bzw. cutfail.
+function snipEnsure(bank) {
+  let err = null;
+  if (!snipCurrent(bank)) { try { cutSnippets(bank); } catch (e) { err = e; } }
+  const j = readJson(snipJson(bank.id));
+  if (!j || !fs.existsSync(snipWav(bank.id))) throw err && err.code !== 'playonly' ? err : libErr('nosnip');
+  return { path: snipWav(bank.id), ...j };
+}
+
+// Neu schneiden, 500 ms nach der letzten Änderung der Bank
+function snipSchedule(id) {
+  clearTimeout(snipTimers.get(id));
+  snipTimers.set(id, setTimeout(() => {
+    snipTimers.delete(id);
+    const bank = libNow.lib && libNow.lib.banks.find((b) => b.id === id);
+    if (!bank || snipCurrent(bank)) return;
+    try { cutSnippets(bank); } catch (e) { libEvents.emit('msg', { level: 'error', code: e.code || 'cutfail', text: e.text || e.message }); }
+  }, SNIP_DEBOUNCE));
+}
+
+// Veraltete oder fehlende Snippets (nur eines Videos, wenn angegeben) entprellt neu schneiden, wo es eine Quelle gibt
+function snipRefresh(video) {
+  if (!libNow.lib) return;
+  for (const b of libNow.lib.banks) {
+    if ((video && b.video !== video) || snipCurrent(b)) continue;
+    let ok;
+    try { ok = !!snipSource(b); } catch (e) { ok = true; }   // Fehler zeigt dann das Schneiden
+    if (ok) snipSchedule(b.id);
+  }
+}
+// Geschnitten wird im Prozess, der die Änderung macht (Spec 2.3 „mehrere Devices“)
+libEvents.on('change', (stand, by) => { if (by !== 'extern') snipRefresh(); });
+
+// duplicate: Snippet-Dateien der Quelle übernehmen. false = fehlgeschlagen (dann schneidet snipRefresh)
+function snipCopy(from, to) {
+  const tmp = path.join(SNIP_DIR, `${to}.${process.pid}.tmp`);
+  try {
+    for (const f of [snipWav, snipJson]) { fs.copyFileSync(f(from), tmp); fs.renameSync(tmp, f(to)); }
+    return true;
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (e2) { /* weg */ }
+    return false;
+  }
+}
+
+// Beim Start: Snippets von Bänken, die nicht in der Bibliothek stehen und älter als 7 Tage sind.
+// Nur Namen aus Ziffern (nie .chroma), nur mit gültig gelesener Bibliothek.
+function snipCleanup(now = Date.now()) {
+  if (!libNow.lib) return;
+  const ids = new Set(libNow.lib.banks.map((b) => String(b.id)));
+  for (const n of fs.readdirSync(SNIP_DIR)) {
+    const m = /^(\d+)\.(wav|json)$/.exec(n);
+    if (!m || ids.has(m[1])) continue;
+    const f = path.join(SNIP_DIR, n);
+    try { if (now - fs.statSync(f).mtimeMs > SNIP_KEEP_MS) fs.unlinkSync(f); } catch (e) { /* weg */ }
+  }
+}
+
+// Spec 2.5: Größe aller Dateien im Cache
+function cacheSize() {
+  let bytes = 0;
+  for (const n of fs.readdirSync(CACHE)) { try { bytes += fs.statSync(path.join(CACHE, n)).size; } catch (e) { /* weg */ } }
+  return { bytes, warn: bytes >= CACHE_WARN };
+}
+
+// =====================================================================
+// Beats und Würfeln für den Editor (Spec 3.1)
+// =====================================================================
+const TEMPO_MIN_CONF = 0.3;   // wie tempoTrusted() in [js]
+const beatStore = new Map();  // video -> {bpm, beats, down}
+
+// Beats gültig: bpm bestätigt oder Analyse-Konfidenz ≥ 0,3. Getrackt mit bestätigtem bpm, sonst Analyse-Tempo.
+function beatsOf(v, a) {
+  const lv = libNow.lib && libNow.lib.videos[v];
+  const confirmed = !!(lv && lv.bpm > 0);
+  const bpm = confirmed ? lv.bpm : a ? a.bpm : 0;
+  const conf = a ? a.bpmConf : 0;
+  let r = beatStore.get(v);
+  if (a && (!r || r.bpm !== bpm)) {
+    const tb = bpm > 0 ? trackBeats(a, bpm) : null;
+    r = { bpm, beats: tb ? tb.beats : [], down: tb && tb.down < tb.beats.length ? tb.down : 0 };
+    beatStore.set(v, r);
+  }
+  if (!a || !r) r = { beats: [], down: 0 };
+  return { video: v, bpm, conf, confirmed, ok: r.beats.length >= 4 && (confirmed || conf >= TEMPO_MIN_CONF), beats: r.beats, down: r.down };
+}
+// SSE beats für den Track der aktiven Bank
+const videoBeats = (v) => beatsOf(v, getAnalysis(v, true));
+
+// Wie randomStart in [js] auf der ganzen WAV: Taktanfang, wenn die Beats gültig sind, sonst frei
+// (Raster ohne Beats gibt es hier nicht). Keine Slice (16 s) ganz in Stille, kein Start doppelt.
+// -> (belegte Starts) => ganze ms. Ohne WAV libErr playonly.
+function roller(v) {
+  if (!hasWav(v)) throw libErr('playonly');
+  const last = wavDurationMs(cacheWav(v)) - SNIP_MS;
+  const a = getAnalysis(v, false);
+  const sil = a ? silentRanges(a) : [];
+  const b = beatsOf(v, a);
+  const bars = b.ok ? b.beats.filter((t, i) => (i - b.down) % 4 === 0 && t <= last) : [];
+  const silent = (t) => {
+    for (let k = 0; k + 1 < sil.length; k += 2) if (sil[k] <= t && t + SNIP_MS <= sil[k + 1]) return true;
+    return false;
+  };
+  return (taken) => {
+    let t = 0;
+    for (let n = 0; n < 40; n++) {
+      t = Math.round(n < 20 && bars.length ? bars[Math.floor(Math.random() * bars.length)] : last > 0 ? Math.random() * last : 0);
+      if (!silent(t) && !taken.includes(t)) return t;
+    }
+    return t;
+  };
+}
+// roll: ein Pad neu, belegt = die 16 Starts der Bank (auch der eigene, damit sich etwas ändert)
+const rollStart = (v, taken) => roller(v)(taken);
+// newbank: 16 Starts, aufsteigend
+function rollBank(v) {
+  const r = roller(v), s = [];
+  for (let i = 0; i < 16; i++) s.push(r(s));
+  return s.sort((x, y) => x - y);
+}
+
+// =====================================================================
+// Downloads im Editor-Weg (Spec 3.1). kind: select | fetch | newbank | fetchall.
+// Reihenfolge select/fetch vor newbank vor fetchall. Ein neues select/fetch bricht den laufenden Download
+// ab, ebenso jeder Wunsch höherer Stufe; der abgebrochene wartet dann wieder. Unter select/fetch gewinnt
+// der neueste, newbank und fetchall laufen der Reihe nach (Bänke entstehen in der gewünschten Folge). Der Teletext-Weg (loadVideo) ist getrennt, keiner bricht den anderen ab.
+// Fehlschlag setzt videoFail, fetchall überspringt solche Videos.
+// Achtung Aufrufer: fetchVideo-Promise immer mit catch, sonst beendet ein Fehlschlag den Node-Prozess.
+// =====================================================================
+const FETCH_PRIO = { select: 0, fetch: 0, newbank: 1, fetchall: 2 };
+const edQueue = [];
+let edJob = null, edSeq = 0;
+
+function fetchVideo(video, kind) {
+  const prio = FETCH_PRIO[kind];
+  return new Promise((resolve, reject) => {
+    let e = edJob && edJob.video === video ? edJob : edQueue.find((x) => x.video === video);
+    if (e) { e.prio = Math.min(e.prio, prio); if (!prio) e.seq = ++edSeq; e.waiters.push({ resolve, reject }); }
+    else { e = { video, prio, seq: ++edSeq, waiters: [{ resolve, reject }] }; edQueue.push(e); }
+    if (edJob && edJob !== e && (prio < edJob.prio || prio + edJob.prio === 0)) abort(edJob);   // edRun reiht ihn wieder ein
+    else edNext();
+  });
+}
+
+function edNext() {
+  if (edJob || !edQueue.length) return;
+  edQueue.sort((a, b) => a.prio - b.prio || (a.prio ? a.seq - b.seq : b.seq - a.seq));
+  edRun(edQueue.shift());
+}
+
+async function edRun(e) {
+  edJob = e; e.aborted = false; e.child = null;
+  const kind = e.prio === 1 ? 'newbank' : 'fetch';
+  const job = (phase, progress) => libEvents.emit('job', { kind, video: e.video, phase, progress, left: edQueue.length });
+  if (has(videoFail, e.video)) { delete videoFail[e.video]; libEvents.emit('status'); }
+  try {
+    const info = await download(e.video, 'ed', e, (ph, p) => { if (!e.aborted) job(ph, p); });
+    edJob = null;
+    if (kind === 'fetch') job('done', 100);   // newbank meldet selbst weiter
+    libEvents.emit('cache', cacheSize());
+    libEvents.emit('status');
+    snipRefresh(e.video);
+    e.waiters.forEach((w) => w.resolve(info));
+  } catch (err) {
+    edJob = null;
+    if (e.aborted) edQueue.push(e);
+    else {
+      const reason = errMsg(err).replace(/^Fehler: /, '');
+      videoFail[e.video] = reason;
+      const title = libNow.lib && libNow.lib.videos[e.video] ? libNow.lib.videos[e.video].title : e.video;
+      const le = libErr('loadfail', `${title} – ${reason}`);
+      job('fail', 0);
+      libEvents.emit('msg', { level: 'error', code: le.code, text: le.text });
+      libEvents.emit('status');
+      e.waiters.forEach((w) => w.reject(le));
+    }
+  }
+  edNext();
+}
+
+// fetchall: alle fehlenden ganzen WAVs der Bibliothek, ohne gescheiterte
+function fetchAll() {
+  if (!libNow.lib) return { todo: 0 };
+  const todo = [...new Set(libNow.lib.banks.map((b) => b.video))].filter((v) => !hasWav(v) && !has(videoFail, v));
+  todo.forEach((v) => fetchVideo(v, 'fetchall').catch(() => { /* steht in videoFail */ }));
+  return { todo: todo.length };
+}
+
+// newbank (Spec 3.3): Track laden → Analyse → 16 Starts würfeln → Bank am Ende → schneiden. -> Bank-ID.
+// Aktiv machen (bank … an [js]) macht der Aufrufer. Wirft libErr (loadfail, libbroken, …).
+async function newBank(video, by) {
+  const job = (phase, progress, bankId) => libEvents.emit('job', { kind: 'newbank', video, bankId, phase, progress, left: edQueue.length });
+  try {
+    const info = (hasWav(video) && readJson(path.join(CACHE, `${video}.json`))) || await fetchVideo(video, 'newbank');
+    job('analyse', 0);
+    await new Promise((r) => setTimeout(r, 0));
+    const starts = rollBank(video);
+    const { id } = libChange('create', { video, title: info.raw || info.title, starts }, by);
+    job('cut', 0, id);
+    cutSnippets(libNow.lib.banks.find((b) => b.id === id));
+    job('done', 100, id);
+    return id;
+  } catch (e) {
+    job('fail', 0);
+    throw e;
+  }
+}
+
+// =====================================================================
 // Teletext-Webseite: http://localhost:8765
 // Server-Sent Events schicken den Zustand live, POST /key nimmt Tasten an.
 // =====================================================================
@@ -1321,6 +1698,7 @@ startWeb(WEB_PORT, 5);
 
 try { libBackup(); } catch (e) { Max.post(`YT Sampler: Sicherung fehlgeschlagen: ${e.message}`); }
 libWatch();
+try { snipCleanup(); } catch (e) { Max.post(`YT Sampler: Aufräumen fehlgeschlagen: ${e.message}`); }
 
 // Startcheck; Session und Längenfilter vom Device anfordern
 if (DATA_SETUP.error) status(DATA_SETUP.error);
@@ -1336,4 +1714,9 @@ Max.outlet('needmaxlen');
 })();
 
 // Für tools/tests/ (unter Max ohne Wirkung)
-module.exports = { DATA, LOCAL, CACHE, SESSIONS, LIB_FILE, LIB_LOCK, BACKUP_DIR, ERR, LIB, libErr, libParse, libRead, libChange, libBackup, libEvents, get libNow() { return libNow; } };
+module.exports = {
+  DATA, LOCAL, CACHE, SESSIONS, LIB_FILE, LIB_LOCK, BACKUP_DIR, ERR, LIB, libErr, libParse, libRead, libChange, libBackup, libEvents, get libNow() { return libNow; },
+  AN, SNIP_DIR, SNIP_MS, computeAnalysis, saveAnalysis, readAnalysis, getAnalysis, ensureAnalysis, trackBeats, silentRanges,
+  hasWav, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, cacheSize, videoFail,
+  beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, newBank, loadVideo, get analysis() { return analysis; },
+};

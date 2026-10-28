@@ -39,7 +39,7 @@ const t = (name, fn) => tests.push([name, fn]);
 async function run() {
   let bad = 0;
   for (const [name, fn] of tests) {
-    try { await fn(); console.log('ok   ' + name); } catch (e) { bad++; console.log('FAIL ' + name + '\n     ' + (e.stack || e).toString().split('\n').slice(0, 3).join('\n     ')); }
+    try { await fn(); console.log('ok   ' + name); } catch (e) { bad++; console.log('FAIL ' + name + '\n     ' + (e.stack || e).toString().split('\n').slice(0, 12).join('\n     ')); }
   }
   console.log(bad ? `${bad} von ${tests.length} fehlgeschlagen` : `alle ${tests.length} grün`);
   process.exit(bad ? 1 : 0);
