@@ -25,6 +25,8 @@ Vieles ist technisch. Den Nutzer nur fragen, was ihn betrifft, z. B. ob die Date
 
 ## Answer
 
+> **Teilweise überholt durch [Snippets statt ganzer WAV](11-snippets-statt-ganzer-wav.md):** Dazu kommt pro Bank eine Snippet-Datei, abgeleitet aus der `id`.
+
 Geklärt am 2026-10-28 mit dem Nutzer. Fakten aus `ytsampler_node.js` (Session-Speicher `:739-810`) und `ytsampler_main.js` (`save`/`state` `:819-850`), dazu die drei Dateien in `~/Music/YTSampler/sessions/` (nur gelesen).
 
 **Kernaussage:** Eine Datei `~/Music/YTSampler/library.json` mit `banks` (Reihenfolge = Platz) und `videos` (Titel, bestätigtes Tempo). Jede Änderung liest die Datei unter einer kurzen Sperre frisch ein, ändert sie und ersetzt sie atomar. Gelöschte IDs sperrt der Zähler `nextId`.
@@ -77,7 +79,7 @@ Geklärt am 2026-10-28 mit dem Nutzer. Fakten aus `ytsampler_node.js` (Session-S
 | `banks[].id` | Ganzzahl ≥ 1, eindeutig, < `nextId`. `0` heißt in der Session „keine Bank“. | Kurz und vergleichbar. |
 | `banks[].name` | String, darf leer sein und doppelt vorkommen. Gespeichert wird er roh. Erst auf dem Weg nach Max läuft er durch `clean()`. | Die Datei liest nur Node, Max-Symbolregeln gelten erst im Patch. |
 | `banks[].video` | YouTube-ID, muss in `videos` stehen. | Titel und Tempo stehen einmal pro Video. |
-| `banks[].starts` | Genau 16 Zahlen, ganze ms, ≥ 0. Reihenfolge = Pad 1–16. | 1 ms ist unhörbar, Einrasten rechnet `[js]` ohnehin neu (`effStart`). So bleibt die Datei kurz. |
+| `banks[].starts` | Genau 16 Zahlen, ganze ms, ≥ 0. Reihenfolge = Pad 1–16. | 1 ms ist unhörbar. Die Starts sind schon eingerastet (Editor), das Device rastet nicht nach (Ticket 12). So bleibt die Datei kurz. |
 | `videos.<id>.title` | String, roh. | Der Titel stand im Ticket pro Bank, ist aber eine Eigenschaft des Videos. |
 | `videos.<id>.bpm` | Nur wenn bestätigt (Ticket 06). Fehlt der Wert, gilt der Wert aus der Analyse. | `srcAuto` ist damit überflüssig: Gibt es `bpm`, ist er bestätigt. |
 

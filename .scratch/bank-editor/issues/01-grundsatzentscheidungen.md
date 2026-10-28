@@ -9,6 +9,8 @@ Was ist eine Bank, wo lebt die Bibliothek, wie teilen sich Browser-Editor und De
 
 ## Answer
 
+> **Teilweise überholt durch [Snippets statt ganzer WAV](11-snippets-statt-ganzer-wav.md):** Länge vom Device bleibt, aber höchstens 16 s (Snippet).
+
 Geklärt beim Kartieren am 2026-10-28, drei Runden mit dem Nutzer.
 
 **Hintergrund:** Zufällige Slices aus YouTube-Videos klingen oft schlecht. Darum kuratiert der Nutzer die Bänke selbst. Teletext bleibt im Device, wird aber nicht weiterentwickelt.

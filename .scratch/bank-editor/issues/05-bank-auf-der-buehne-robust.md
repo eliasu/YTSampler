@@ -14,6 +14,8 @@ Was passiert, wenn eine Bank auf der Bühne nicht sofort spielbar ist?
 
 ## Answer
 
+> **Teilweise überholt durch [Snippets statt ganzer WAV](11-snippets-statt-ganzer-wav.md):** Auf der Bühne werden nur Snippets geladen, ganze WAVs und Internet nur noch im Editor.
+
 Geklärt am 2026-10-28 in zwei Runden mit dem Nutzer.
 
 **Stand heute (Code)**

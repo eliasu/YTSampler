@@ -17,6 +17,8 @@ Wie viel Aufwand ist dem Nutzer das wert? Deckt eine Time-Machine-Sicherung `~/M
 
 ## Answer
 
+> **Teilweise überholt durch [Snippets statt ganzer WAV](11-snippets-statt-ganzer-wav.md):** Der Cache der ganzen WAVs bleibt lokal, in iCloud liegen nur noch die Snippets.
+
 Geklärt am 2026-10-28 in drei Runden mit dem Nutzer.
 
 **Kernaussage:** Der ganze Ordner `YTSampler` liegt in iCloud Drive, samt WAVs, und bleibt mit „Geladen lassen“ auf dem Mac. Dazu hält das Device die letzten 10 Stände der Bibliotheksdatei vor. Mehr gibt es nicht: keinen Export, keinen Knopf zum Zurückholen.

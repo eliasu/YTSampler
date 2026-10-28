@@ -12,6 +12,10 @@ _Avoid_: Slot, Slice (für den Platz selbst)
 Ein kuratierter Satz aus 16 Pads, alle aus genau einem Track.
 _Avoid_: Favorit, Sample-Set, Sample Pack, Preset
 
+**Snippet**:
+Der gespeicherte Audioausschnitt eines Pads ab seinem Startpunkt, mehr als das spielt das Pad nie.
+_Avoid_: Slice (für das gespeicherte Audio), Sample
+
 **Bibliothek**:
 Alle Bänke zusammen, geordnet und unabhängig vom Live-Set.
 _Avoid_: Favoriten, Bänke A–D

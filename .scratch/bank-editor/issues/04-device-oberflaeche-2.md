@@ -15,6 +15,8 @@ Welche Elemente bleiben in der Presentation-Ansicht (Breite 1378), welche fallen
 
 ## Answer
 
+> **Teilweise überholt durch [Snippets statt ganzer WAV](11-snippets-statt-ganzer-wav.md):** Waveform zeigt die 16 Snippets statt des ganzen Songs.
+
 Geklärt am 2026-10-28, zwei Runden mit dem Nutzer. Fakten aus `YT Sampler.maxpat` und `ytsampler_main.js` (Stand 1.3.1).
 
 **Was wegfällt**
