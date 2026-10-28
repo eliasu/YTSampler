@@ -26,7 +26,7 @@ for (var t = 0; t < 8000; t += 500) beats.push(t);
 send('clear');
 send('dur', 8000);
 send.apply(null, ['beats'].concat(beats));
-send('down', 0);
+send.apply(null, ['bars'].concat(beats.filter(function (b, i) { return i % 4 === 0; })));
 send('show', 1);
 send.apply(null, ['pads', 0].concat([0, 500, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000, 5500, 6000, 6500, 7000, 7500]));
 

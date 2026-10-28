@@ -1,12 +1,15 @@
 // YT Sampler – Hauptlogik ([js] in Max)
 // outlet 0 -> poly~ (Voices)   outlet 1 -> node.script (load <id>)
 // outlet 2 -> UI-Router        outlet 3 -> poly~ Warp-Voices (ytwarpvoice)
-// Zustand wird vom Node-Teil als Datei gespeichert (~/Music/YTSampler/sessions/<session>.json).
+// outlet 4 -> buffer~ (replace <pfad>, clear)
+// Mit Bank liegt im Buffer pro Pad ein Snippet (Fach i ab i × 16 s). Intern wird in Song-ms gerechnet,
+// umgerechnet wird nur an den Ausgängen (toBuf).
+// Zustand wird vom Node-Teil als Datei gespeichert (D/sessions/<session>.json).
 // Die Session-Nummer ist ein unsichtbarer Live-Parameter und steckt damit im Set.
 
 autowatch = 0;
 inlets = 1;
-outlets = 4;
+outlets = 5;
 
 var DIVS = [
     ["1/64", 1 / 64], ["1/32", 1 / 32], ["1/16T", 1 / 24], ["1/16", 1 / 16],
@@ -16,8 +19,10 @@ var DIVS = [
 var NPADS = 16;
 var KEY_CHANNEL = 16;    // Schreibmaschine: Noten auf diesem Kanal sind Tasten (Notennummer = Zeichencode)
 var IR_CHANNEL = 15;     // IR-Fernbedienung: liest die Teletext-Seite selbst (Web MIDI), hier ignorieren
-var NFAV = 64;           // Favoriten-Plätze (4 Bänke à 16)
-var BANKS = ["A", "B", "C", "D"];
+var SNIP_MS = 16000;     // Länge eines Fachs in der Snippet-Datei
+var SNIP_FADE_MS = 10;   // Hold: Ausblenden am Snippet-Ende
+var BANK_REST = 350;     // Bank-Regler / Prev / Next: so lange ruhen, dann laden
+var FLASH_MS = 2000;     // kurze Statusmeldung, danach wieder die normale Zeile
 var HOLD_MAX = 1e9;     // Hold-Modus: bis Songende (playRange begrenzt auf durMs bzw. 0)
 var VMAX = 16;          // Anzahl Instanzen im poly~
 var VOICE_OPTS = [1, 2, 3, 4, 5, 8, 16];
@@ -35,10 +40,28 @@ var SC = { root: 0, ints: [0, 2, 4, 5, 7, 9, 11] };
 // Zustand, der über pattr im Set landet
 var st = newState();
 
-var durMs = 0;
+var durMs = 0;           // Songdauer (ohne Bank = Buffer)
 var sel = 0;
-var memSel = -1;
 var lastSaved = "";
+
+// Geladene Bank: null = keine Bank (ganzer Track im Buffer). Starts stehen in st.pads (Song-ms)
+var B = null;           // { nr, lens[16] }
+var bankName = "", pendingName = null;
+var bankCount = 0;       // Bänke in der Bibliothek (aus libstate/bankpeek)
+var peekNr = 0;          // gerade angezeigtes Ziel beim Drehen/Prev/Next, 0 = keins
+var peekWait = 0;        // Regler/Prev/Next noch nicht zur Ruhe gekommen
+var muted = 0;           // Bibliothek leer/kaputt/neuer: Pads stumm
+var lastBankstate = "";
+var pendingPath = "";
+var replaceTask = new Task(function () { outlet(4, "replace", pendingPath); }, this);
+var selTask = new Task(function () { peekWait = 0; if (peekNr > 0) outlet(1, "banksel", peekNr); }, this);
+var statusLine = "";
+var flashTask = new Task(function () { outlet(2, "status", statusLine); }, this);
+var trackApi = null;
+
+function bufMs() { return B ? NPADS * SNIP_MS : durMs; }
+// Song-ms von Pad i -> Buffer-ms
+function toBuf(i, t) { return B ? i * SNIP_MS + (t - st.pads[i]) : t; }
 
 // Stimmenverwaltung: welche Stimme spielt welches Pad, bis wann
 var voices = [];
@@ -65,10 +88,9 @@ function resetKeys() {
 }
 
 function newState() {
-    var s = { id: "", title: "", pads: [], locks: [], favs: [], fav: -1, bank: 0,
+    var s = { bankId: 0, id: "", title: "", pads: [],          // bankId 0 = keine Bank, Rest = Kopie für den Fall, dass die Bank fehlt
               srcBpm: 0, srcAuto: 1, bpmConf: 0 };   // Quelltempo des aktuellen Videos
-    for (var i = 0; i < NPADS; i++) { s.pads.push(0); s.locks.push(0); }
-    for (var f = 0; f < NFAV; f++) s.favs.push(null);
+    for (var i = 0; i < NPADS; i++) s.pads.push(0);
     return s;
 }
 
@@ -78,9 +100,6 @@ var initDone = 0;       // Aktionen erst nach dem Laden des Sets zulassen
 var stateReady = 0;     // erst speichern, wenn der gespeicherte Zustand gelesen wurde
 var sessionId = 0;
 var claimedId = 0;
-var pendingFav = -1;    // Favorit, dessen Video gerade lädt
-var favTask = new Task(favSelectNow, this);
-var favSelTarget = -1;
 
 // Live stellt beim Öffnen alle Parameter wieder her; Buttons würden dabei "gedrückt".
 // Deshalb alle Aktionen erst kurz nach live.thisdevice erlauben.
@@ -107,7 +126,7 @@ function newsession(v) {                                   // Node-Teil hat Dupl
     setNamed("Session", "int", sessionId);
 }
 
-function statenone() { stateReady = 1; updateFavUI(); }
+function statenone() { stateReady = 1; showBank(); }
 
 function setNamed(name) {
     var o = P_.getnamed(name);
@@ -175,7 +194,9 @@ function snapTime(t) {
 }
 
 // tatsächlicher Startpunkt eines Pads (mit Raster eingerastet; gespeichert wird die freie Position)
+// Mit Bank fest: die Snippets sind ab genau diesem Start geschnitten
 function effStart(i) {
+    if (B) return st.pads[i];
     var t = clamp(st.pads[i] || 0, 0, durMs);
     if (!gridOK()) return t;
     var s = snapTime(t);
@@ -206,20 +227,15 @@ function taken(t) {
     return false;
 }
 
-// Gewürfelte Pads chronologisch auf die freien (nicht gesperrten) Pads verteilen
-function sortPads() {
-    var idx = [], t = [], i;
-    for (i = 0; i < NPADS; i++) if (!st.locks[i]) { idx.push(i); t.push(st.pads[i]); }
-    t.sort(function (a, b) { return a - b; });
-    for (i = 0; i < idx.length; i++) st.pads[idx[i]] = t[i];
-}
+// Gewürfelte Pads chronologisch sortieren
+function sortPads() { st.pads.sort(function (a, b) { return a - b; }); }
 
-// Alle freien Pads neu würfeln
+// Alle Pads neu würfeln (nur ohne Bank: neues Video aus Teletext)
 function rollAll() {
     autoRoll = 0;
     var i;
-    for (i = 0; i < NPADS; i++) if (!st.locks[i]) st.pads[i] = -1;
-    for (i = 0; i < NPADS; i++) if (!st.locks[i]) st.pads[i] = randomStart();
+    for (i = 0; i < NPADS; i++) st.pads[i] = -1;
+    for (i = 0; i < NPADS; i++) st.pads[i] = randomStart();
     sortPads();
     save();
     requestAll();
@@ -254,36 +270,64 @@ function gridon(v) {
 }
 function snapmode(v) { P.snap = clamp(Math.floor(v), 0, 2); requestAll(); sendGridUI(); updateSel(); }
 
-// Raster-Overlay über der Waveform
+// Raster-Overlay über der Waveform, alles in Buffer-ms. Mit Bank nur die Schläge, die in einem Fach liegen
 function sendGridUI() {
     outlet(2, "grid", "clear");
-    outlet(2, "grid", "dur", durMs);
+    outlet(2, "grid", "dur", bufMs());
     if (gridOK()) {
-        for (var k = 0; k < beats.length; k += 200) outlet(2, ["grid", "beats"].concat(beats.slice(k, k + 200)));
-        outlet(2, "grid", "down", beatsDown);
+        var bt = [], bars = [], i, j, s, e, x;
+        for (i = 0; i < (B ? NPADS : 1); i++) {
+            s = B ? st.pads[i] : -Infinity; e = B ? s + B.lens[i] : Infinity;
+            for (j = 0; j < beats.length; j++) {
+                if (beats[j] < s || beats[j] >= e) continue;
+                x = B ? toBuf(i, beats[j]) : beats[j];
+                bt.push(x);
+                if ((((j - beatsDown) % 4) + 4) % 4 === 0) bars.push(x);
+            }
+        }
+        for (var k = 0; k < bt.length; k += 200) outlet(2, ["grid", "beats"].concat(bt.slice(k, k + 200)));
+        for (k = 0; k < bars.length; k += 200) outlet(2, ["grid", "bars"].concat(bars.slice(k, k + 200)));
     }
     outlet(2, "grid", "show", gridOK() ? 1 : 0);
     sendPadMarks();
 }
 function sendPadMarks() {
     var a = ["grid", "pads", sel];
-    for (var i = 0; i < NPADS; i++) a.push(effStart(i));
+    for (var i = 0; i < NPADS; i++) a.push(B ? i * SNIP_MS : effStart(i));
     outlet(2, a);
+    sendBankstate();
+}
+// an Node (SSE device für den Editor), Song-ms, nur bei Änderung
+function sendBankstate() {
+    var s = [], w = [], i, pr;
+    for (i = 0; i < NPADS; i++) {
+        pr = durMs > 0 ? playRange(i) : { from: 0, to: 0 };
+        s.push(Math.round(effStart(i)));
+        w.push(Math.round(Math.abs(pr.to - pr.from)));
+    }
+    var b = ["bankstate", st.bankId, st.id || "-", sel, P.mode, P.rev].concat(s, w);
+    var key = b.join(" ");
+    if (key === lastBankstate) return;
+    lastBankstate = key;
+    outlet(1, b);
 }
 
-// Abspielbereich eines Pads: von, bis (Quell-ms) und Warp-Faktor
+// Abspielbereich eines Pads: von, bis (Song-ms) und Warp-Faktor. Mit Bank nie über das Snippet hinaus
 function playRange(i) {
     var start = effStart(i), from, to, R = warpRatio();
-    if (P.mode && P.rev) {                     // Hold rückwärts: ab Startpunkt nach links
+    var hi = B ? start + B.lens[i] : durMs;
+    if (P.mode && P.rev && B) {                // Hold rückwärts mit Bank: Fach vom Ende zum Start
+        from = hi; to = start;
+    } else if (P.mode && P.rev) {              // Hold rückwärts: ab Startpunkt nach links
         from = start; to = Math.max(0, start - padSpan(i));
     } else {
         if (R > 0 && !P.mode && gridOK()) {
             // Warp + Grid: Slice endet auf dem Raster der Quelle -> folgt schwankendem Tempo
             var end = timeAt(xAt(start) + DIVS[P.div][1] * 4);
             if (end > start) R = clamp((end - start) / sliceMs(), 0.25, 4);
-            to = Math.min(start + sliceMs() * R, durMs);
+            to = Math.min(start + sliceMs() * R, hi);
         } else {
-            to = Math.min(start + padSpan(i), durMs);
+            to = Math.min(start + padSpan(i), hi);
         }
         from = start;
         if (P.rev) { var tmp = from; from = to; to = tmp; }
@@ -325,7 +369,17 @@ function fmt(ms) {
     return m + ":" + (s < 10 ? "0" : "") + s.toFixed(2);
 }
 
-function status(t) { outlet(2, "status", t); }
+// normale Statuszeile (auch Node schickt status <text…>); flash = kurz, danach wieder die normale
+function status() {
+    statusLine = arrayfromargs(arguments).join(" ");
+    flashTask.cancel();
+    outlet(2, "status", statusLine);
+}
+function flash(t) {
+    outlet(2, "status", t);
+    flashTask.cancel();
+    flashTask.schedule(FLASH_MS);
+}
 
 function nowMs() { return new Date().getTime(); }
 
@@ -361,17 +415,34 @@ function init() {
         setNamed("Session", "int", sessionId);
     }
     sendSession();
-    updateFavUI();
+    showBank();
     updateSel();
     initTask.schedule(300);
+    watchTrack();
 }
-function bpm(v) { P.bpm = v; requestAll(); updateSel(); }
+
+// Spurname für den Editor („steuert: …“)
+function watchTrack() {
+    if (trackApi || typeof LiveAPI === "undefined") return;
+    trackApi = new LiveAPI(function (args) {
+        if (args[0] !== "name") return;
+        outlet(1, ["trackname"].concat(String(args.slice(1).join(" ")).replace(/^"|"$/g, "")));
+    }, "this_device canonical_parent");
+    trackApi.property = "name";
+}
+// bpm <tempo> = Lives Tempo (Observer); bpm <video> <bpm> = Quelltempo aus dem Editor (Node), nur für die aktive Bank
+function bpm(v, b) {
+    if (arguments.length < 2) { P.bpm = v; requestAll(); updateSel(); return; }
+    if (!st.bankId || String(v) !== st.id || !(b > 0)) return;
+    st.srcBpm = b; st.srcAuto = 0;                  // kein bpmset zurück
+    save(); updateSrcUI(); requestBeats(); updateSel();
+}
 function division(v) { P.div = clamp(Math.floor(v), 0, DIVS.length - 1); requestAll(); if (P.snap === 0) sendPadMarks(); updateSel(); }
 function rate(v) { P.rate = clamp(v, 0.1, 4); requestAll(); updateSel(); }
 function attack(v) { P.atk = Math.max(0, v); }
 function release(v) { P.rel = Math.max(0, v); }
 function playmode(v) { P.mode = v ? 1 : 0; requestAll(); updateSel(); }   // 0 = Trigger, 1 = Hold
-function reverse(v) { P.rev = v ? 1 : 0; }
+function reverse(v) { P.rev = v ? 1 : 0; sendBankstate(); }
 function basenote(v) { P.base = Math.floor(v); }
 // ---------- Warp / Quelltempo ----------
 function warp(v) { P.warp = v ? 1 : 0; requestAll(); updateSel(); }
@@ -385,20 +456,22 @@ function tempo(bpm, conf) {
     updateSel();
 }   // Beats werden bei analysisready angefordert
 
-// Quelltempo von Hand (Zahlenfeld) -> gilt als bestätigt
+// Quelltempo von Hand (Zahlenfeld) -> gilt als bestätigt, auch dieselbe Zahl
 function srcbpm(v) {
-    if (!ready()) return;
-    if (Math.abs(v - st.srcBpm) < 0.01) return;
-    st.srcBpm = v; st.srcAuto = 0;
-    save(); updateSrcUI(); requestBeats(); updateSel();
+    if (!ready() || !(v > 0)) return;
+    setSrc(v);
 }
 function bpmhalf() { scaleSrc(0.5); }
 function bpmdouble() { scaleSrc(2); }
 function scaleSrc(f) {
     if (!ready() || !(st.srcBpm > 0)) return;
-    st.srcBpm = clamp(Math.round(st.srcBpm * f * 10) / 10, 30, 300); st.srcAuto = 0;
-    save(); updateSrcUI(); requestBeats(); updateSel();
+    setSrc(clamp(Math.round(st.srcBpm * f * 10) / 10, 30, 300));
     status("Quelltempo: " + st.srcBpm + " BPM");
+}
+function setSrc(v) {
+    st.srcBpm = v; st.srcAuto = 0;
+    if (st.id) outlet(1, "bpmset", st.id, v);   // Node merkt es sich, wenn das Video in der Bibliothek steht
+    save(); updateSrcUI(); requestBeats(); updateSel();
 }
 
 function updateSrcUI() { setNamed("srcbpm", "set", st.srcBpm || 0); }
@@ -436,10 +509,6 @@ function requestAll() {
     var a = ["analyzeall", analysisSpan()];
     for (var i = 0; i < NPADS; i++) a.push(effStart(i));
     outlet(1, a);
-}
-function requestPad(i) {
-    if (!analysisReady) return;
-    outlet(1, "analyze", i, effStart(i), analysisSpan());
 }
 
 // Verschiebung (Halbtöne), mit der möglichst viel vom Pad in Lives Skala liegt.
@@ -497,6 +566,7 @@ function tick() {
     for (var n = 0; n < q.length; n++) play(q[n][0], q[n][1]);
 }
 function hit(i, v) {
+    if (muted) return;
     var step = 15000 / Math.max(20, P.bpm), since = nowMs() - qTick;
     var wait = P.quant && since < step * 1.5 && since > step * QUANT_LATE;
     if (!wait && v === 0) {                    // Note-Off hinter seinem wartenden Note-On einreihen
@@ -516,7 +586,7 @@ function trigger(i, vel) {
     if (dur < 1) return;
     var amp = vel / 127;
     var atk = Math.min(P.atk, dur * 0.5);
-    var rel = Math.min(P.rel, dur * 0.5);
+    var rel = Math.min(P.mode && B ? SNIP_FADE_MS : P.rel, dur * 0.5);   // Hold mit Bank: am Snippet-Ende kurz ausblenden
 
     var t = nowMs();
     var k = allocVoice(i);
@@ -533,18 +603,20 @@ function trigger(i, vel) {
     var o = engOut(eng);
     outlet(o, "target", k + 1);
     outlet(o, "env", 0);
-    if (eng) outlet(o, "wplay", from, to >= from ? R : -R, r);   // Tempo R, Tonhöhe r (Rate × Tune)
-    else outlet(o, "pos", from, to, dur);
+    if (eng) outlet(o, "wplay", toBuf(i, from), to >= from ? R : -R, r);   // Tempo R, Tonhöhe r (Rate × Tune)
+    else outlet(o, "pos", toBuf(i, from), toBuf(i, to), dur);
     outlet(o, "env", amp, atk);
     outlet(o, "rel", Math.max(0, dur - rel), rel);
     if (P.mode) outlet(2, "padlight", i, 1);
     else outlet(2, "padflash", i, dur);
+    outlet(1, "playing", i, from, to, dur);
     updateSel();
 }
 
 function noteoff(i) {
     if (!P.mode) return;                       // Trigger: Note-Off ignorieren
     outlet(2, "padlight", i, 0);
+    outlet(1, "playstop", i);
     var t = nowMs();
     for (var k = 0; k < VMAX; k++) {
         if (voices[k].pad === i && voices[k].end > t) {
@@ -555,229 +627,173 @@ function noteoff(i) {
     }
 }
 
-// ---------- Slices bearbeiten ----------
-function shuffle() {
-    if (!ready()) return;
-    rollAll();
-    status(gridOK() ? "Pads neu gewürfelt (auf Raster)" : "Pads neu gewürfelt");
-}
-
-function reroll() {
-    if (!ready()) return;
-    autoRoll = 0;
-    // zwischen den Nachbar-Pads bleiben, damit die Reihenfolge chronologisch bleibt
-    var lo = sel > 0 ? st.pads[sel - 1] + 1 : 0, hi = sel < NPADS - 1 ? st.pads[sel + 1] - 1 : durMs;
-    st.pads[sel] = hi > lo ? randomStart(lo, hi) : randomStart();
-    save();
-    requestPad(sel);
-    trigger(sel, 100);
-}
-
-function nudge(d) {
-    if (!ready()) return;
-    autoRoll = 0;
-    if (gridOK()) {                            // eine Rasterstufe weiter
-        var stp = gridStep();
-        st.pads[sel] = clamp(timeAt((Math.round(xAt(effStart(sel)) / stp) + d) * stp), 0, Math.max(0, durMs - 1));
-    } else {
-        st.pads[sel] = clamp(st.pads[sel] + d * sliceMs() / 8, 0, Math.max(0, durMs - 1));
-    }
-    save();
-    requestPad(sel);
-    trigger(sel, 100);
-}
-
-function lock(v) {
-    if (!ready()) return;
-    st.locks[sel] = v ? 1 : 0;
-    save();
-}
-
 // ---------- Laden ----------
+// ohne Bank (Teletext, gelöschte Bank, 1.x-Set): loaded <pfad> <dauer> <id> <titel…>
 function loaded() {
     var a = arrayfromargs(arguments);          // pfad dauer id titel…
+    replaceTask.cancel();                      // letzte Wahl gewinnt
+    outlet(4, "replace", String(a[0]));
+    B = null; st.bankId = 0;
     durMs = parseFloat(a[1]) || 0;
-    analysisReady = 0;
-    tuningCents = 0;
-    resetKeys();
-    beats = []; beatsIn = []; beatsReady = 0; beatsDone = 0;
-    silent = []; autoRoll = 0;
+    resetAnalysis();
     var id = String(a[2]);
     var title = a.slice(3).join(" ");
     var i;
-    var pf = (pendingFav >= 0) ? st.favs[pendingFav] : null;
-    pendingFav = -1;
-    if (pf && pf.id === id) {
-        // Favorit: gespeicherte Slice-Positionen übernehmen
-        st.id = id;
-        st.title = title || pf.title;
-        applyPads(pf);
-        applySrc(pf);
-    } else if (id !== st.id || st.pads.length !== NPADS) {
-        // neues Video: alles frisch würfeln, kein Favorit aktiv
+    if (id !== st.id || st.pads.length !== NPADS) {
+        // neues Video: alles frisch würfeln
         st.id = id;
         st.title = title;
         st.srcBpm = 0; st.srcAuto = 1; st.bpmConf = 0;   // Tempo kommt gleich aus der Analyse
-        st.pads = []; st.locks = [];
-        for (i = 0; i < NPADS; i++) { st.pads.push(randomStart()); st.locks.push(0); }
+        st.pads = [];
+        for (i = 0; i < NPADS; i++) st.pads.push(randomStart());
         sortPads();
         autoRoll = 1;
-        if (st.fav >= 0 && (!st.favs[st.fav] || st.favs[st.fav].id !== id)) st.fav = -1;
     } else {
         // gleiches Video (z. B. Set neu geöffnet): Positionen behalten
         if (title) st.title = title;
         for (i = 0; i < NPADS; i++) st.pads[i] = clamp(st.pads[i] || 0, 0, durMs);
     }
     save();
-    updateFavUI();
+    showBank();
     updateSrcUI();
     sendGridUI();
     updateSel();
 }
 
-function applySrc(f) {
-    if (f.srcBpm > 0) { st.srcBpm = f.srcBpm; st.srcAuto = f.srcAuto ? 1 : 0; st.bpmConf = f.bpmConf || 0; }
+function resetAnalysis() {
+    analysisReady = 0;
+    tuningCents = 0;
+    resetKeys();
+    beats = []; beatsIn = []; beatsReady = 0; beatsDone = 0;
+    silent = []; autoRoll = 0;
 }
 
-function applyPads(f) {
-    for (var i = 0; i < NPADS; i++) {
-        st.pads[i] = clamp((f.pads && f.pads[i]) || 0, 0, Math.max(0, durMs));
-        st.locks[i] = (f.locks && f.locks[i]) ? 1 : 0;
-    }
-}
-
-// ---------- Favoriten (64 Plätze, 4 Bänke à 16, feste Plätze) ----------
-function favName(idx) { return BANKS[Math.floor(idx / 16)] + ((idx % 16) + 1); }
-
-function shortTitle(t) {
-    t = String(t || "").replace(/^\s+|\s+$/g, "");
-    return t.length > 9 ? t.substring(0, 8) + "…" : t;
-}
-
-function recallFav(idx) {
-    var f = st.favs[idx];
-    if (!f) { status("Platz " + favName(idx) + " ist leer – mit „+ Neu“ belegen"); updateFavUI(); return; }
-    st.fav = idx;
-    st.bank = Math.floor(idx / 16);
-    autoRoll = 0;
-    if (f.id === st.id && durMs > 0) {           // gleiches Video: nur Slices umschalten
-        var oldBpm = st.srcBpm;
-        applyPads(f);
-        applySrc(f);
-        updateSrcUI();
-        save();
-        if (st.srcBpm !== oldBpm) requestBeats();
-        requestAll();
-        sendPadMarks();
-        updateSel();
-        status("Favorit " + favName(idx) + ": " + f.title);
-    } else {
-        pendingFav = idx;
-        status("Lade Favorit " + favName(idx) + ": " + f.title + " …");
-        outlet(1, "load", f.id);
-    }
-    updateFavUI();
-}
-
-// Slot-Buttons der aktuellen Bank (1–16)
-function favslot(k) {
-    if (!ready()) return;
-    recallFav(st.bank * 16 + clamp(Math.floor(k) - 1, 0, 15));
-}
-
-// Fav-# -Regler: erst laden, wenn der Regler kurz ruht (Encoder-Drehen lädt nicht jeden Schritt)
-function favselect(n) {
-    if (!ready()) return;
-    favSelTarget = clamp(Math.floor(n) - 1, 0, NFAV - 1);
-    var f = st.favs[favSelTarget];
-    setNamed("favinfo", "set", favName(favSelTarget) + ": " + (f ? f.title : "(leer)"));
-    favTask.cancel();
-    favTask.schedule(350);
-}
-function favSelectNow() { if (favSelTarget >= 0 && st.favs[favSelTarget]) recallFav(favSelTarget); }
-
-function favstep(d) {
-    if (!ready()) return;
-    var start = st.fav >= 0 ? st.fav : (d > 0 ? -1 : 0);
-    for (var n = 1; n <= NFAV; n++) {
-        var idx = ((start + d * n) % NFAV + NFAV) % NFAV;
-        if (st.favs[idx]) { recallFav(idx); return; }
-    }
-    status("Noch keine Favoriten gespeichert");
-}
-function favprev() { favstep(-1); }
-function favnext() { favstep(1); }
-
-function favbank(b) {
-    b = clamp(Math.floor(b), 0, BANKS.length - 1);
-    if (b === st.bank) return;
-    st.bank = b;
-    if (ready()) save();
-    updateFavUI();
-}
-
-function snapshot() {
-    return { id: st.id, title: st.title, pads: st.pads.slice(), locks: st.locks.slice(),
-             srcBpm: st.srcBpm, srcAuto: st.srcAuto, bpmConf: st.bpmConf };
-}
-
-// aktuelles Video + Slices auf den ersten freien Platz (ab aktueller Bank)
-function favadd() {
-    if (!ready()) return;
-    if (!st.id) { status("Noch kein Video geladen"); return; }
-    for (var n = 0; n < NFAV; n++) {
-        var idx = (st.bank * 16 + n) % NFAV;
-        if (!st.favs[idx]) {
-            st.favs[idx] = snapshot();
-            st.fav = idx;
-            st.bank = Math.floor(idx / 16);
-            save();
-            updateFavUI();
-            status("Gespeichert als " + favName(idx) + ": " + st.title);
-            return;
-        }
-    }
-    status("Alle " + NFAV + " Plätze belegt – erst einen löschen");
-}
-
-// aktiven Favoriten mit aktuellem Video + Slices überschreiben
-function favupdate() {
-    if (!ready()) return;
-    if (st.fav < 0 || !st.favs[st.fav]) { favadd(); return; }
-    if (!st.id) return;
-    st.favs[st.fav] = snapshot();
+// ---------- Bänke ----------
+// bank <id> <nr> <bpm> <s×16> <l×16> <songdur> <video> <pfad…>
+function bank() {
+    var a = arrayfromargs(arguments), i;
+    var id = Math.floor(a[0]), nr = Math.floor(a[1]), bp = a[2];
+    var lens = a.slice(19, 35);
+    st.bankId = id;
+    st.id = String(a[36]);
+    st.pads = a.slice(3, 19);
+    durMs = a[35] || 0;
+    B = { nr: nr, lens: lens };
+    if (pendingName && pendingName.id === id) bankName = pendingName.name;
+    else bankName = "";
+    pendingName = null;
+    st.title = bankName;
+    if (bp > 0) { st.srcBpm = bp; st.srcAuto = 0; st.bpmConf = 0; }
+    else { st.srcBpm = 0; st.srcAuto = 1; st.bpmConf = 0; }
+    resetAnalysis();
+    muted = 0;
+    if (!peekWait) peekNr = 0;                     // wer noch dreht, behält seine Anzeige
+    if (nr > 0) setNamed("bank", "set", Math.min(nr, 128));
+    for (i = 0; i < VMAX; i++) killVoice(i, 5);      // klickfrei aus, bevor der Buffer wechselt
+    pendingPath = a.slice(37).join(" ");
+    replaceTask.cancel();
+    replaceTask.schedule(10);
     save();
-    updateFavUI();
-    status("Favorit " + favName(st.fav) + " aktualisiert");
+    showBank();
+    updateSrcUI();
+    sendGridUI();
+    updateSel();
 }
 
-function favdelete() {
-    if (!ready()) return;
-    if (st.fav < 0 || !st.favs[st.fav]) { status("Kein Favorit aktiv"); return; }
-    var name = favName(st.fav);
-    st.favs[st.fav] = null;
-    st.fav = -1;
+function bankname() {
+    var a = arrayfromargs(arguments), id = Math.floor(a[0]), name = a.slice(1).join(" ");
+    if (B && id === st.bankId) { bankName = st.title = name; save(); if (!peekNr) showBank(); }
+    else pendingName = { id: id, name: name };    // Bank lädt gerade
+}
+
+// gespeicherte Bank gibt es nicht mehr: Session-Kopie als „keine Bank“ laden
+function bankgone(id) {
+    if (Math.floor(id) !== st.bankId) return;
+    st.bankId = 0; B = null;
     save();
-    updateFavUI();
-    status("Favorit " + name + " gelöscht");
+    showBank();
+    flash("Bank gelöscht");
+    if (st.id) outlet(1, "load", st.id);
 }
 
-function updateFavUI() {
-    for (var k = 0; k < 16; k++) {
-        var idx = st.bank * 16 + k;
-        var f = st.favs[idx];
-        var label = f ? shortTitle(f.title) : "·";
-        var o = P_.getnamed("favslot" + (k + 1));
-        if (!o) continue;
-        o.message("text", label);
-        o.message("texton", label);
-        o.message("set", idx === st.fav ? 1 : 0);
+function bankfail() {
+    flash("nicht ladbar");
+    if (peekWait) return;                          // wer schon weiterdreht, sieht sein Ziel
+    peekNr = 0;
+    if (B && B.nr > 0) setNamed("bank", "set", Math.min(B.nr, 128));
+    showBank();
+}
+
+// libstate <anzahl> <nr> <ok|leer|kaputt|neuer>
+var LIBMSG = { leer: ["Bibliothek leer", "Bank im Editor anlegen"], kaputt: ["Bibliothek kaputt", "Speichern gesperrt"],
+               neuer: ["Bibliothek aus neuerer Version", ""] };
+function libstate(n, nr, state) {
+    bankCount = Math.floor(n) || 0;
+    nr = Math.floor(nr) || 0;
+    if (state === "ok") {
+        if (B && nr > 0) { B.nr = nr; setNamed("bank", "set", Math.min(nr, 128)); }
+        if (muted && st.bankId > 0) outlet(1, "bankopen", st.bankId);   // Bibliothek wieder lesbar
+        muted = 0;
+        if (!peekNr) showBank();
+        return;
     }
-    setNamed("favbank", "set", st.bank);
-    if (st.fav >= 0) setNamed("favsel", "set", st.fav + 1);
-    var cur = (st.fav >= 0 && st.favs[st.fav]) ? favName(st.fav) + ": " + st.favs[st.fav].title : "kein Favorit aktiv";
-    setNamed("favinfo", "set", cur);
-    outlet(1, "favinfo", st.fav >= 0 ? favName(st.fav) : "");   // für die Teletext-Seite
+    var m = LIBMSG[state];
+    if (!m) return;
+    // Ohne Bank (Teletext, 1.x-Set) spielt das Device weiter, die Bibliothek braucht es dann nicht
+    if (st.bankId > 0 || durMs <= 0) {
+        muted = 1;
+        for (var k = 0; k < VMAX; k++) killVoice(k, 5);
+        replaceTask.cancel();
+        outlet(4, "clear");
+        B = null; durMs = 0; resetAnalysis();
+        show("-", m[0]);
+        sendGridUI(); updateSel();
+    }
+    if (m[1]) status(m[1]);
+}
+
+// bankpeek <nr> <anzahl> <name…> (Antwort auf Drehen/Prev/Next)
+function bankpeek() {
+    var a = arrayfromargs(arguments), nr = Math.floor(a[0]);
+    bankCount = Math.floor(a[1]) || 0;
+    show(nr, nr > bankCount ? "leer" : a.slice(2).join(" "));
+}
+
+// Bank-Regler (1–128): jeder Schritt zeigt, nach 350 ms Ruhe wird geladen
+function banknum(v) {
+    if (!ready()) return;
+    peekTo(clamp(Math.floor(v), 1, 128));
+}
+function bankprev() { bankstep(-1); }
+function banknext() { bankstep(1); }
+function bankstep(d) {
+    if (!ready() || bankCount <= 0) return;
+    var cur = peekNr > 0 ? peekNr : (B ? B.nr : 0);
+    var t = clamp(cur + d, 1, bankCount);              // bleibt an den Enden stehen, auch über 128
+    if (t === cur) return;
+    setNamed("bank", "set", Math.min(t, 128));
+    peekTo(t);
+}
+function peekTo(nr) {
+    peekNr = nr; peekWait = 1;
+    outlet(1, "bankpeek", nr);
+    selTask.cancel();
+    selTask.schedule(BANK_REST);
+}
+
+// große Anzeige im linken Block
+function show(nr, name) {
+    outlet(2, "shownr", String(nr));
+    outlet(2, "showname", name || "");
+}
+function showBank() {
+    if (B) show(B.nr > 0 ? B.nr : "-", bankName);
+    else if (!muted) show("-", st.title ? "keine Bank: " + st.title : "keine Bank");
+}
+
+// Teletext-Download gescheitert
+function loadfail() {
+    status("Download fehlgeschlagen: " + arrayfromargs(arguments).slice(1).join(" "));
 }
 
 // ---------- UI ----------
@@ -797,8 +813,7 @@ function updateSel() {
     else if (P.warp) info += (st.srcBpm > 0 ? "  W? Tempo bestätigen" : "  W: kein Tempo");
     outlet(2, "selinfo", "Pad " + (sel + 1) + "  " + fmt(s) + "  " + info + keyInfo(sel));
     outlet(2, "padsel", sel);
-    outlet(2, "lockset", st.locks[sel] ? 1 : 0);
-    if (durMs > 0) outlet(2, "wsel", s, e);
+    if (durMs > 0) outlet(2, "wsel", toBuf(sel, s), toBuf(sel, e));
     sendPadMarks();
 }
 
@@ -832,22 +847,19 @@ function state() {
     var o;
     try { o = JSON.parse(decodeURIComponent(s)); }
     catch (e) { post("YT Sampler: Zustand nicht lesbar: " + e + "\n"); return; }
-    var fresh = newState(), i;
+    st.bankId = Math.floor(o.bankId) || 0;          // fehlt bei 1.x-Sessions -> keine Bank
     st.id = o.id || "";
     st.title = o.title || "";
-    st.pads = (o.pads && o.pads.length === NPADS) ? o.pads : fresh.pads;
-    st.locks = (o.locks && o.locks.length === NPADS) ? o.locks : fresh.locks;
-    st.favs = fresh.favs;
-    if (o.favs) for (i = 0; i < NFAV && i < o.favs.length; i++) st.favs[i] = o.favs[i] || null;
-    if (o.mem) for (i = 0; i < o.mem.length && i < NFAV; i++) if (!st.favs[i]) st.favs[i] = o.mem[i];  // alte Merkliste übernehmen
-    st.fav = (typeof o.fav === "number") ? o.fav : -1;
-    st.bank = clamp(o.bank || 0, 0, BANKS.length - 1);
+    st.pads = (o.pads && o.pads.length === NPADS) ? o.pads : newState().pads;
     st.srcBpm = o.srcBpm || 0; st.srcAuto = (o.srcAuto === 0) ? 0 : 1; st.bpmConf = o.bpmConf || 0;
     lastSaved = s;
-    updateFavUI();
+    showBank();
     updateSrcUI();
     updateSel();
-    if (st.id) {
+    if (st.bankId > 0) {                             // Platz rechnet Node neu, „Bank“ aus dem Set zählt nicht
+        status("Lade letzten Stand …");
+        outlet(1, "bankopen", st.bankId);
+    } else if (st.id) {
         status("Lade letzten Stand …");
         outlet(1, "load", st.id);
     }
