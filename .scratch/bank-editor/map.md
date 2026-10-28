@@ -22,6 +22,8 @@ Eine Spezifikation (`.scratch/bank-editor/spec.md`) für den Bank-Editor im Brow
 - [Quelltempo in der Bank](issues/06-quelltempo-in-der-bank.md): Das bestätigte Tempo gilt pro Video und steht in der Bibliotheksdatei, nur bestätigte Werte werden gespeichert. Korrigiert wird im Editor (mit „Tempo stimmt“) und am Device (½×, 2×, Zahlenfeld bleiben). Starts rasten nicht neu ein.
 - [Bank-Identität beim Umsortieren](issues/08-bank-identitaet-bei-umsortieren.md): Jede Bank hat eine feste, unsichtbare ID. Das Set folgt der ID, Regler und MIDI treffen den Platz. Wird die aktive Bank gelöscht, lädt der Nachrücker. Ist die gespeicherte Bank weg, bleibt die Kopie aus der Session.
 - Nachtrag zu [Editor-Layout](issues/03-editor-layout.md): Undo/Redo für alle Änderungen an Pads und Bibliothek, 100 Schritte, nur im Browser. Löschen geht ohne Rückfrage, weil Undo es auffängt. Das überholt „Löschen mit Rückfrage“ aus Ticket 01.
+- [Format der Bibliotheksdatei](issues/09-format-der-bibliotheksdatei.md): `library.json` mit `banks` (Reihenfolge = Platz) und `videos` (Titel, bestätigtes `bpm`), `nextId` sperrt gelöschte IDs, `rev` zeigt Änderungen von außen. Jede Änderung: Sperre, frisch lesen, atomar ersetzen. Session-Datei v2 mit `bankId`, 1.x-Sets klingen wie gespeichert und zeigen „keine Bank“.
+- [Sicherung der Bibliothek](issues/10-sicherung-der-bibliothek.md): Der ganze Datenordner (außer `chrome-profile/`) zieht nach iCloud Drive mit „Geladen lassen“, dazu die letzten 10 Stände der Bibliothek. Kein Export, kein Knopf, keine Time Machine.
 
 ## Not yet specified
 
