@@ -24,6 +24,7 @@ Alle Dateien müssen neben der `.amxd` liegen. Abhängigkeiten: `brew install yt
 | `ir_teletext/ir_teletext.ino` | Pro Micro mit IR-Empfänger an D7. Reicht rohe IR-Codes als Noten auf Kanal 15 weiter. Wird nicht nach Live kopiert. |
 | `tools/patchlib.py` | `Patch` (Box-Builder), `write_amxd()`, `check()`. |
 | `tools/release.sh` | Neue Version taggen und in die Ableton User Library kopieren. |
+| `tools/deploy.sh` | Nur kopieren, ohne Commit: Zwischenstand in Live testen. `release.sh` ruft es am Ende auf. |
 | `README.md` | Anleitung für den Nutzer. Veraltet: „Device-Breite 870“ (richtig: 1378). |
 
 Ablage unter `~/Music/YTSampler/`: `cache/` (`<id>.wav` 44,1 kHz/16 Bit/Stereo, `<id>.json`, `<id>.chroma`), `sessions/` (`<nr>.json` + `<nr>.lock` mit PID), `ir.json` (gelernte Fernbedienung: Code → Taste), `web/` (Kopie von `teletext.html` für eingefrorene Devices), `chrome-profile/`.
@@ -37,7 +38,8 @@ Ablage unter `~/Music/YTSampler/`: `cache/` (`<id>.wav` 44,1 kHz/16 Bit/Stereo, 
   - **Minor** (`1.0.x` → `1.1.0`): neue Funktion oder spürbar anderes Verhalten auf der Bühne.
   - **Major** (`1.x` → `2.0.0`): bricht Bestehendes, z. B. Session-/Favoriten-Dateien, Parameternamen (MIDI-Mappings im Set) oder Bedienkonzept.
 - Das Skript prüft den Sync von `.amxd` und `.maxpat`, die Verbindungen und die Syntax. Danach schreibt es `VERSION`, committet alles als „X.Y.Z: Nachricht“, taggt `vX.Y.Z` und ersetzt den Live-Ordner per `rsync --delete`. `tools/` und `CLAUDE.md` werden nicht kopiert. Nach jedem Lauf sagt Claude dem Nutzer Bescheid, mit Version und ob sich am Device etwas geändert hat.
-- Nach dem Release muss der Nutzer das Device in Live neu laden (siehe `poly~` unten).
+- **Deploy:** Sagt der Nutzer „deploy“, kopiert Claude den aktuellen Stand per `tools/deploy.sh` nach Live, ohne Commit und ohne Version. Vorher selbst prüfen (Sync, `check()`, `node --check`), das Skript prüft nichts. Danach lädt der Nutzer neu und testet. Erst wenn es passt, kommt `release.sh`.
+- Nach Release oder Deploy muss der Nutzer das Device in Live neu laden (siehe `poly~` unten).
 
 ## Signalfluss im Hauptpatch
 
