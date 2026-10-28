@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>PROTOTYP Bank-Editor</title>
+<!--
+  PROTOTYP, Wegwerfcode. Ticket .scratch/bank-editor/issues/03-editor-layout.md
+  Runde 2: Layout A (Bibliothek links, Waveform über den Pads) als Dashboard.
+  Suche als Slide-in, Treffer auf die Pads ziehen = neue Bank. Attrappendaten, keine Anbindung ans Device.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:#0e0f11; --panel:#16171a; --raise:#1d1f23; --line:#26282d; --line2:#32353b;
+    --text:#ececee; --dim:#8c8f96; --faint:#5b5e65;
+    --acc:#ffb020; --sel:#5cc8ff; --danger:#ff5d5d; --ok:#3ddc84;
+    --sw:280px; --wh:42%;
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+    font:13px/1.4 Inter, -apple-system, "SF Pro Text", sans-serif; -webkit-font-smoothing:antialiased; }
+  button { font:inherit; color:var(--text); background:var(--raise); border:1px solid var(--line2); border-radius:7px; padding:6px 12px; cursor:pointer; }
+  button:hover { border-color:#4a4d55; }
+  button.pri { background:var(--text); color:#000; border-color:var(--text); font-weight:500; }
+  button.ghost { background:none; border-color:transparent; color:var(--dim); padding:4px 6px; }
+  button.ghost:hover { color:var(--text); background:var(--raise); }
+  input { font:inherit; color:var(--text); background:var(--bg); border:1px solid var(--line2); border-radius:7px; padding:8px 10px; outline:none; }
+  input:focus { border-color:var(--sel); }
+  .lbl { font-size:11px; font-weight:500; text-transform:uppercase; letter-spacing:.07em; color:var(--dim); }
+  .num { font-variant-numeric:tabular-nums; }
+  kbd { font:11px Inter, sans-serif; color:var(--dim); border:1px solid var(--line2); border-radius:4px; padding:0 4px; }
+
+  /* Gerüst */
+  #app { display:grid; grid-template-rows:52px 1fr; height:100vh; }
+  #top { display:flex; align-items:center; gap:16px; padding:0 14px; border-bottom:1px solid var(--line); }
+  #logo { font-weight:600; letter-spacing:-.01em; }
+  #logo span { color:var(--acc); }
+  #nav { display:flex; align-items:center; gap:4px; margin-left:24px; }
+  #navname { min-width:260px; max-width:380px; padding:0 8px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  #navname b { font-weight:500; } #navname span { color:var(--dim); }
+  #conn { margin-left:auto; color:var(--dim); font-size:12px; display:flex; align-items:center; gap:6px; }
+  #conn i { width:7px; height:7px; border-radius:50%; background:var(--ok); }
+  #saved { color:var(--faint); font-size:12px; }
+  #body { display:grid; grid-template-columns:var(--sw) 6px 1fr; min-height:0; }
+  #body.collapsed { grid-template-columns:0 0 1fr; }
+  #body.collapsed #side { visibility:hidden; }
+  .split { cursor:col-resize; }
+  .split:hover, .split.on { background:var(--line2); }
+  .hsplit { height:6px; cursor:row-resize; margin:0 -2px; border-radius:3px; }
+  .hsplit:hover, .hsplit.on { background:var(--line2); }
+
+  /* Bibliothek */
+  #side { display:flex; flex-direction:column; min-width:0; border-right:1px solid var(--line); background:var(--panel); }
+  #sidehead { display:flex; align-items:center; gap:8px; padding:14px 12px 8px 14px; }
+  #sidehead .lbl { flex:1; }
+  #banklist { list-style:none; margin:0; padding:0 8px 12px; overflow:auto; flex:1; }
+  #banklist li { position:relative; display:grid; grid-template-columns:22px 1fr auto; align-items:center; gap:8px; padding:7px 8px; border-radius:8px; cursor:pointer; user-select:none; }
+  #banklist li:hover { background:var(--raise); }
+  #banklist li.on { background:#2a2414; box-shadow:inset 2px 0 0 var(--acc); }
+  #banklist li.over { box-shadow:inset 0 2px 0 var(--sel); }
+  #banklist .nr { color:var(--faint); text-align:right; font-size:12px; }
+  #banklist li.on .nr { color:var(--acc); }
+  #banklist .name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500; }
+  #banklist .sub { display:block; font-weight:400; font-size:11.5px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; }
+  #banklist .acts { display:flex; gap:0; opacity:0; }
+  #banklist li:hover .acts, #banklist li.on .acts { opacity:1; }
+  #banklist .acts button { padding:3px 5px; }
+  #banklist .acts .del:hover { color:var(--danger); }
+  #banklist input { width:100%; padding:3px 6px; }
+  svg.i { width:15px; height:15px; stroke:currentColor; fill:none; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; vertical-align:-3px; }
+
+  /* Hauptbereich */
+  #main { display:flex; flex-direction:column; padding:12px 14px 14px 8px; min-width:0; min-height:0; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 14px; display:flex; flex-direction:column; min-height:0; }
+  #wave { height:var(--wh); }
+  #pads { flex:1; }
+  .cardhead { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+  .cardhead .lbl { margin-right:auto; }
+  #scroll { position:relative; flex:1; overflow-x:auto; overflow-y:hidden; background:var(--bg); border-radius:8px; min-height:90px; }
+  #scroll::-webkit-scrollbar { height:6px; } #scroll::-webkit-scrollbar-thumb { background:var(--line2); border-radius:3px; }
+  #inner { position:relative; height:100%; }
+  #inner canvas { position:absolute; left:0; top:0; height:100%; }
+  .mk { position:absolute; top:0; bottom:0; width:0; border-left:1.5px solid var(--acc); cursor:ew-resize; }
+  .mk span { position:absolute; top:6px; left:-1px; background:var(--acc); color:#1a1200; font-size:10px; font-weight:600; padding:1px 4px; border-radius:0 4px 4px 0; }
+  .mk::after { content:""; position:absolute; top:0; bottom:0; left:-7px; width:14px; }
+  .mk.sel { border-color:var(--sel); z-index:2; } .mk.sel span { background:var(--sel); color:#00141f; }
+  #slice { position:absolute; top:0; bottom:0; background:rgba(92,200,255,.12); pointer-events:none; }
+  #play { position:absolute; top:0; bottom:0; width:2px; background:#fff; pointer-events:none; display:none; }
+  #tip { position:absolute; bottom:6px; background:#000; padding:2px 6px; font-size:11px; border-radius:4px; pointer-events:none; display:none; z-index:3; white-space:nowrap; }
+  .hint { color:var(--faint); font-size:11.5px; }
+  .seg { display:flex; border:1px solid var(--line2); border-radius:7px; overflow:hidden; }
+  .seg button { border:none; border-radius:0; padding:4px 9px; background:none; color:var(--dim); }
+  .seg button.on { background:var(--raise); color:var(--text); }
+
+  /* Pads */
+  #padarea { flex:1; display:flex; gap:18px; min-height:0; position:relative; }
+  #grid { height:100%; aspect-ratio:1; max-width:62%; display:grid; grid-template-columns:repeat(4,1fr); grid-template-rows:repeat(4,1fr); gap:8px; }
+  .pad { position:relative; background:var(--raise); border:1px solid var(--line2); border-radius:10px; cursor:pointer; padding:8px 10px; display:flex; flex-direction:column; justify-content:space-between; user-select:none; min-height:0; transition:background .08s; }
+  .pad:hover { border-color:#4a4d55; }
+  .pad .n { font-weight:600; font-size:14px; color:var(--dim); }
+  .pad .s { font-size:11.5px; color:var(--dim); }
+  .pad .bar { position:absolute; left:10px; right:10px; bottom:26px; height:3px; border-radius:2px; background:var(--line2); }
+  .pad .bar i { position:absolute; top:0; bottom:0; width:3px; background:var(--acc); border-radius:2px; }
+  .pad.sel { border-color:var(--sel); } .pad.sel .n { color:var(--sel); }
+  .pad.hit { background:var(--acc); } .pad.hit .n, .pad.hit .s { color:#1a1200; }
+  .pad.over { outline:2px dashed var(--sel); outline-offset:2px; }
+  .pad .roll { position:absolute; top:5px; right:5px; opacity:0; padding:2px 4px; }
+  .pad:hover .roll { opacity:1; }
+  #insp { flex:1; min-width:180px; display:flex; flex-direction:column; gap:12px; }
+  #insp .big { font-size:28px; font-weight:600; letter-spacing:-.02em; }
+  #insp .row { display:flex; justify-content:space-between; color:var(--dim); border-bottom:1px solid var(--line); padding:6px 0; }
+  #insp .row b { color:var(--text); font-weight:500; }
+  #drop { position:absolute; inset:-4px; border:2px dashed var(--sel); border-radius:12px; background:rgba(92,200,255,.08); display:none; align-items:center; justify-content:center; font-size:15px; font-weight:500; z-index:5; pointer-events:none; }
+  #pads.dropping #drop { display:flex; }
+
+  /* Slide-in Suche */
+  #shade { position:fixed; inset:0; background:rgba(0,0,0,.45); opacity:0; pointer-events:none; transition:opacity .2s; z-index:20; }
+  #panel { position:fixed; top:0; right:0; bottom:0; width:420px; max-width:92vw; background:var(--panel); border-left:1px solid var(--line); transform:translateX(100%); transition:transform .22s ease; z-index:21; display:flex; flex-direction:column; padding:16px; gap:12px; }
+  body.search #panel { transform:none; }
+  body.search #shade { opacity:1; pointer-events:auto; }
+  body.dragging #shade { opacity:0; pointer-events:none; } /* beim Ziehen Blick auf die Pads frei */
+  body.dragging #panel { transform:translateX(calc(100% - 140px)); }
+  #panel .h { display:flex; align-items:center; }
+  #panel .h b { font-size:15px; font-weight:600; margin-right:auto; }
+  #results { list-style:none; margin:0; padding:0; overflow:auto; display:flex; flex-direction:column; gap:6px; }
+  #results li { display:grid; grid-template-columns:72px 1fr; gap:10px; padding:8px; border-radius:9px; border:1px solid var(--line); cursor:grab; }
+  #results li:hover { background:var(--raise); }
+  #results .th { height:40px; border-radius:5px; }
+  #results .t { font-weight:500; } #results .m { color:var(--dim); font-size:12px; }
+  #results .loading { cursor:default; color:var(--dim); grid-template-columns:1fr; }
+
+  /* Modal, Toast */
+  #modal { position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; z-index:30; }
+  #modal.on { display:flex; }
+  #modal .box { width:380px; background:var(--panel); border:1px solid var(--line2); border-radius:14px; padding:20px; }
+  #modal h3 { margin:0 0 6px; font-size:15px; font-weight:600; }
+  #modal p { margin:0 0 18px; color:var(--dim); }
+  #modal .btns { display:flex; justify-content:flex-end; gap:8px; }
+  #modal .danger { background:var(--danger); border-color:var(--danger); color:#fff; font-weight:500; }
+  #toast { position:fixed; bottom:18px; left:50%; transform:translate(-50%, 20px); background:var(--text); color:#000; padding:8px 14px; border-radius:8px; opacity:0; transition:all .2s; z-index:40; font-weight:500; }
+  #toast button { margin-left:10px; padding:2px 8px; background:#000; color:#fff; border:none; }
+  button:disabled { opacity:.35; cursor:default; }
+  #toast.on { opacity:1; transform:translate(-50%, 0); }
+  #state { position:fixed; right:10px; bottom:4px; color:#3d4046; font:10px Menlo, monospace; pointer-events:none; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M5 7l1 13h12l1-13M9 7V4h6v3"/></symbol>
+  <symbol id="i-dice" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="9" cy="9" r=".8"/><circle cx="15" cy="15" r=".8"/><circle cx="15" cy="9" r=".8"/><circle cx="9" cy="15" r=".8"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
+  <symbol id="i-side" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></symbol>
+  <symbol id="i-l" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
+  <symbol id="i-r" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+</svg>
+
+<div id="app">
+  <header id="top">
+    <button class="ghost" id="toggleside" title="Bibliothek ein/aus"><svg class="i"><use href="#i-side"/></svg></button>
+    <div id="logo">YT Sampler <span>Bänke</span></div>
+    <div id="nav">
+      <button class="ghost" id="prev" title="Vorige Bank (↑)"><svg class="i"><use href="#i-l"/></svg></button>
+      <div id="navname"></div>
+      <button class="ghost" id="next" title="Nächste Bank (↓)"><svg class="i"><use href="#i-r"/></svg></button>
+    </div>
+    <button class="ghost" id="undo" title="Rückgängig (⌘Z)"><svg class="i"><use href="#i-undo"/></svg></button>
+    <button class="ghost" id="redo" title="Wiederholen (⇧⌘Z)"><svg class="i"><use href="#i-redo"/></svg></button>
+    <span id="saved">Automatisch gespeichert</span>
+    <span id="conn"><i></i>Device verbunden</span>
+    <button class="pri" id="opensearch"><svg class="i"><use href="#i-search"/></svg> Video suchen <kbd style="color:#555;border-color:#bbb">⌘K</kbd></button>
+  </header>
+
+  <div id="body">
+    <aside id="side">
+      <div id="sidehead"><span class="lbl">Bibliothek</span><span class="hint num" id="count"></span></div>
+      <ul id="banklist"></ul>
+    </aside>
+    <div class="split" id="vsplit"></div>
+    <main id="main">
+      <section class="card" id="wave">
+        <div class="cardhead">
+          <span class="lbl">Waveform</span>
+          <span class="hint">Marker ziehen rastet auf Schläge · <kbd>⌥</kbd> frei</span>
+          <div class="seg" id="zoom"></div>
+        </div>
+        <div id="scroll"><div id="inner"><canvas id="cv"></canvas><div id="slice"></div><div id="play"></div><div id="tip"></div></div></div>
+      </section>
+      <div class="hsplit" id="hsplit"></div>
+      <section class="card" id="pads">
+        <div class="cardhead"><span class="lbl">Pads</span><span class="hint">Klick spielt · auf anderes Pad ziehen tauscht</span></div>
+        <div id="padarea">
+          <div id="grid"></div>
+          <div id="insp"></div>
+          <div id="drop">Loslassen: neue Bank aus diesem Video</div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<div id="shade"></div>
+<aside id="panel">
+  <div class="h"><b>Video suchen</b><button class="ghost" id="closesearch"><svg class="i"><use href="#i-x"/></svg></button></div>
+  <input id="q" placeholder="Suchbegriff oder YouTube-URL …">
+  <div class="hint">Treffer auf die Pads ziehen oder anklicken: wird eine neue Bank am Ende der Bibliothek.</div>
+  <ul id="results"></ul>
+</aside>
+<div id="modal"><div class="box"><h3 id="mt"></h3><p id="mp"></p><div class="btns"><button id="mno">Abbrechen</button><button class="danger" id="myes">Löschen</button></div></div></div>
+<div id="toast"></div>
+<div id="state"></div>
+
+<script>
+// ---------- Attrappendaten ----------
+function rng(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; var t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+var TITLES = [['Herbie Hancock – Rockit', 97], ['Can – Vitamin C', 116], ['Fela Kuti – Water No Get Enemy', 104], ['Kraftwerk – Numbers', 112],
+  ['ESG – UFO', 101], ['Liquid Liquid – Cavern', 108], ['The Meters – Cissy Strut', 92], ['Os Mutantes – Bat Macumba', 124],
+  ['Arthur Russell – Is It All Over My Face', 118], ['Tom Tom Club – Genius of Love', 104], ['Shuggie Otis – Strawberry Letter 23', 88]];
+var nextId = 1;
+function makeBank(title, bpm) {
+  var r = rng(nextId * 977), dur = 150000 + r() * 150000, beat = 60000 / bpm, off = 300 + r() * beat, down = off + 4 * beat * Math.floor(2 + r() * 4);
+  var beats = []; for (var t = off; t < dur; t += beat) beats.push(t);
+  var b = { id: nextId++, name: title, title: title, bpm: bpm, dur: dur, beats: beats, down: down, peaks: [], starts: [] };
+  for (var i = 0; i < 4000; i++) {
+    var ms = i / 4000 * dur, ph = ((ms - off) % beat + beat) % beat / beat, sec = 0.5 + 0.5 * Math.sin(ms / 23000);
+    b.peaks.push(Math.min(1, (ms < down - 2 * beat ? 0.25 : 0.55) * sec * (0.5 + r() * 0.5) + Math.max(0, 1 - ph * 6) * 0.45));
+  }
+  while (b.starts.length < 16) b.starts.push(randomStart(b));
+  b.starts.sort(function (a, c) { return a - c; });
+  return b;
+}
+function isDown(b, t) { return t >= b.down && Math.round((t - b.down) / (60000 / b.bpm)) % 4 === 0; }
+function randomStart(b) { // wie im Device: Taktanfang bevorzugt, nicht doppelt
+  var bars = b.beats.filter(function (t) { return isDown(b, t); });
+  for (var k = 0; k < 50; k++) { var t = bars[Math.floor(Math.random() * bars.length)]; if (b.starts.indexOf(t) < 0) return t; }
+  return b.beats[Math.floor(Math.random() * b.beats.length)];
+}
+var banks = TITLES.map(function (t) { return makeBank(t[0], t[1]); });
+banks[0].name = 'Rockit Scratches'; banks[3].name = 'Numbers – nur Stimmen';
+var cur = 0, sel = 0, zoom = 1;
+
+var $ = function (id) { return document.getElementById(id); };
+function fmt(ms) { var s = ms / 1000; return Math.floor(s / 60) + ':' + ('0' + (s % 60).toFixed(2)).slice(-5); }
+function bank() { return banks[cur]; }
+function sliceLen() { return 4 * 60000 / bank().bpm; } // kommt vom Device, Attrappe: 1 Takt
+function px(ms) { return ms / bank().dur * $('inner').clientWidth; }
+function icon(n) { return '<svg class="i"><use href="#i-' + n + '"/></svg>'; }
+var toastT; function toast(s, undoBtn) {
+  var t = $('toast'); t.textContent = s; t.classList.add('on'); clearTimeout(toastT);
+  if (undoBtn) { var b = document.createElement('button'); b.textContent = 'Rückgängig'; b.onclick = undo; t.appendChild(b); }
+  toastT = setTimeout(function () { t.classList.remove('on'); }, undoBtn ? 5000 : 1400);
+}
+// ---------- Undo/Redo ----------
+// shortcut: nur im Speicher, Neuladen löscht die Historie; echte Fassung hängt das an Node
+var HIST_MAX = 100, hist = [], hpos = -1;
+function snap(label) { return { label: label, cur: cur, sel: sel, banks: banks.map(function (b) { return { b: b, name: b.name, starts: b.starts.slice() }; }) }; }
+function restore(h) { banks = h.banks.map(function (x) { x.b.name = x.name; x.b.starts = x.starts.slice(); return x.b; }); cur = h.cur; sel = h.sel; renderAll(); showSel(); }
+function undo() { if (hpos < 1) return; var l = hist[hpos].label; restore(hist[--hpos]); histButtons(); toast("Rückgängig: " + l); saved(); }
+function redo() { if (hpos >= hist.length - 1) return; restore(hist[++hpos]); histButtons(); toast("Wiederholt: " + hist[hpos].label); saved(); }
+function histButtons() {
+  $('undo').disabled = hpos < 1; $('redo').disabled = hpos >= hist.length - 1;
+  $('undo').title = hpos < 1 ? 'Nichts rückgängig zu machen' : 'Rückgängig: ' + hist[hpos].label + ' (⌘Z)';
+  $('redo').title = hpos >= hist.length - 1 ? 'Nichts zu wiederholen' : 'Wiederholen: ' + hist[hpos + 1].label + ' (⇧⌘Z)';
+}
+function changed(label) { hist.length = hpos + 1; hist.push(snap(label)); if (hist.length > HIST_MAX) hist.shift(); hpos = hist.length - 1; histButtons(); saved(); }
+function saved() { $('saved').textContent = 'Gespeichert ✓'; setTimeout(function () { $('saved').textContent = 'Automatisch gespeichert'; }, 900); }
+function selectBank(i) { cur = Math.max(0, Math.min(banks.length - 1, i)); sel = 0; renderAll(); }
+
+// ---------- Bibliothek ----------
+var drag = null; // {kind:'bank'|'pad'|'video', ...}
+function renderBanks() {
+  var ul = $('banklist'); ul.innerHTML = '';
+  $('count').textContent = banks.length;
+  banks.forEach(function (b, i) {
+    var li = document.createElement('li'); li.draggable = true; if (i === cur) li.className = 'on';
+    li.innerHTML = '<span class="nr num">' + (i + 1) + '</span><span class="name"></span><span class="acts">'
+      + '<button class="ghost ren" title="Umbenennen">' + icon('edit') + '</button>'
+      + '<button class="ghost dup" title="Duplizieren">' + icon('copy') + '</button>'
+      + '<button class="ghost del" title="Löschen">' + icon('trash') + '</button></span>';
+    var n = li.querySelector('.name'); n.textContent = b.name;
+    var sub = document.createElement('span'); sub.className = 'sub'; sub.textContent = (b.name !== b.title ? b.title + ' · ' : '') + b.bpm + ' BPM'; n.appendChild(sub);
+    li.onclick = function (e) { if (e.target.closest('button,input')) return; selectBank(i); };
+    li.ondblclick = function (e) { if (!e.target.closest('button')) rename(li, b); };
+    li.querySelector('.ren').onclick = function () { rename(li, b); };
+    li.querySelector('.dup').onclick = function () {
+      var c = JSON.parse(JSON.stringify(b)); c.id = nextId++; c.name = b.name + ' (Kopie)';
+      banks.splice(i + 1, 0, c); cur = i + 1; renderAll(); changed('Bank „' + b.name + '“ dupliziert'); toast('Bank dupliziert');
+    };
+    li.querySelector('.del').onclick = function () {
+      // Undo statt Rückfrage-Modal
+      var curB = bank(); banks.splice(i, 1); cur = Math.max(0, Math.min(banks.length - 1, curB === b ? i : banks.indexOf(curB))); renderAll();
+      changed('Bank „' + b.name + '“ gelöscht'); toast('Bank „' + b.name + '“ gelöscht', true);
+    };
+    li.ondragstart = function () { drag = { kind: 'bank', i: i }; };
+    li.ondragend = function () { drag = null; };
+    li.ondragover = function (e) { if (drag && drag.kind === 'bank') { e.preventDefault(); li.classList.add('over'); } };
+    li.ondragleave = function () { li.classList.remove('over'); };
+    li.ondrop = function () {
+      var curB = bank(), b0 = banks.splice(drag.i, 1)[0]; banks.splice(i, 0, b0); drag = null;
+      cur = banks.indexOf(curB); renderAll(); changed('Bank „' + b0.name + '“ verschoben');
+    };
+    ul.appendChild(li);
+  });
+  var b = bank();
+  $('navname').innerHTML = '<span class="num">' + (cur + 1) + ' / ' + banks.length + '</span>&nbsp;&nbsp;<b></b>';
+  $('navname').querySelector('b').textContent = b.name;
+}
+function rename(li, b) {
+  var n = li.querySelector('.name'), inp = document.createElement('input'); inp.value = b.name;
+  n.replaceWith(inp); inp.focus(); inp.select();
+  inp.onkeydown = function (e) { if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.value = b.name; inp.blur(); } };
+  inp.onblur = function () { var v = inp.value.trim() || b.title, old = b.name; b.name = v; renderAll(); if (v !== old) changed('Umbenannt in „' + v + '“'); };
+}
+function ask(t, p, yes) {
+  $('mt').textContent = t; $('mp').textContent = p; $('modal').classList.add('on'); $('myes').focus();
+  $('myes').onclick = function () { $('modal').classList.remove('on'); yes(); };
+  $('mno').onclick = function () { $('modal').classList.remove('on'); };
+}
+$('prev').onclick = function () { selectBank(cur - 1); };
+$('next').onclick = function () { selectBank(cur + 1); };
+$('undo').onclick = undo; $('redo').onclick = redo;
+$('toggleside').onclick = function () { $('body').classList.toggle('collapsed'); renderWave(); };
+
+// ---------- Suche (Slide-in) ----------
+var POOL = [['Cymande – Bra', 100, '6:12'], ['Esther Williams – Last Night Changed It All', 120, '7:05'], ['Manuel Göttsching – E2-E4', 124, '9:58'],
+  ['Lijadu Sisters – Danger', 110, '5:31'], ['Bob James – Nautilus', 95, '5:09'], ['Ryuichi Sakamoto – Riot in Lagos', 126, '5:36']];
+var HUES = [20, 200, 280, 140, 340, 50];
+function openSearch() { document.body.classList.add('search'); $('q').focus(); runSearch(); }
+function closeSearch() { document.body.classList.remove('search'); }
+$('opensearch').onclick = openSearch; $('closesearch').onclick = closeSearch; $('shade').onclick = closeSearch;
+var sT; $('q').oninput = function () { clearTimeout(sT); sT = setTimeout(runSearch, 250); };
+function runSearch() {
+  var ul = $('results'); ul.innerHTML = '';
+  POOL.forEach(function (p, k) {
+    var li = document.createElement('li'); li.draggable = true;
+    li.innerHTML = '<div class="th" style="background:linear-gradient(135deg,hsl(' + HUES[k] + ',45%,32%),hsl(' + HUES[k] + ',35%,16%))"></div><div><div class="t"></div><div class="m">' + p[2] + '</div></div>';
+    li.querySelector('.t').textContent = p[0];
+    li.onclick = function () { newBank(p); };
+    li.ondragstart = function (e) { drag = { kind: 'video', p: p }; e.dataTransfer.setData('text/plain', p[0]); setTimeout(function () { document.body.classList.add('dragging'); }, 0); };
+    li.ondragend = function () { drag = null; document.body.classList.remove('dragging'); $('pads').classList.remove('dropping'); };
+    ul.appendChild(li);
+  });
+}
+function newBank(p) {
+  closeSearch(); toast('Lädt „' + p[0] + '“ …');
+  setTimeout(function () { banks.push(makeBank(p[0], p[1])); selectBank(banks.length - 1); changed('Neue Bank „' + p[0] + '“'); toast('Neue Bank ' + banks.length + ' angelegt'); }, 800);
+}
+$('pads').ondragover = function (e) { if (drag && drag.kind === 'video') { e.preventDefault(); $('pads').classList.add('dropping'); } };
+$('pads').ondragleave = function (e) { if (!$('pads').contains(e.relatedTarget)) $('pads').classList.remove('dropping'); };
+$('pads').ondrop = function (e) { if (drag && drag.kind === 'video') { e.preventDefault(); var p = drag.p; $('pads').classList.remove('dropping'); newBank(p); } };
+
+// ---------- Waveform ----------
+[1, 4, 16].forEach(function (z) { var b = document.createElement('button'); b.textContent = z + '×'; b.onclick = function () { setZoom(z); }; $('zoom').appendChild(b); });
+function renderWave() {
+  var b = bank(), sc = $('scroll'), inner = $('inner'), cv = $('cv');
+  inner.style.width = sc.clientWidth * zoom + 'px';
+  var w = inner.clientWidth, h = sc.clientHeight, dpr = devicePixelRatio || 1;
+  cv.width = w * dpr; cv.height = h * dpr; cv.style.width = w + 'px';
+  var g = cv.getContext('2d'); g.scale(dpr, dpr); g.clearRect(0, 0, w, h);
+  b.beats.forEach(function (t) {
+    var d = isDown(b, t), x = Math.round(px(t)) + .5;
+    if (!d && zoom < 4) return; // wenig Zoom: nur Taktlinien
+    g.strokeStyle = d ? '#2c2f35' : '#1d1f23'; g.lineWidth = d && Math.abs(t - b.down) < 1 ? 3 : 1;
+    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+  });
+  g.fillStyle = '#6f737b';
+  for (var x = 0; x < w; x++) { var a = b.peaks[Math.floor(x / w * b.peaks.length)] * (h / 2 - 8); g.fillRect(x, h / 2 - a, 1, a * 2); }
+  Array.prototype.slice.call(inner.querySelectorAll('.mk')).forEach(function (m) { m.remove(); });
+  b.starts.forEach(function (t, i) {
+    var m = document.createElement('div'); m.className = 'mk' + (i === sel ? ' sel' : ''); m.style.left = px(t) + 'px';
+    m.innerHTML = '<span>' + (i + 1) + '</span>'; m.onpointerdown = function (e) { dragMarker(e, i, m); }; inner.appendChild(m);
+  });
+  var s = $('slice'); s.style.left = px(b.starts[sel]) + 'px'; s.style.width = px(sliceLen()) + 'px';
+  Array.prototype.forEach.call($('zoom').children, function (bt) { bt.classList.toggle('on', bt.textContent === zoom + '×'); });
+}
+function dragMarker(e, i, m) {
+  e.preventDefault(); sel = i; renderPads(); m.setPointerCapture(e.pointerId);
+  var b = bank(), tip = $('tip'), start0 = b.starts[i];
+  m.onpointermove = function (ev) {
+    var r = $('inner').getBoundingClientRect(), ms = Math.max(0, Math.min(b.dur, (ev.clientX - r.left) / r.width * b.dur));
+    if (!ev.altKey) ms = b.beats.reduce(function (best, t) { return Math.abs(t - ms) < Math.abs(best - ms) ? t : best; }, b.beats[0]);
+    b.starts[i] = ms; m.style.left = px(ms) + 'px'; $('slice').style.left = px(ms) + 'px';
+    tip.style.display = 'block'; tip.style.left = px(ms) + 6 + 'px'; tip.textContent = 'Pad ' + (i + 1) + ' · ' + fmt(ms) + (ev.altKey ? ' · frei' : '');
+  };
+  m.onpointerup = function () { m.onpointermove = m.onpointerup = null; tip.style.display = 'none'; renderAll(); if (b.starts[i] !== start0) changed('Start Pad ' + (i + 1) + ' verschoben'); };
+}
+function setZoom(z) { zoom = z; renderWave(); showSel(); }
+$('scroll').addEventListener('wheel', function (e) { if (e.ctrlKey || e.metaKey) { e.preventDefault(); setZoom(e.deltaY < 0 ? Math.min(16, zoom * 4) : Math.max(1, zoom / 4)); } }, { passive: false });
+function showSel() { var sc = $('scroll'); sc.scrollLeft = px(bank().starts[sel]) - sc.clientWidth / 3; }
+
+// ---------- Pads (Pad 1 unten links) ----------
+function renderPads() {
+  var g = $('grid'), b = bank(); g.innerHTML = '';
+  for (var row = 3; row >= 0; row--) for (var col = 0; col < 4; col++) (function (i) {
+    var p = document.createElement('div'); p.className = 'pad' + (i === sel ? ' sel' : ''); p.draggable = true; p.id = 'pad' + i;
+    p.innerHTML = '<span class="n">' + (i + 1) + '</span><div class="bar"><i style="left:' + (b.starts[i] / b.dur * 100) + '%"></i></div><span class="s num">' + fmt(b.starts[i]) + '</span>'
+      + '<button class="ghost roll" title="Neues Snippet">' + icon('dice') + '</button>';
+    p.onclick = function (e) { if (e.target.closest('.roll')) return; sel = i; hit(i); renderPads(); renderWave(); showSel(); };
+    p.querySelector('.roll').onclick = function () { sel = i; reroll(); };
+    p.ondragstart = function () { drag = { kind: 'pad', i: i }; };
+    p.ondragend = function () { drag = null; };
+    p.ondragover = function (e) { if (drag && drag.kind === 'pad') { e.preventDefault(); p.classList.add('over'); } };
+    p.ondragleave = function () { p.classList.remove('over'); };
+    p.ondrop = function (e) { if (!drag || drag.kind !== 'pad') return; e.stopPropagation(); var s = b.starts, t = s[i]; s[i] = s[drag.i]; s[drag.i] = t; var from = drag.i; sel = i; drag = null; renderAll(); if (from !== i) changed('Pad ' + (from + 1) + ' ↔ ' + (i + 1) + ' getauscht'); };
+    g.appendChild(p);
+  })(row * 4 + col);
+  $('insp').innerHTML = '<span class="lbl">Ausgewählt</span><div class="big">Pad ' + (sel + 1) + '</div>'
+    + '<div class="row"><span>Start</span><b class="num">' + fmt(b.starts[sel]) + '</b></div>'
+    + '<div class="row"><span>Länge</span><b>vom Device</b></div>'
+    + '<div class="row"><span>Video</span><b style="max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></b></div>'
+    + '<div style="display:flex;gap:8px"><button id="rollbtn">' + icon('dice') + ' Neues Snippet</button><button id="hitbtn">Anspielen</button></div>';
+  $('insp').querySelectorAll('.row b')[2].textContent = b.title + ' · ' + b.bpm + ' BPM';
+  $('rollbtn').onclick = reroll; $('hitbtn').onclick = function () { hit(sel); };
+}
+function reroll() { var b = bank(), old = b.starts[sel]; b.starts[sel] = -1; var t = randomStart(b); b.starts[sel] = t === old ? randomStart(b) : t; renderAll(); hit(sel); showSel(); changed('Neues Snippet Pad ' + (sel + 1)); }
+var playT = null;
+function hit(i) { // Attrappe: in echt klingt es in Live
+  var p = $('pad' + i); if (p) { p.classList.add('hit'); setTimeout(function () { var q = $('pad' + i); if (q) q.classList.remove('hit'); }, 140); }
+  var pl = $('play'), t0 = performance.now(), from = bank().starts[i], len = sliceLen();
+  cancelAnimationFrame(playT); pl.style.display = 'block';
+  (function step() { var d = performance.now() - t0; if (d > len) { pl.style.display = 'none'; return; } pl.style.left = px(from + d) + 'px'; playT = requestAnimationFrame(step); })();
+}
+
+// ---------- Anpassen: Bibliothek breiter/schmaler, Waveform höher/flacher ----------
+function splitter(el, onMove) {
+  el.onpointerdown = function (e) {
+    el.setPointerCapture(e.pointerId); el.classList.add('on');
+    el.onpointermove = function (ev) { onMove(ev); renderWave(); };
+    el.onpointerup = function () { el.onpointermove = el.onpointerup = null; el.classList.remove('on'); };
+  };
+}
+splitter($('vsplit'), function (e) { document.documentElement.style.setProperty('--sw', Math.max(200, Math.min(480, e.clientX)) + 'px'); });
+splitter($('hsplit'), function (e) { var r = $('main').getBoundingClientRect(); document.documentElement.style.setProperty('--wh', Math.max(18, Math.min(70, (e.clientY - r.top) / r.height * 100)) + '%'); });
+
+// ---------- Tastatur ----------
+document.addEventListener('keydown', function (e) {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); openSearch(); return; }
+  var inField = /INPUT|TEXTAREA/.test(document.activeElement.tagName);
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && !inField) { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if (e.key === 'Escape') { closeSearch(); $('modal').classList.remove('on'); return; }
+  if (/INPUT|TEXTAREA/.test(document.activeElement.tagName) || $('modal').classList.contains('on')) return;
+  if (e.key === 'ArrowUp') { e.preventDefault(); selectBank(cur - 1); }
+  if (e.key === 'ArrowDown') { e.preventDefault(); selectBank(cur + 1); }
+});
+
+function renderState() { var b = bank(); $('state').textContent = 'bank ' + (cur + 1) + '/' + banks.length + ' · pad ' + (sel + 1) + ' · starts [' + b.starts.map(Math.round).join(',') + ']'; }
+function renderAll() { renderBanks(); renderPads(); renderWave(); renderState(); }
+window.addEventListener('resize', renderWave);
+renderAll(); changed('Start');
+</script>
+</body>
+</html>
