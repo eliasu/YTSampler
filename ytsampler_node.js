@@ -14,13 +14,43 @@ const http = require('http');
 const EXTRA_PATHS = ['/opt/homebrew/bin', '/usr/local/bin', '/opt/local/bin', path.join(os.homedir(), '.local/bin')];
 const ENV = { ...process.env, PATH: [...EXTRA_PATHS, process.env.PATH || '/usr/bin:/bin'].join(':') };
 
-const CACHE = path.join(os.homedir(), 'Music', 'YTSampler', 'cache');
+// Ablage (Spec 2.1): D = Datenordner in iCloud Drive (sonst lokal), L = lokal, nur Cache und Chrome-Profil
+const LOCAL = path.join(os.homedir(), 'Music', 'YTSampler');
+const LOCAL_ONLY = new Set(['cache', 'chrome-profile']);
+
+// Erster Start mit iCloud: alles außer LOCAL_ONLY von L nach D verschieben (Spec 8.1)
+function dataDir() {
+  const icloud = path.join(os.homedir(), 'Library', 'Mobile Documents', 'com~apple~CloudDocs');
+  if (!fs.existsSync(icloud)) return { dir: LOCAL };
+  const dir = path.join(icloud, 'YTSampler');
+  if (fs.existsSync(dir)) return { dir };
+  const moved = [];
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    let names = [];
+    try { names = fs.readdirSync(LOCAL); } catch (e) { /* noch kein alter Ordner */ }
+    for (const n of names) {
+      const to = path.join(dir, n);
+      if (LOCAL_ONLY.has(n) || fs.existsSync(to)) continue;   // Ziel da: zweites Device war schneller
+      try { fs.renameSync(path.join(LOCAL, n), to); moved.push(n); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    }
+    return { dir };
+  } catch (e) {
+    // halber Umzug wäre schlimmer als keiner: zurückschieben, D wieder weg, beim nächsten Start neu versuchen
+    for (const n of moved) { try { fs.renameSync(path.join(dir, n), path.join(LOCAL, n)); } catch (e2) { /* bleibt in D */ } }
+    try { fs.rmdirSync(dir); } catch (e2) { /* nicht leer */ }
+    return { dir: LOCAL, error: 'Umzug nach iCloud fehlgeschlagen' };
+  }
+}
+const DATA_SETUP = dataDir();
+const DATA = DATA_SETUP.dir;
+const CACHE = path.join(LOCAL, 'cache');
 const MAX_SECONDS = 600;  // URL-Videos über 10 min: nur die ersten 10 Minuten laden (RAM!)
 const SEARCH_FETCH = 30;  // so viele Treffer holen …
 const SEARCH_SHOW = 15;   // … und davon höchstens so viele anzeigen
 let maxLenSec = 7 * 60;   // Längenfilter der Suche, kommt vom Device
 
-const SESSIONS = path.join(os.homedir(), 'Music', 'YTSampler', 'sessions');
+const SESSIONS = path.join(DATA, 'sessions');
 fs.mkdirSync(CACHE, { recursive: true });
 fs.mkdirSync(SESSIONS, { recursive: true });
 
@@ -41,7 +71,6 @@ const ui = {
   phase: '',        // INFO | DOWNLOAD | KONVERT | ANALYSE
   progress: 0,
   title: '',
-  fav: '',
   message: '',
   learn: null,      // Schritt im IR-Merkmodus oder null
   tvOff: false,     // Fernseher per An/Aus-Taste "abgeschaltet"
@@ -767,7 +796,7 @@ function releaseLock() {
 function writeStateNow() {
   if (!sessionId || pendingState === null) return;
   const tmp = sessionFile(sessionId) + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify({ version: 1, saved: new Date().toISOString(), state: pendingState }));
+  fs.writeFileSync(tmp, JSON.stringify({ version: 2, saved: new Date().toISOString(), state: pendingState }));
   fs.renameSync(tmp, sessionFile(sessionId));   // atomar: nie halb geschriebene Datei
   pendingState = null;
 }
@@ -789,8 +818,13 @@ Max.addHandler('session', (id) => {
   fs.writeFileSync(lockFile(id), String(process.pid));
   let data = null;
   try { data = JSON.parse(fs.readFileSync(sessionFile(id), 'utf8')); } catch (e) { /* neu */ }
-  if (data && data.state) Max.outlet('state', data.state);
-  else Max.outlet('statenone');
+  if (data && data.state) {
+    // Session aus 1.x: einmal aufheben, das nächste Autosave schreibt version 2 (Spec 8.2)
+    if (!(data.version >= 2)) {
+      try { fs.copyFileSync(sessionFile(id), path.join(SESSIONS, `${id}.v1.json`), fs.constants.COPYFILE_EXCL); } catch (e) { /* schon da */ }
+    }
+    Max.outlet('state', data.state);
+  } else Max.outlet('statenone');
 });
 
 Max.addHandler('savestate', (...parts) => {
@@ -810,16 +844,283 @@ process.on('exit', () => { flushState(); releaseLock(); });
 ['SIGTERM', 'SIGINT'].forEach((sig) => process.on(sig, () => process.exit(0)));
 
 // =====================================================================
+// Bibliothek: D/library.json, global für alle Live-Sets (Spec 2.2).
+// Die Vorgänge in LIB sind reine Funktionen auf dem gelesenen Objekt.
+// libChange() holt die Sperre, liest frisch, wendet an und schreibt atomar.
+// =====================================================================
+const LIB_FILE = path.join(DATA, 'library.json');
+const LIB_LOCK = path.join(DATA, 'library.lock');
+const BACKUP_DIR = path.join(DATA, 'backup');
+const BACKUP_KEEP = 10;
+
+// Fehlercodes für /cmd-Antwort und SSE msg (Spec 6.5)
+const ERR = {
+  nobank: 'Bank gibt es nicht mehr',
+  libbroken: 'Bibliothek kaputt – Speichern gesperrt',
+  libnewer: 'Bibliothek aus neuerer Version',
+  libbusy: 'Bibliothek belegt',
+  writefail: 'Speichern fehlgeschlagen',
+  playonly: 'Track fehlt – nur spielbar',
+  cutfail: 'Snippets schneiden fehlgeschlagen',
+  nosnip: 'Snippets fehlen – Bank nicht ladbar',
+  idtaken: 'Bank existiert schon',
+  notempo: 'Kein Tempo erkannt',
+  superseded: 'Neuere Suche läuft',
+  searchfail: 'Suche fehlgeschlagen',
+  loadfail: 'Download fehlgeschlagen',
+  badreq: 'Ungültiger Befehl',
+};
+// Fehler mit .code und .text, z. B. libErr('writefail', 'Platte voll') -> "Speichern fehlgeschlagen: Platte voll"
+function libErr(code, detail) {
+  const e = new Error(ERR[code] + (detail ? ': ' + detail : ''));
+  e.code = code;
+  e.text = e.message;
+  return e;
+}
+
+const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+const isObj = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
+const isInt = (v, min) => Number.isInteger(v) && v >= min;
+const isPad = (v) => isInt(v, 0) && v < 16;
+const isStarts = (a) => Array.isArray(a) && a.length === 16 && a.every((v) => isInt(v, 0));
+const emptyLib = () => ({ format: 1, rev: 0, nextId: 1, banks: [], videos: {} });
+const libState = (lib) => (lib.banks.length ? 'ok' : 'leer');
+
+// Kaputt-Regeln -> Fehlertext, '' = gültig
+function libCheck(lib) {
+  if (!isObj(lib) || lib.format !== 1) return 'format fehlt oder falsch';
+  if (!isInt(lib.rev, 0)) return 'rev fehlt oder falsch';
+  if (!isInt(lib.nextId, 1)) return 'nextId fehlt oder falsch';
+  if (!Array.isArray(lib.banks)) return 'banks fehlt oder falsch';
+  if (!isObj(lib.videos)) return 'videos fehlt oder falsch';
+  for (const v of Object.keys(lib.videos)) {
+    const e = lib.videos[v];
+    if (!isObj(e) || typeof e.title !== 'string' || (has(e, 'bpm') && typeof e.bpm !== 'number')) return `Video ${v}: title oder bpm falsch`;
+  }
+  const ids = new Set();
+  for (let i = 0; i < lib.banks.length; i++) {
+    const b = lib.banks[i], at = `Bank ${i + 1}: `;
+    if (!isObj(b) || !isInt(b.id, 1)) return at + 'id fehlt oder falsch';
+    if (ids.has(b.id)) return at + `id ${b.id} doppelt`;
+    if (b.id >= lib.nextId) return at + `id ${b.id} nicht kleiner als nextId`;
+    ids.add(b.id);
+    if (typeof b.name !== 'string') return at + 'name fehlt oder falsch';
+    if (typeof b.video !== 'string' || !has(lib.videos, b.video)) return at + 'video fehlt in videos';
+    if (!isStarts(b.starts)) return at + 'starts nicht genau 16 ganze ms';
+  }
+  return '';
+}
+
+// -> {state: ok|leer|kaputt|neuer, lib (null bei kaputt/neuer), error, text (Dateiinhalt, null wenn keine Datei)}
+function libParse(text) {
+  let lib;
+  try { lib = JSON.parse(text); } catch (e) { return { state: 'kaputt', lib: null, error: 'kein gültiges JSON', text }; }
+  if (isObj(lib) && typeof lib.format === 'number' && lib.format > 1) return { state: 'neuer', lib: null, error: `format ${lib.format}`, text };
+  const error = libCheck(lib);
+  if (error) return { state: 'kaputt', lib: null, error, text };
+  return { state: libState(lib), lib, error: '', text };
+}
+
+function libRead() {
+  try {
+    return libParse(fs.readFileSync(LIB_FILE, 'utf8'));
+  } catch (e) {
+    if (e.code !== 'ENOENT') return { state: 'kaputt', lib: null, error: 'nicht lesbar: ' + e.code, text: null };
+    // iCloud hat die Datei ausgelagert: nur der Platzhalter liegt da
+    if (fs.existsSync(path.join(DATA, '.library.json.icloud'))) return { state: 'kaputt', lib: null, error: 'noch nicht aus iCloud geladen', text: null };
+    return { state: 'leer', lib: emptyLib(), error: '', text: null };
+  }
+}
+
+const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+function libLock() {
+  const until = Date.now() + 1000;
+  for (;;) {
+    try {
+      const fd = fs.openSync(LIB_LOCK, 'wx');
+      try { fs.writeSync(fd, String(process.pid)); } finally { fs.closeSync(fd); }
+      return;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw libErr('writefail', clean(e.message).slice(0, 80));
+    }
+    try {
+      const pid = parseInt(fs.readFileSync(LIB_LOCK, 'utf8'), 10);   // leer = wird gerade geschrieben, gilt als lebendig
+      const age = Date.now() - fs.statSync(LIB_LOCK).mtimeMs;
+      // shortcut: übernehmen zwei Prozesse gleichzeitig dieselbe tote Sperre, kann einer die frische des anderen löschen; bei einem Rechner und ms-kurzen Vorgängen hingenommen
+      if ((pid > 0 && !pidAlive(pid)) || age > 5000) { fs.unlinkSync(LIB_LOCK); continue; }
+    } catch (e) { /* gerade freigegeben: nochmal versuchen */ }
+    if (Date.now() >= until) throw libErr('libbusy');
+    sleepSync(10);
+  }
+}
+
+function libUnlock() {
+  try { if (parseInt(fs.readFileSync(LIB_LOCK, 'utf8'), 10) === process.pid) fs.unlinkSync(LIB_LOCK); } catch (e) { /* schon weg */ }
+}
+
+function libWrite(lib) {
+  const tmp = LIB_FILE + '.tmp';
+  try {
+    const fd = fs.openSync(tmp, 'w');
+    try { fs.writeSync(fd, JSON.stringify(lib, null, 1)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    fs.renameSync(tmp, LIB_FILE);
+  } catch (e) { throw libErr('writefail', clean(e.message).slice(0, 80)); }
+}
+
+// videos-Eintrag lebt nur, solange eine Bank ihn benutzt
+function dropOrphans(lib) {
+  const used = new Set(lib.banks.map((b) => b.video));
+  for (const v of Object.keys(lib.videos)) if (!used.has(v)) delete lib.videos[v];
+}
+
+const need = (ok) => { if (!ok) throw libErr('badreq'); };
+function bankIndex(lib, id) {
+  need(isInt(id, 1));
+  const i = lib.banks.findIndex((b) => b.id === id);
+  if (i < 0) throw libErr('nobank');
+  return i;
+}
+const bankName = (n) => String(n).trim().slice(0, 100);
+const roundBpm = (bpm) => { need(typeof bpm === 'number' && bpm >= 30 && bpm <= 300); return Math.round(bpm * 10) / 10; };
+
+// Vorgänge: (lib, Felder) -> Antwortfelder. Ändern lib, werfen libErr. Alle nennen IDs, keine Plätze.
+const LIB = {
+  // newbank: Bank am Ende, ein schon bekanntes Video behält Titel und bpm
+  create(lib, { video, title, name, starts }) {
+    need(typeof video === 'string' && video !== '' && isStarts(starts));
+    if (!has(lib.videos, video)) lib.videos[video] = { title: String(title || '') };
+    const id = lib.nextId++;
+    lib.banks.push({ id, name: bankName(name === undefined ? lib.videos[video].title : name), video, starts: starts.slice() });
+    return { id };
+  },
+  rename(lib, { id, name }) {
+    need(typeof name === 'string');
+    lib.banks[bankIndex(lib, id)].name = bankName(name);
+  },
+  duplicate(lib, { id }) {
+    const i = bankIndex(lib, id);
+    const copy = JSON.parse(JSON.stringify(lib.banks[i]));
+    copy.id = lib.nextId++;
+    copy.name += ' (Kopie)';
+    lib.banks.splice(i + 1, 0, copy);
+    return { id: copy.id };
+  },
+  // verwaister videos-Eintrag fällt in libChange weg; removed reicht für restore
+  delete(lib, { id }) {
+    const i = bankIndex(lib, id);
+    const bank = lib.banks.splice(i, 1)[0];
+    const v = lib.videos[bank.video];
+    const video = { title: v.title };
+    if (has(v, 'bpm')) video.bpm = v.bpm;
+    return { removed: { bank, at: i + 1, video } };
+  },
+  move(lib, { id, to }) {
+    const i = bankIndex(lib, id);
+    need(isInt(to, 1) && to <= lib.banks.length);
+    lib.banks.splice(to - 1, 0, lib.banks.splice(i, 1)[0]);
+  },
+  // Undo von delete: alte ID, nextId bleibt
+  restore(lib, { bank, at, video }) {
+    need(isObj(bank) && isInt(bank.id, 1) && typeof bank.name === 'string' && typeof bank.video === 'string' && bank.video !== '' && isStarts(bank.starts) && isInt(at, 1));
+    if (bank.id >= lib.nextId || lib.banks.some((b) => b.id === bank.id)) throw libErr('idtaken');
+    if (!has(lib.videos, bank.video)) {
+      need(isObj(video) && typeof video.title === 'string');
+      lib.videos[bank.video] = { title: video.title };
+      if (typeof video.bpm === 'number') lib.videos[bank.video].bpm = video.bpm;
+    }
+    const b = JSON.parse(JSON.stringify(bank));
+    lib.banks.splice(Math.min(at, lib.banks.length + 1) - 1, 0, b);
+  },
+  setstart(lib, { id, pad, ms }) {
+    const i = bankIndex(lib, id);
+    need(isPad(pad) && isInt(ms, 0));
+    lib.banks[i].starts[pad] = ms;
+  },
+  setstarts(lib, { id, starts }) {
+    const i = bankIndex(lib, id);
+    need(isStarts(starts));
+    lib.banks[i].starts = starts.slice();
+  },
+  swap(lib, { id, a, b }) {
+    const i = bankIndex(lib, id);
+    need(isPad(a) && isPad(b));
+    const s = lib.banks[i].starts;
+    [s[a], s[b]] = [s[b], s[a]];
+  },
+  // tempo, tempook und bpmset vom Device: bestätigtes Tempo des Videos
+  tempo(lib, { video, bpm }) {
+    const v = roundBpm(bpm);
+    need(typeof video === 'string' && has(lib.videos, video));
+    lib.videos[video].bpm = v;
+    return { bpm: v };
+  },
+};
+
+// Zuletzt gelesener Stand. libEvents 'change' (stand, by) nach jeder eigenen Änderung (by = Aufrufer)
+// und bei Änderung von außen (by "extern"). Andockstelle für libstate an [js] und SSE lib.
+let libNow = libRead();
+const libEvents = new (require('events'))();
+
+// Ein Schreibvorgang (Spec 2.2 „Schreiben“), synchron am Stück. Wirft libErr.
+function libChange(op, args, by) {
+  need(has(LIB, op) && isObj(args));
+  libLock();
+  let res;
+  try {
+    const r = libRead();
+    if (!r.lib) { libNow = r; throw libErr(r.state === 'neuer' ? 'libnewer' : 'libbroken'); }
+    res = LIB[op](r.lib, args) || {};
+    dropOrphans(r.lib);
+    r.lib.rev++;
+    libWrite(r.lib);
+    libNow = { state: libState(r.lib), lib: r.lib, error: '', text: null };
+  } finally {
+    libUnlock();
+  }
+  libEvents.emit('change', libNow, by);
+  return res;
+}
+
+// Andere Prozesse (zweites Device, Finder) beobachten. Die eigene rev steckt schon in libNow.
+function libWatch() {
+  fs.watchFile(LIB_FILE, { interval: 500 }, () => {
+    const r = libRead();
+    const rev = (x) => (x.lib ? x.lib.rev : -1);
+    if (r.state === libNow.state && rev(r) === rev(libNow)) return;
+    libNow = r;
+    libEvents.emit('change', libNow, 'extern');
+  });
+}
+
+// Sicherung beim Start (Spec 2.6): nur gültig gelesene Dateien, nur wenn anders als die neueste, 10 bleiben
+function libBackup() {
+  const r = libRead();
+  if (!r.lib || r.text === null) return;
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  const names = fs.readdirSync(BACKUP_DIR).filter((n) => /^bibliothek-\d{4}-\d\d-\d\d-\d{6}\.json$/.test(n)).sort();
+  let newest = null;
+  if (names.length) { try { newest = fs.readFileSync(path.join(BACKUP_DIR, names[names.length - 1]), 'utf8'); } catch (e) { /* neu schreiben */ } }
+  if (newest !== r.text) {
+    const d = new Date(), p = (n) => String(n).padStart(2, '0');
+    const name = `bibliothek-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.json`;
+    fs.writeFileSync(path.join(BACKUP_DIR, name), r.text);
+    if (!names.includes(name)) names.push(name);
+  }
+  for (const n of names.slice(0, -BACKUP_KEEP)) fs.unlinkSync(path.join(BACKUP_DIR, n));
+}
+
+// =====================================================================
 // Teletext-Webseite: http://localhost:8765
 // Server-Sent Events schicken den Zustand live, POST /key nimmt Tasten an.
 // =====================================================================
-const WEB_PORT = 8765;
+const WEB_PORT = process.env.YTS_PORT ? +process.env.YTS_PORT : 8765;   // YTS_PORT nur für Tests
 const PAGE_SIZE = 7;
-const WEB_DIR = path.join(os.homedir(), 'Music', 'YTSampler', 'web');
+const WEB_DIR = path.join(DATA, 'web');
 const clients = new Set();
 let webPort = 0;
 
-// Seite neben das Skript legen und nach ~/Music/YTSampler/web spiegeln
+// Seite neben das Skript legen und nach D/web spiegeln
 // (so findet der Server sie auch, wenn das Device eingefroren ist)
 function pagePath() {
   const local = path.join(__dirname, 'teletext.html');
@@ -842,7 +1143,7 @@ function viewState() {
     hidden: Math.max(0, allResults.length - lastResults.length),
     maxLen: Math.round(maxLenSec / 60),
     loading: ui.loading, phase: ui.phase, progress: Math.round(ui.progress),
-    title: ui.title, fav: ui.fav, message: ui.message,
+    title: ui.title, message: ui.message,
     learn: ui.learn === null ? null : { step: ui.learn + 1, of: IR_STEPS.length, label: IR_STEPS[ui.learn][1] },
     tvOff: ui.tvOff,
   };
@@ -923,7 +1224,7 @@ function multitap(d) {
 // IR-Fernbedienung: der Pro Micro schickt rohe Codes als MIDI auf Kanal 15.
 // Die Teletext-Seite liest sie per Web MIDI (an Live vorbei) und schickt "ir:<code>:<wiederholung>".
 // Die Zuordnung lernt der Merkmodus (Cmd+Shift+M auf der Teletext-Seite).
-const IR_FILE = path.join(os.homedir(), 'Music', 'YTSampler', 'ir.json');
+const IR_FILE = path.join(DATA, 'ir.json');
 const IR_STEPS = [
   ['up', 'HOCH'], ['down', 'RUNTER'], ['pgup', 'LINKS'], ['pgdn', 'RECHTS'],
   ['enter', 'OK'], ['back', 'LÖSCHEN'],
@@ -963,8 +1264,6 @@ function irInput(code, rep) {
   if (ui.tvOff && k !== 'power') return;               // Fernseher aus: nur An/Aus geht
   handleKey(k);
 }
-
-Max.addHandler('favinfo', (...parts) => { ui.fav = parts.join(' '); pushUi(); });
 
 function startWeb(port, tries) {
   const server = http.createServer((req, res) => {
@@ -1020,14 +1319,21 @@ function startWeb(port, tries) {
 }
 startWeb(WEB_PORT, 5);
 
+try { libBackup(); } catch (e) { Max.post(`YT Sampler: Sicherung fehlgeschlagen: ${e.message}`); }
+libWatch();
+
 // Startcheck; Session und Längenfilter vom Device anfordern
+if (DATA_SETUP.error) status(DATA_SETUP.error);
 Max.outlet('needsession');
 Max.outlet('needmaxlen');
 (async () => {
   try {
     const v = (await run('yt-dlp', ['--version'])).trim();
-    status(`yt-dlp ${v} bereit`);
+    status(DATA_SETUP.error || `yt-dlp ${v} bereit`);
   } catch (e) {
     status(errMsg(e));
   }
 })();
+
+// Für tools/tests/ (unter Max ohne Wirkung)
+module.exports = { DATA, LOCAL, CACHE, SESSIONS, LIB_FILE, LIB_LOCK, BACKUP_DIR, ERR, LIB, libErr, libParse, libRead, libChange, libBackup, libEvents, get libNow() { return libNow; } };
