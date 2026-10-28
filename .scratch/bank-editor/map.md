@@ -30,7 +30,7 @@ Eine Spezifikation (`.scratch/bank-editor/spec.md`) für den Bank-Editor im Brow
 
 ## Not yet specified
 
-- Am Ende: alles in `spec.md` zusammenschreiben und in Umsetzungs-Tickets schneiden.
+- [`spec.md`](spec.md) ist geschrieben, mit 7 Bau-Paketen. Offen sind noch zwei Fragen zum Editor (Layout merken, Tempo-Bedienung), die Paket 5 blockieren.
 
 ## Out of scope
 
