@@ -1,6 +1,6 @@
 # Spezifikation: Bank-Editor und Device 2.0
 
-Stand 2026-10-28, zusammengefasst aus den Tickets 01–12 der Karte [`map.md`](map.md). Hier steht nur der gültige Stand. Die Begründungen stehen in den Tickets. Wo die Tickets etwas offen ließen und diese Spec es festlegt, steht **(festgelegt)** dabei. Fragen an den Nutzer sind mit **(Frage)** markiert, siehe [Offene Fragen](#offene-fragen).
+Stand 2026-10-28, zusammengefasst aus den Tickets 01–12 der Karte [`map.md`](map.md). Hier steht nur der gültige Stand. Die Begründungen stehen in den Tickets. Wo die Tickets etwas offen ließen und diese Spec es festlegt, steht **(festgelegt)** dabei. Offene Fragen gibt es keine mehr.
 
 Leitlinie: Live-Werkzeug für die Bühne. Was hier nicht steht, wird nicht gebaut.
 
@@ -293,8 +293,8 @@ Ein dunkles, ruhiges Arbeits-Dashboard, Vorlage ist [`prototype/editor-layout.ht
 - **Links Bibliothek**: senkrechte Liste. Pro Zeile Nummer, Name, darunter klein Videotitel · BPM. Aktive Bank hervorgehoben. Marken: „nur spielbar“, „nicht ladbar“, „lädt n %“, Fehlergrund (`fail`). Pro Zeile bei Hover und an der aktiven Bank drei Icons: umbenennen, duplizieren, löschen. Im Fuß: „Alle nachladen“ (nur wenn eine Bank `wav: false` hat) und die Cache-Größe, ab 10 GB als Warnung „Cache über 10 GB – im Finder aufräumen“ **(festgelegt: Ort im Listenfuß)**.
 - **Rechts oben Waveform** des ganzen Tracks (`/peaks`): Taktlinien, die „1“ betont, ab 4× Zoom Schlaglinien. 16 Marker mit Pad-Nummer. Gewähltes Pad farbig, seine gespielte Länge (`device.spans`) als Fläche hinter dem Marker. Abspielkopf aus `play`/`stop`.
 - **Rechts unten Pads** 4×4, Pad 1 unten links. Jedes Pad: Nummer, Startzeit, Mini-Balken mit seiner Lage im Track, Würfel-Icon bei Hover.
-- **Detailspalte** neben den Pads: Nummer, Start, „Länge: vom Device“, Video · BPM, „Neues Snippet“, „Anspielen“. Dazu das Tempo: Zahlenfeld, ½×, 2× und „Tempo stimmt“ (nur sichtbar, wenn nicht bestätigt) **(Frage 2)**.
-- **Größen**: Breite der Bibliothek ziehbar, Bibliothek einklappbar, Grenze Waveform/Pads verschiebbar. Ob das gespeichert wird: **(Frage 1)**.
+- **Detailspalte** neben den Pads: Nummer, Start, „Länge: vom Device“, Video · BPM, „Neues Snippet“, „Anspielen“. Dazu das Tempo: Zahlenfeld, ½×, 2× und „Tempo stimmt“ (nur sichtbar, wenn nicht bestätigt).
+- **Größen**: Breite der Bibliothek ziehbar, Bibliothek einklappbar, Grenze Waveform/Pads verschiebbar. Die Größen merkt sich der Editor pro Browser im `localStorage`, ohne Knopf. Lesen und Schreiben in `try/catch`, ohne gespeicherte Werte gelten die Standardgrößen.
 
 ### 5.2 Bedienung
 
@@ -504,7 +504,7 @@ Regeln: Jedes Paket läuft in einer eigenen Worktree-Session, gemergt und releas
 ### Paket 5: Editor
 - **Ziel**: Abschnitt 5 vollständig in `editor.html`, gegen Protokoll 3.2–3.4. Eine Datei, ES2020 erlaubt, keine CDN-Abhängigkeit. Dazu eine Attrappe des Servers (SSE + `/cmd`) für Tests.
 - **Dateien**: `editor.html`, `tools/tests/editor_mock.js` (o. ä.).
-- **Abhängigkeiten**: nur diese Spec. Fragen 1 und 2 müssen beantwortet sein.
+- **Abhängigkeiten**: nur diese Spec.
 - **Abnahme**: Headless-Tests aus Abschnitt 9 „Editor“, Screenshots von normal, „nur spielbar“, „keine Bank“, „kaputt“, „kein Device“. Nutzer schaut einmal im Browser gegen die Attrappe drauf.
 
 ### Paket 6: Device-Logik `[js]` und Overlay-Takte
@@ -519,7 +519,7 @@ Regeln: Jedes Paket läuft in einer eigenen Worktree-Session, gemergt und releas
 - **Abhängigkeiten**: Pakete 1–6. Läuft allein.
 - **Abnahme**: `check()` ohne ungültige Verbindungen, Sync `.maxpat`/`.amxd`, alle Tests aus `tools/tests/` grün. Dann `deploy.sh`, und der Nutzer prüft die Liste „Prüft der Nutzer in Live“ aus Abschnitt 9. Erst danach `release.sh 2.0.0`.
 
-## Offene Fragen
+## Entschiedene Fragen aus dem Zusammenschreiben
 
-1. **Layout-Größen merken?** Breite der Bibliothek, eingeklappt ja/nein und die Grenze Waveform/Pads. Empfehlung: ja, pro Browser im `localStorage`, ohne Knopf.
-2. **Tempo im Editor**: Reicht in der Detailspalte dasselbe wie am Device (Zahlenfeld, ½×, 2×) plus „Tempo stimmt“? Empfehlung: ja.
+1. **Layout-Größen** (Nutzer, 2026-10-28): Der Editor merkt sie sich pro Browser (5.1).
+2. **Tempo im Editor** (Nutzer, 2026-10-28): Es gibt dieselben Bedienelemente wie am Device (Zahlenfeld, ½×, 2×) und dazu „Tempo stimmt“ (5.1).

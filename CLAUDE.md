@@ -116,7 +116,7 @@ Alles, was nur in echtem Max sichtbar wird, testet der Nutzer in Live. Wenn etwa
 
 ## Offen / ungeprüft
 
-- **Bekannter Fehler (nicht behoben):** Der UI-Router entfernt `grid`, beim Overlay kommt also `clear`, `dur …`, `pads …` an. `ytgrid.js` kennt aber nur die Funktion `grid()`. Das Overlay bekommt damit vermutlich nie Daten. Lösung: entweder `prepend grid` zwischen Router-Ausgang 6 und `gridui` oder die Funktionen in `ytgrid.js` einzeln anlegen.
+- **Grid-Overlay-Fix (eingebaut, in Live ungeprüft):** Der UI-Router entfernt `grid`, `ytgrid.js` fängt `clear`, `dur …`, `beats …`, `down …`, `show …`, `pads …` per `anything()` ab und reicht sie an `grid()` weiter. Die Zustandsvariablen heißen `durMs`, `beatMs` usw., damit sie nicht mit den Nachrichtennamen kollidieren. Test: `node tools/tests/test_ytgrid.js`.
 - Warp in echtem Max: `groove~ @timestretch`, `pitchshift`, Positions-Float im linken Eingang.
 - Grid-Overlay: deckungsgleich mit der Waveform? Durchsichtig? Klickt es durch?
 - Treffsicherheit von Tonart, Tempo, Beats und „1“ auf echtem YouTube-Material (bisher nur synthetisch gemessen).

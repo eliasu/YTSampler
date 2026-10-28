@@ -8,35 +8,40 @@ mgraphics.autofill = 0;
 inlets = 1;
 outlets = 0;
 
-var dur = 0, beats = [], down = 0, show = 0, pads = [], sel = 0;
+var durMs = 0, beatMs = [], downIdx = 0, showOn = 0, padMs = [], sel = 0;
 
 function grid() {
     var a = arrayfromargs(arguments);
     var cmd = a.shift();
-    if (cmd === "clear") { beats = []; down = 0; }
-    else if (cmd === "dur") dur = a[0] || 0;
-    else if (cmd === "beats") beats = beats.concat(a);
-    else if (cmd === "down") down = Math.floor(a[0]) || 0;
-    else if (cmd === "show") { show = a[0] ? 1 : 0; mgraphics.redraw(); }
-    else if (cmd === "pads") { sel = Math.floor(a.shift()); pads = a; mgraphics.redraw(); }
+    if (cmd === "clear") { beatMs = []; downIdx = 0; }
+    else if (cmd === "dur") durMs = a[0] || 0;
+    else if (cmd === "beats") beatMs = beatMs.concat(a);
+    else if (cmd === "down") downIdx = Math.floor(a[0]) || 0;
+    else if (cmd === "show") { showOn = a[0] ? 1 : 0; mgraphics.redraw(); }
+    else if (cmd === "pads") { sel = Math.floor(a.shift()); padMs = a; mgraphics.redraw(); }
+}
+
+// Der UI-Router im Patch entfernt „grid“: hier kommt „clear“, „dur …“ usw. an. Zustandsvariablen heißen deshalb nicht wie Nachrichten
+function anything() {
+    grid.apply(this, [messagename].concat(arrayfromargs(arguments)));
 }
 
 function paint() {
     var w = mgraphics.size[0], h = mgraphics.size[1];
-    if (!(dur > 0)) return;
-    var px = function (ms) { return ms / dur * w; };
+    if (!(durMs > 0)) return;
+    var px = function (ms) { return ms / durMs * w; };
 
-    if (show && beats.length > 1) {
-        var beatPx = px(beats[1] - beats[0]);
+    if (showOn && beatMs.length > 1) {
+        var beatPx = px(beatMs[1] - beatMs[0]);
         // so dicht wie lesbar: Beats ab 5 px Abstand, sonst nur Takte, sonst nur jeden 4./16. Takt
         var barEvery = 1;
         if (beatPx * 4 < 4) barEvery = 4;
         if (beatPx * 16 < 4) barEvery = 16;
-        for (var i = 0; i < beats.length; i++) {
-            var rel = i - down;
+        for (var i = 0; i < beatMs.length; i++) {
+            var rel = i - downIdx;
             var isBar = ((rel % 4) + 4) % 4 === 0;
             var barNo = Math.floor(rel / 4);
-            var x = Math.round(px(beats[i])) + 0.5;
+            var x = Math.round(px(beatMs[i])) + 0.5;
             if (isBar && ((barNo % barEvery) + barEvery) % barEvery === 0) {
                 mgraphics.set_source_rgba(1, 0.75, 0.2, 0.75);
                 mgraphics.set_line_width(1);
@@ -52,8 +57,8 @@ function paint() {
     }
 
     // Pad-Marken: kleine Dreiecke oben, gewähltes Pad hell
-    for (var p = 0; p < pads.length; p++) {
-        var mx = px(pads[p]);
+    for (var p = 0; p < padMs.length; p++) {
+        var mx = px(padMs[p]);
         if (p === sel) mgraphics.set_source_rgba(1, 1, 1, 1);
         else mgraphics.set_source_rgba(1, 0.55, 0.1, 0.9);
         mgraphics.move_to(mx - 3, 0); mgraphics.line_to(mx + 3, 0); mgraphics.line_to(mx, 5);
