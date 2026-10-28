@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YT Sampler – Bänke</title>
+<!--
+  Bank-Editor (Spec .scratch/bank-editor/spec.md, Abschnitt 5). Wird von ytsampler_node.js unter /editor ausgeliefert
+  und steuert das erste Device: SSE /editor/events, Befehle POST /cmd, Waveform /peaks/<video>.
+  Eine Datei, ES2020, keine externen Abhängigkeiten (nur die YouTube-Vorschaubilder in der Suche).
+  Testen ohne Live: node tools/tests/editor_mock.js
+-->
+<style>
+  :root {
+    --bg:#0e0f11; --panel:#16171a; --raise:#1d1f23; --line:#26282d; --line2:#32353b;
+    --text:#ececee; --dim:#8c8f96; --faint:#5b5e65;
+    --acc:#ffb020; --sel:#5cc8ff; --danger:#ff5d5d; --ok:#3ddc84; --warn:#ffcc66;
+    --sw:280px; --wh:42%;
+  }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+    font:13px/1.4 -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif; -webkit-font-smoothing:antialiased; }
+  button { font:inherit; color:var(--text); background:var(--raise); border:1px solid var(--line2); border-radius:7px; padding:6px 12px; cursor:pointer; }
+  button:hover:not(:disabled) { border-color:#4a4d55; }
+  button:disabled { opacity:.35; cursor:default; }
+  button.pri { background:var(--text); color:#000; border-color:var(--text); font-weight:500; }
+  button.ghost { background:none; border-color:transparent; color:var(--dim); padding:4px 6px; }
+  button.ghost:hover:not(:disabled) { color:var(--text); background:var(--raise); }
+  button.small { padding:3px 8px; font-size:12px; }
+  input { font:inherit; color:var(--text); background:var(--bg); border:1px solid var(--line2); border-radius:7px; padding:8px 10px; outline:none; }
+  input:focus { border-color:var(--sel); }
+  input:disabled { opacity:.4; }
+  .lbl { font-size:11px; font-weight:500; text-transform:uppercase; letter-spacing:.07em; color:var(--dim); }
+  .num { font-variant-numeric:tabular-nums; }
+  kbd { font:11px -apple-system, sans-serif; color:var(--dim); border:1px solid var(--line2); border-radius:4px; padding:0 4px; }
+  svg.i { width:15px; height:15px; stroke:currentColor; fill:none; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; vertical-align:-3px; }
+  .hint { color:var(--faint); font-size:11.5px; }
+  .tag { font-size:10.5px; font-weight:500; padding:0 5px; border-radius:4px; border:1px solid var(--line2); color:var(--dim); white-space:nowrap; }
+  .tag.bad { color:var(--danger); border-color:#5a2a2a; }
+  .tag.busy { color:var(--sel); border-color:#1f4a5e; }
+
+  /* Gerüst */
+  #app { display:grid; grid-template-rows:52px auto 1fr; height:100vh; }
+  #top { display:flex; align-items:center; gap:14px; padding:0 14px; border-bottom:1px solid var(--line); min-width:0; }
+  #logo { font-weight:600; letter-spacing:-.01em; white-space:nowrap; }
+  #logo span { color:var(--acc); }
+  #nav { display:flex; align-items:center; gap:4px; margin-left:12px; min-width:0; }
+  #navname { min-width:200px; max-width:380px; padding:0 8px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  #navname b { font-weight:500; } #navname span { color:var(--dim); }
+  #saved { color:var(--faint); font-size:12px; white-space:nowrap; }
+  #conn { margin-left:auto; color:var(--dim); font-size:12px; display:flex; align-items:center; gap:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #conn i { width:7px; height:7px; border-radius:50%; background:var(--ok); flex:none; }
+  body.offline #conn i { background:var(--danger); }
+  #errbar { display:none; background:#3a1616; color:#ffd2d2; border-bottom:1px solid #5a2a2a; padding:8px 14px; font-weight:500; }
+  body.broken #errbar { display:block; }
+  #body { grid-row:3; display:grid; grid-template-columns:var(--sw) 6px 1fr; min-height:0; } /* feste Zeile, auch wenn #errbar fehlt */
+  #body.collapsed { grid-template-columns:0 0 1fr; }
+  #body.collapsed #side, #body.collapsed #vsplit { visibility:hidden; }
+  #vsplit { cursor:col-resize; }
+  #vsplit:hover, #vsplit.on { background:var(--line2); }
+  #hsplit { height:6px; cursor:row-resize; margin:0 -2px; border-radius:3px; flex:none; }
+  #hsplit:hover, #hsplit.on { background:var(--line2); }
+
+  /* Bibliothek */
+  #side { display:flex; flex-direction:column; min-width:0; border-right:1px solid var(--line); background:var(--panel); }
+  #sidehead { display:flex; align-items:center; gap:8px; padding:14px 12px 8px 14px; }
+  #sidehead .lbl { flex:1; }
+  #banklist { list-style:none; margin:0; padding:0 8px 12px; overflow:auto; flex:1; }
+  #banklist li { position:relative; display:grid; grid-template-columns:22px 1fr auto; align-items:center; gap:8px; padding:7px 8px; border-radius:8px; cursor:pointer; user-select:none; }
+  #banklist li:hover { background:var(--raise); }
+  #banklist li.on { background:#2a2414; box-shadow:inset 2px 0 0 var(--acc); }
+  #banklist li.over { box-shadow:inset 0 2px 0 var(--sel); }
+  #banklist li.pending { cursor:default; color:var(--dim); }
+  #banklist .nr { color:var(--faint); text-align:right; font-size:12px; }
+  #banklist li.on .nr { color:var(--acc); }
+  #banklist .name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500; }
+  #banklist .sub { display:block; font-weight:400; font-size:11.5px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; }
+  #banklist .marks { display:flex; flex-wrap:wrap; gap:4px; margin-top:2px; font-weight:400; }
+  #banklist .marks button { padding:0 6px; font-size:10.5px; }
+  #banklist .acts { display:flex; opacity:0; }
+  #banklist li:hover .acts, #banklist li.on .acts { opacity:1; }
+  #banklist .acts button { padding:3px 5px; }
+  #banklist .acts .del:hover:not(:disabled) { color:var(--danger); }
+  #banklist input { width:100%; padding:3px 6px; }
+  #banklist .empty { padding:18px 8px; color:var(--dim); display:block; cursor:default; }
+  #sidefoot { border-top:1px solid var(--line); padding:10px 14px; display:flex; flex-direction:column; gap:8px; }
+  #cachesize.warn { color:var(--warn); }
+
+  /* Hauptbereich */
+  #main { display:flex; flex-direction:column; padding:12px 14px 14px 8px; min-width:0; min-height:0; position:relative; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 14px; display:flex; flex-direction:column; min-height:0; }
+  #wave { height:var(--wh); flex:none; }
+  #pads { flex:1; }
+  .cardhead { display:flex; align-items:center; gap:10px; margin-bottom:10px; min-height:26px; }
+  .cardhead .lbl { margin-right:auto; }
+  #nobank { display:none; } body.nobank #nobank { display:inline-block; }
+  #scroll { position:relative; flex:1; overflow-x:auto; overflow-y:hidden; background:var(--bg); border-radius:8px; min-height:90px; }
+  #scroll::-webkit-scrollbar { height:6px; } #scroll::-webkit-scrollbar-thumb { background:var(--line2); border-radius:3px; }
+  #inner { position:relative; height:100%; }
+  #cv { position:sticky; left:0; top:0; display:block; height:100%; }
+  .mk { position:absolute; top:0; bottom:0; width:0; border-left:1.5px solid var(--acc); }
+  .mk.edit { cursor:ew-resize; }
+  .mk span { position:absolute; top:6px; left:-1px; background:var(--acc); color:#1a1200; font-size:10px; font-weight:600; padding:1px 4px; border-radius:0 4px 4px 0; }
+  .mk::after { content:""; position:absolute; top:0; bottom:0; left:-7px; width:14px; }
+  .mk.sel { border-color:var(--sel); z-index:2; } .mk.sel span { background:var(--sel); color:#00141f; }
+  #slice { position:absolute; top:0; bottom:0; background:rgba(92,200,255,.12); pointer-events:none; }
+  #play { position:absolute; top:0; bottom:0; width:2px; background:#fff; pointer-events:none; display:none; z-index:3; }
+  #tip { position:absolute; bottom:6px; background:#000; padding:2px 6px; font-size:11px; border-radius:4px; pointer-events:none; display:none; z-index:4; white-space:nowrap; }
+  #wavemsg { position:absolute; inset:0; display:none; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:var(--dim); z-index:5; background:var(--bg); }
+  #wavemsg.on { display:flex; }
+  #wavemsg b { color:var(--text); font-weight:500; font-size:14px; }
+  .seg { display:flex; border:1px solid var(--line2); border-radius:7px; overflow:hidden; }
+  .seg button { border:none; border-radius:0; padding:4px 9px; background:none; color:var(--dim); }
+  .seg button.on { background:var(--raise); color:var(--text); }
+  #blank { position:absolute; inset:12px 14px 14px 8px; display:none; flex-direction:column; align-items:center; justify-content:center; gap:12px; color:var(--dim); text-align:center; }
+  #blank b { color:var(--text); font-size:16px; font-weight:600; }
+  body.blank #blank { display:flex; } body.blank #wave, body.blank #pads, body.blank #hsplit { visibility:hidden; }
+
+  /* Pads */
+  #padarea { flex:1; display:flex; gap:18px; min-height:0; position:relative; }
+  #grid { height:100%; aspect-ratio:1; max-width:62%; display:grid; grid-template-columns:repeat(4,1fr); grid-template-rows:repeat(4,1fr); gap:8px; }
+  .pad { position:relative; background:var(--raise); border:1px solid var(--line2); border-radius:10px; cursor:pointer; padding:8px 10px; display:flex; flex-direction:column; justify-content:space-between; user-select:none; min-height:0; transition:background .08s; touch-action:none; }
+  .pad:hover { border-color:#4a4d55; }
+  .pad .n { font-weight:600; font-size:14px; color:var(--dim); }
+  .pad .s { font-size:11.5px; color:var(--dim); }
+  .pad .bar { position:absolute; left:10px; right:10px; bottom:26px; height:3px; border-radius:2px; background:var(--line2); }
+  .pad .bar i { position:absolute; top:0; bottom:0; width:3px; background:var(--acc); border-radius:2px; }
+  .pad.sel { border-color:var(--sel); } .pad.sel .n { color:var(--sel); }
+  .pad.hit { background:var(--acc); } .pad.hit .n, .pad.hit .s { color:#1a1200; }
+  .pad.over { outline:2px dashed var(--sel); outline-offset:2px; }
+  .pad .roll { position:absolute; top:5px; right:5px; opacity:0; padding:2px 4px; }
+  .pad:hover .roll { opacity:1; }
+  #insp { flex:1; min-width:190px; display:flex; flex-direction:column; gap:10px; overflow:auto; }
+  #insp .big { font-size:28px; font-weight:600; letter-spacing:-.02em; }
+  #insp .row { display:flex; justify-content:space-between; gap:10px; color:var(--dim); border-bottom:1px solid var(--line); padding:6px 0; }
+  #insp .row b { color:var(--text); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+  #insp .btns { display:flex; gap:8px; flex-wrap:wrap; }
+  #tempo { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  #tempo input { width:78px; padding:5px 8px; }
+  #drop { position:absolute; inset:-4px; border:2px dashed var(--sel); border-radius:12px; background:rgba(92,200,255,.08); display:none; align-items:center; justify-content:center; font-size:15px; font-weight:500; z-index:5; pointer-events:none; }
+  #pads.dropping #drop { display:flex; }
+
+  /* Slide-in Suche */
+  #shade { position:fixed; inset:0; background:rgba(0,0,0,.45); opacity:0; pointer-events:none; transition:opacity .2s; z-index:20; }
+  #panel { position:fixed; top:0; right:0; bottom:0; width:420px; max-width:92vw; background:var(--panel); border-left:1px solid var(--line); transform:translateX(100%); transition:transform .22s ease; z-index:21; display:flex; flex-direction:column; padding:16px; gap:12px; }
+  body.search #panel { transform:none; }
+  body.search #shade { opacity:1; pointer-events:auto; }
+  body.dragging #shade { opacity:0; pointer-events:none; }
+  body.dragging #panel { transform:translateX(calc(100% - 140px)); }
+  #panel .h { display:flex; align-items:center; }
+  #panel .h b { font-size:15px; font-weight:600; margin-right:auto; }
+  #results { list-style:none; margin:0; padding:0; overflow:auto; display:flex; flex-direction:column; gap:6px; }
+  #results li { display:grid; grid-template-columns:96px 1fr; gap:10px; padding:8px; border-radius:9px; border:1px solid var(--line); cursor:grab; }
+  #results li:hover { background:var(--raise); }
+  #results img { width:96px; height:54px; object-fit:cover; border-radius:5px; background:var(--raise); }
+  #results .t { font-weight:500; } #results .m { color:var(--dim); font-size:12px; display:flex; gap:6px; align-items:center; margin-top:3px; }
+  #results .info { cursor:default; color:var(--dim); grid-template-columns:1fr; border-color:transparent; }
+
+  /* Toast, kein Device */
+  #toast { position:fixed; bottom:18px; left:50%; transform:translate(-50%, 20px); background:var(--text); color:#000; padding:8px 14px; border-radius:8px; opacity:0; transition:all .2s; z-index:40; font-weight:500; pointer-events:none; max-width:80vw; }
+  #toast.on { opacity:1; transform:translate(-50%, 0); pointer-events:auto; }
+  #toast.err { background:var(--danger); color:#fff; }
+  #toast button { margin-left:10px; padding:2px 8px; background:#000; color:#fff; border:none; }
+  #offline { position:fixed; inset:0; z-index:50; background:rgba(14,15,17,.72); backdrop-filter:grayscale(1); display:none; align-items:center; justify-content:center; }
+  body.offline #offline { display:flex; }
+  #offline div { background:var(--panel); border:1px solid var(--line2); border-radius:14px; padding:20px 26px; text-align:center; }
+  #offline b { display:block; font-size:16px; margin-bottom:4px; }
+  body.offline #app { filter:grayscale(1); }
+</style>
+</head>
+<body class="offline">
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M5 7l1 13h12l1-13M9 7V4h6v3"/></symbol>
+  <symbol id="i-dice" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="9" cy="9" r=".8"/><circle cx="15" cy="15" r=".8"/><circle cx="15" cy="9" r=".8"/><circle cx="9" cy="15" r=".8"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
+  <symbol id="i-side" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></symbol>
+  <symbol id="i-l" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
+  <symbol id="i-r" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+</svg>
+
+<div id="app">
+  <header id="top">
+    <button class="ghost" id="toggleside" title="Bibliothek ein/aus"><svg class="i"><use href="#i-side"/></svg></button>
+    <div id="logo">YT Sampler <span>Bänke</span></div>
+    <div id="nav">
+      <button class="ghost" id="prev" title="Vorige Bank (↑)"><svg class="i"><use href="#i-l"/></svg></button>
+      <div id="navname"></div>
+      <button class="ghost" id="next" title="Nächste Bank (↓)"><svg class="i"><use href="#i-r"/></svg></button>
+    </div>
+    <button class="ghost" id="undo" disabled><svg class="i"><use href="#i-undo"/></svg></button>
+    <button class="ghost" id="redo" disabled><svg class="i"><use href="#i-redo"/></svg></button>
+    <span id="saved">automatisch gespeichert</span>
+    <span id="conn"><i></i><span id="conntext">kein Device</span></span>
+    <button class="pri" id="opensearch"><svg class="i"><use href="#i-search"/></svg> Video suchen <kbd style="color:#555;border-color:#bbb">⌘K</kbd></button>
+  </header>
+  <div id="errbar"></div>
+  <div id="body">
+    <aside id="side">
+      <div id="sidehead"><span class="lbl">Bibliothek</span><span class="hint num" id="count"></span></div>
+      <ul id="banklist"></ul>
+      <div id="sidefoot">
+        <button class="small" id="fetchall">Alle nachladen</button>
+        <span class="hint num" id="cachesize"></span>
+      </div>
+    </aside>
+    <div id="vsplit"></div>
+    <main id="main">
+      <section class="card" id="wave">
+        <div class="cardhead">
+          <span class="lbl">Waveform</span>
+          <span class="tag" id="nobank">keine Bank</span>
+          <span class="hint" id="wavehint"></span>
+          <div class="seg" id="zoom"></div>
+        </div>
+        <div id="scroll"><div id="inner"><canvas id="cv"></canvas><div id="slice"></div><div id="play"></div><div id="tip"></div></div>
+          <div id="wavemsg"></div></div>
+      </section>
+      <div id="hsplit"></div>
+      <section class="card" id="pads">
+        <div class="cardhead"><span class="lbl">Pads</span><span class="hint" id="padhint"></span></div>
+        <div id="padarea">
+          <div id="grid"></div>
+          <div id="insp"></div>
+          <div id="drop">Loslassen: neue Bank aus diesem Video</div>
+        </div>
+      </section>
+      <div id="blank"></div>
+    </main>
+  </div>
+</div>
+
+<div id="shade"></div>
+<aside id="panel">
+  <div class="h"><b>Video suchen</b><button class="ghost" id="closesearch" title="Schließen (Esc)"><svg class="i"><use href="#i-x"/></svg></button></div>
+  <input id="q" placeholder="Suchbegriff oder YouTube-URL …" autocomplete="off">
+  <div class="hint">Treffer anklicken oder auf die Pads ziehen: wird eine neue Bank am Ende der Bibliothek.</div>
+  <ul id="results"></ul>
+</aside>
+<div id="toast"></div>
+<div id="offline"><div><b>Kein Device</b>YT Sampler in Live laden</div></div>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const CLIENT = Math.random().toString(36).slice(2, 10);
+const HIST_MAX = 100, LAYOUT_KEY = 'ytsampler.editor.layout';
+const S = {
+  conn: false, hello: null, lib: null, dev: null, beats: null, cache: null,
+  jobs: {}, newbank: null, sel: 0, zoom: 1, peaks: new Map(), play: null, drag: null,
+};
+
+// ---------- Hilfen ----------
+const icon = (n) => '<svg class="i"><use href="#i-' + n + '"/></svg>';
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function fmt(ms) { const s = Math.max(0, ms) / 1000; return Math.floor(s / 60) + ':' + ('0' + (s % 60).toFixed(2)).slice(-5); }
+function fmtDur(sec) { sec = Math.round(sec); return Math.floor(sec / 60) + ':' + ('0' + sec % 60).slice(-2); }
+const fmtGB = (b) => (b / 1e9).toLocaleString('de-DE', { maximumFractionDigits: 1 }) + ' GB';
+const fmtBpm = (b) => (Math.round(b * 10) / 10).toLocaleString('de-DE');
+let toastT;
+function toast(text, opt = {}) {
+  const t = $('toast'); t.textContent = text; t.className = 'on' + (opt.err ? ' err' : '');
+  if (opt.undo) { const b = document.createElement('button'); b.textContent = 'Rückgängig'; b.onclick = () => { t.className = ''; undo(); }; t.appendChild(b); }
+  clearTimeout(toastT); toastT = setTimeout(() => { t.className = ''; }, opt.ms || (opt.err ? 3500 : 1800));
+}
+let savedT;
+function flashSaved() { $('saved').textContent = 'gespeichert ✓'; clearTimeout(savedT); savedT = setTimeout(() => { $('saved').textContent = 'automatisch gespeichert'; }, 900); }
+
+// ---------- Befehle ----------
+const WRITE = new Set(['rename', 'duplicate', 'delete', 'move', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'newbank', 'tempo', 'tempook', 'fetch', 'fetchall']);
+async function cmd(name, fields = {}, quiet = false) {
+  let r;
+  try {
+    const res = await fetch('/cmd', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client: CLIENT, cmd: name, ...fields }) });
+    r = res.ok ? await res.json() : { ok: false, code: 'http', text: 'Befehl abgelehnt (' + res.status + ')' };
+  } catch (e) { r = { ok: false, code: 'net', text: 'Kein Device erreichbar' }; }
+  if (r.ok && WRITE.has(name)) flashSaved();
+  if (!r.ok && !quiet && r.code !== 'superseded') toast(r.text || r.code, { err: true });
+  return r;
+}
+const writable = () => S.conn && S.lib && (S.lib.state === 'ok' || S.lib.state === 'leer');
+const banks = () => (S.lib && S.lib.banks) || [];
+const bankById = (id) => banks().find((b) => b.id === id);
+const curBank = () => (S.dev ? bankById(S.dev.bankId) : null);
+const curIdx = () => banks().indexOf(curBank());
+
+// Was Waveform und Pads zeigen: aktive Bank, sonst der Track des Device („keine Bank“)
+function view() {
+  const b = curBank();
+  if (b) return { bank: b, video: b.video, starts: b.starts, edit: writable() && b.wav, playonly: !b.wav };
+  if (S.dev && S.dev.bankId === 0 && S.dev.video && S.dev.video !== '-' && S.dev.starts && S.dev.starts.length === 16)
+    return { bank: null, video: S.dev.video, starts: S.dev.starts, edit: false, nobank: true };
+  return null;
+}
+function videoBpm(v) {
+  const e = S.lib && S.lib.videos[v];
+  if (e && e.bpm) return { bpm: e.bpm, confirmed: true };
+  if (S.beats && S.beats.video === v) return { bpm: S.beats.bpm, confirmed: !!S.beats.confirmed };
+  return { bpm: null, confirmed: false };
+}
+async function selectBank(id) { if (!S.dev || S.dev.bankId !== id) return cmd('select', { id }); return { ok: true }; }
+
+// ---------- Undo/Redo (nur im Browser, linear, 100 Schritte) ----------
+let hist = [], hpos = 0, histBusy = false;
+function pushStep(step) { hist.length = hpos; hist.push(step); if (hist.length > HIST_MAX) hist.shift(); hpos = hist.length; histButtons(); }
+function clearHist() { hist = []; hpos = 0; histButtons(); }
+function histButtons() {
+  $('undo').disabled = hpos < 1; $('redo').disabled = hpos >= hist.length;
+  $('undo').title = hpos < 1 ? 'Nichts rückgängig zu machen' : 'Rückgängig: ' + hist[hpos - 1].label + ' (⌘Z)';
+  $('redo').title = hpos >= hist.length ? 'Nichts zu wiederholen' : 'Wiederholen: ' + hist[hpos].label + ' (⇧⌘Z)';
+}
+async function runStep(dir) {
+  if (histBusy || !writable()) return;
+  const step = dir === 'undo' ? hist[hpos - 1] : hist[hpos];
+  if (!step) return;
+  histBusy = true;
+  const r = await step[dir]();
+  histBusy = false;
+  if (!r.ok) return; // Text kam schon als Toast, der Schritt bleibt stehen
+  hpos += dir === 'undo' ? -1 : 1; histButtons();
+  toast((dir === 'undo' ? 'Rückgängig: ' : 'Wiederholt: ') + step.label);
+}
+const undo = () => runStep('undo'), redo = () => runStep('redo');
+// Schritt auf einer bestehenden Bank: erst wählen, dann ändern
+const onBank = (id, fn) => async () => { const s = await selectBank(id); return s.ok ? cmd(...fn()) : s; };
+// Bank anlegen/zurückholen: removed kommt aus der delete-Antwort
+function creationStep(label, id) {
+  const st = { label, removed: null };
+  st.undo = async () => { const r = await cmd('delete', { id }); if (r.ok) st.removed = r.removed; return r; };
+  st.redo = async () => { const r = await cmd('restore', st.removed); if (r.ok) await selectBank(id); return r; };
+  return st;
+}
+function deletionStep(label, removed) {
+  const st = { label, removed };
+  st.undo = async () => { const r = await cmd('restore', st.removed); if (r.ok) await selectBank(st.removed.bank.id); return r; };
+  st.redo = async () => { const r = await cmd('delete', { id: st.removed.bank.id }); if (r.ok) st.removed = r.removed; return r; };
+  return st;
+}
+function startsStep(label, id, before, after) {
+  return { label, undo: onBank(id, () => ['setstarts', { id, starts: before }]), redo: onBank(id, () => ['setstarts', { id, starts: after }]) };
+}
+
+// ---------- Aktionen ----------
+async function setStart(b, pad, ms, before) {
+  const r = await cmd('setstart', { id: b.id, pad, ms });
+  if (r.ok) { const after = before.slice(); after[pad] = ms; pushStep(startsStep('Start Pad ' + (pad + 1) + ' verschoben', b.id, before, after)); }
+  else { b.starts[pad] = before[pad]; render(); }
+}
+async function roll(pad) {
+  const b = curBank(); if (!b || !view().edit) return;
+  const before = b.starts.slice(), r = await cmd('roll', { id: b.id, pad });
+  if (r.ok) { const after = before.slice(); after[pad] = r.ms; pushStep(startsStep('Neues Snippet Pad ' + (pad + 1), b.id, before, after)); }
+}
+async function swap(a, c) {
+  const b = curBank(); if (!b || a === c) return;
+  const r = await cmd('swap', { id: b.id, a, b: c });
+  if (r.ok) { const id = b.id; S.sel = c; pushStep({ label: 'Pad ' + (a + 1) + ' ↔ ' + (c + 1) + ' getauscht', undo: onBank(id, () => ['swap', { id, a, b: c }]), redo: onBank(id, () => ['swap', { id, a, b: c }]) }); }
+}
+async function rename(b, name) {
+  name = name.trim().slice(0, 100);
+  if (name === b.name) return;
+  const old = b.name, id = b.id, r = await cmd('rename', { id, name });
+  if (r.ok) pushStep({ label: 'Umbenannt in „' + name + '“', undo: onBank(id, () => ['rename', { id, name: old }]), redo: onBank(id, () => ['rename', { id, name }]) });
+}
+async function duplicate(b) {
+  const r = await cmd('duplicate', { id: b.id });
+  if (r.ok) { pushStep(creationStep('Bank „' + b.name + '“ dupliziert', r.id)); toast('Bank dupliziert'); }
+}
+async function del(b) {
+  const r = await cmd('delete', { id: b.id });
+  if (r.ok) { pushStep(deletionStep('Bank „' + b.name + '“ gelöscht', r.removed)); toast('Bank „' + b.name + '“ gelöscht', { undo: true, ms: 5000 }); }
+}
+async function move(b, to) {
+  const from = banks().indexOf(b) + 1, id = b.id;
+  if (to === from) return;
+  const r = await cmd('move', { id, to });
+  if (r.ok) pushStep({ label: 'Bank „' + b.name + '“ verschoben', undo: onBank(id, () => ['move', { id, to: from }]), redo: onBank(id, () => ['move', { id, to }]) });
+}
+async function newBank(video, title) {
+  closeSearch();
+  const r = await cmd('newbank', { video });
+  if (r.ok) { S.newbank = { video, title, progress: 0 }; toast('Lädt „' + title + '“ …'); render(); }
+}
+let holding = -1;
+function hit(i) {
+  if (holding >= 0) up();
+  holding = i; S.sel = i; cmd('hit', { pad: i });
+  const p = $('pad' + i); if (p) { p.classList.add('hit'); setTimeout(() => { const q = $('pad' + i); if (q) q.classList.remove('hit'); }, 140); }
+  render(); showSel();
+}
+function up() { if (holding < 0) return; cmd('up', { pad: holding }); holding = -1; }
+document.addEventListener('pointerup', up);
+document.addEventListener('pointercancel', up);
+
+// ---------- Kopfzeile, Bibliothek ----------
+function renderHeader() {
+  const b = curBank(), n = banks().length, i = curIdx();
+  if (b) $('navname').innerHTML = '<span class="num">' + (i + 1) + ' / ' + n + '</span>&nbsp;&nbsp;<b>' + esc(b.name) + '</b>';
+  else if (S.lib && S.lib.state === 'leer') $('navname').innerHTML = '<span>Bibliothek leer</span>';
+  else if (view() && view().nobank) $('navname').innerHTML = '<span>keine Bank</span>';
+  else $('navname').innerHTML = '<span>–</span>';
+  $('prev').disabled = !S.conn || n === 0 || i === 0;
+  $('next').disabled = !S.conn || n === 0 || i === n - 1;
+  $('conntext').textContent = S.conn && S.hello ? 'steuert: ' + (S.hello.track || 'YT Sampler') : 'kein Device';
+  $('opensearch').disabled = !writable();
+  const broken = S.lib && (S.lib.state === 'kaputt' || S.lib.state === 'neuer');
+  document.body.classList.toggle('broken', !!broken);
+  $('errbar').textContent = broken ? (S.lib.error || (S.lib.state === 'neuer' ? 'Bibliothek aus neuerer Version' : 'Bibliothek kaputt – Speichern gesperrt')) : '';
+  histButtons();
+  if (!writable()) { $('undo').disabled = $('redo').disabled = true; }
+}
+
+let editing = null; // id der Bank, deren Name gerade bearbeitet wird
+function renderList() {
+  if (editing != null || (S.drag && S.drag.kind === 'bank')) return; // Umbenennen oder Ziehen läuft
+  const ul = $('banklist'), w = writable(), cb = curBank();
+  // nur neu bauen, wenn sich etwas geändert hat: sonst gehen Klicks verloren, die auf ein play-Event fallen
+  const sig = JSON.stringify([S.lib, S.jobs, S.newbank, cb && cb.id, w, S.cache, S.beats && S.beats.bpm]);
+  if (sig === renderList.sig) return;
+  renderList.sig = sig;
+  ul.innerHTML = '';
+  $('count').textContent = banks().length || '';
+  if (!banks().length && !S.newbank) {
+    const li = document.createElement('li'); li.className = 'empty';
+    li.innerHTML = S.lib && (S.lib.state === 'kaputt' || S.lib.state === 'neuer') ? 'Bibliothek nicht lesbar' : 'Noch keine Bank.<br><button class="small" style="margin-top:8px">Video suchen</button>';
+    const sb = li.querySelector('button'); if (sb) { sb.disabled = !w; sb.onclick = openSearch; }
+    ul.appendChild(li);
+  }
+  banks().forEach((b, i) => {
+    const li = document.createElement('li'), v = (S.lib.videos[b.video] || {}), bpm = videoBpm(b.video).bpm;
+    li.dataset.id = b.id; li.draggable = w; if (b === cb) li.className = 'on';
+    li.innerHTML = '<span class="nr num">' + (i + 1) + '</span><span class="name"></span><span class="acts">'
+      + '<button class="ghost ren" title="Umbenennen">' + icon('edit') + '</button>'
+      + '<button class="ghost dup" title="Duplizieren">' + icon('copy') + '</button>'
+      + '<button class="ghost del" title="Löschen">' + icon('trash') + '</button></span>';
+    const n = li.querySelector('.name'); n.textContent = b.name || '(ohne Namen)';
+    const sub = document.createElement('span'); sub.className = 'sub';
+    sub.textContent = (v.title || b.video) + (bpm ? ' · ' + fmtBpm(bpm) + ' BPM' : ''); n.appendChild(sub);
+    const marks = [], job = S.jobs['fetch:' + b.video];
+    if (!b.wav && b.snip === 'missing') marks.push('<span class="tag bad">nicht ladbar</span>');
+    else if (!b.wav) marks.push('<span class="tag">nur spielbar</span>');
+    if (b.snip === 'cutting' || b.snip === 'stale') marks.push('<span class="tag busy">' + (b.snip === 'cutting' ? 'schneidet' : 'veraltet') + '</span>');
+    if (job) marks.push('<span class="tag busy">lädt ' + Math.round(job.progress * 100) + ' %</span>');
+    else if (!b.wav && b.snip === 'missing') marks.push('<button class="small fetch">Track laden</button>');
+    if (v.fail) marks.push('<span class="tag bad" title="' + esc(v.fail) + '">' + esc(v.fail) + '</span>');
+    if (marks.length) { const m = document.createElement('span'); m.className = 'marks'; m.innerHTML = marks.join(''); n.appendChild(m); }
+    li.querySelectorAll('.acts button').forEach((x) => { x.disabled = !w; });
+    const fb = li.querySelector('.fetch'); if (fb) { fb.disabled = !w; fb.onclick = () => cmd('fetch', { video: b.video }); }
+    li.onclick = (e) => { if (e.target.closest('button,input')) return; selectBank(b.id); };
+    li.ondblclick = (e) => { if (w && !e.target.closest('button')) startRename(li, b); };
+    li.querySelector('.ren').onclick = () => startRename(li, b);
+    li.querySelector('.dup').onclick = () => duplicate(b);
+    li.querySelector('.del').onclick = () => del(b);
+    li.ondragstart = (e) => { S.drag = { kind: 'bank', id: b.id }; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', b.name); };
+    li.ondragend = () => { S.drag = null; later(); };
+    li.ondragover = (e) => { if (S.drag && S.drag.kind === 'bank') { e.preventDefault(); li.classList.add('over'); } };
+    li.ondragleave = () => li.classList.remove('over');
+    li.ondrop = (e) => {
+      e.preventDefault(); li.classList.remove('over');
+      if (!S.drag || S.drag.kind !== 'bank') return;
+      const src = bankById(S.drag.id); S.drag = null; if (src) move(src, i + 1);
+    };
+    ul.appendChild(li);
+  });
+  if (S.newbank) {
+    const li = document.createElement('li'); li.className = 'pending';
+    li.innerHTML = '<span class="nr num">' + (banks().length + 1) + '</span><span class="name"></span><span></span>';
+    li.querySelector('.name').innerHTML = esc(S.newbank.title) + '<span class="sub">Neue Bank · lädt ' + Math.round(S.newbank.progress * 100) + ' %</span>';
+    ul.appendChild(li);
+  }
+  $('fetchall').style.display = banks().some((b) => !b.wav) ? '' : 'none';
+  $('fetchall').disabled = !w;
+  const c = S.cache || (S.lib && S.lib.cache);
+  $('cachesize').textContent = c ? (c.warn ? 'Cache über 10 GB – im Finder aufräumen' : 'Cache ' + fmtGB(c.bytes)) : '';
+  $('cachesize').className = 'hint num' + (c && c.warn ? ' warn' : '');
+}
+function startRename(li, b) {
+  if (!writable()) return;
+  editing = b.id;
+  const n = li.querySelector('.name'), inp = document.createElement('input'); inp.value = b.name; inp.maxLength = 100;
+  n.replaceWith(inp); inp.focus(); inp.select();
+  let done = false;
+  const finish = (ok) => { if (done) return; done = true; editing = null; renderList.sig = null; const v = inp.value; render(); if (ok && v.trim()) rename(b, v); };
+  inp.onkeydown = (e) => { if (e.key === 'Enter') finish(true); if (e.key === 'Escape') { e.stopPropagation(); finish(false); } };
+  inp.onblur = () => finish(true);
+}
+
+// ---------- Waveform ----------
+function peaksFor(video, wav) {
+  let p = S.peaks.get(video);
+  if (p && p.state === 'missing' && wav && !p.retried) { S.peaks.delete(video); p = null; } // Track inzwischen geladen
+  if (p) return p;
+  p = { state: 'loading' }; S.peaks.set(video, p);
+  fetch('/peaks/' + encodeURIComponent(video)).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(r.status))).then((buf) => {
+    const dv = new DataView(buf), sr = dv.getUint32(0, true), bs = dv.getUint32(4, true), data = new Int8Array(buf, 8);
+    Object.assign(p, { state: 'ok', sr, bs, data, n: data.length >> 1, dur: (data.length >> 1) * bs / sr * 1000 });
+    render();
+  }).catch(() => { p.state = 'missing'; p.retried = wav; render(); });
+  return p;
+}
+function durOf(vw, p) { return p && p.state === 'ok' ? p.dur : Math.max(...vw.starts) + 16000; }
+function beatsFor(video) { return S.beats && S.beats.video === video ? S.beats : null; }
+function barSet(bt) { // Taktanfänge: jeder vierte Schlag ab der „1“
+  let kd = 0, best = Infinity;
+  bt.beats.forEach((t, k) => { const d = Math.abs(t - bt.down); if (d < best) { best = d; kd = k; } });
+  return (k) => (((k - kd) % 4) + 4) % 4 === 0;
+}
+let W = { dur: 1, innerW: 1 };
+const msToX = (ms) => ms / W.dur * W.innerW;
+
+[1, 4, 16].forEach((z) => { const b = document.createElement('button'); b.textContent = z + '×'; b.onclick = () => setZoom(z); $('zoom').appendChild(b); });
+function setZoom(z) { S.zoom = z; render(); showSel(); }
+$('scroll').addEventListener('wheel', (e) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); setZoom(e.deltaY < 0 ? Math.min(16, S.zoom * 4) : Math.max(1, S.zoom / 4)); } }, { passive: false });
+$('scroll').addEventListener('scroll', drawWave);
+function showSel() { const vw = view(); if (!vw) return; const sc = $('scroll'); sc.scrollLeft = msToX(vw.starts[S.sel]) - sc.clientWidth / 3; }
+
+function renderWave() {
+  if (S.markerDrag) return drawWave();
+  const vw = view(), sc = $('scroll'), inner = $('inner'), msg = $('wavemsg');
+  inner.querySelectorAll('.mk').forEach((m) => m.remove());
+  Array.from($('zoom').children).forEach((bt) => bt.classList.toggle('on', bt.textContent === S.zoom + '×'));
+  if (!vw) return;
+  const p = peaksFor(vw.video, vw.bank ? vw.bank.wav : true);
+  W = { dur: durOf(vw, p), innerW: sc.clientWidth * S.zoom };
+  inner.style.width = W.innerW + 'px';
+  msg.className = '';
+  if (vw.playonly) {
+    const job = S.jobs['fetch:' + vw.video];
+    msg.className = 'on';
+    msg.innerHTML = '<b>Track fehlt</b><span>Die Bank spielt aus den Snippets. Starts lassen sich erst mit dem ganzen Track ändern.</span>'
+      + (job ? '<span class="tag busy">lädt ' + Math.round(job.progress * 100) + ' %</span>' : '<button id="fetchone">Track laden</button>');
+    const fb = $('fetchone'); if (fb) { fb.disabled = !writable(); fb.onclick = () => cmd('fetch', { video: vw.video }); }
+  } else if (p.state === 'loading') { msg.className = 'on'; msg.innerHTML = '<span>Waveform lädt …</span>'; }
+  else if (p.state === 'missing') { msg.className = 'on'; msg.innerHTML = '<b>Track fehlt</b>'; }
+  const bt = beatsFor(vw.video);
+  $('wavehint').innerHTML = vw.edit ? (bt && bt.ok ? 'Marker ziehen rastet auf Schläge · <kbd>⌥</kbd> frei' : 'Marker ziehen · Tempo unsicher, kein Einrasten') : '';
+  vw.starts.forEach((t, i) => {
+    const m = document.createElement('div'); m.className = 'mk' + (i === S.sel ? ' sel' : '') + (vw.edit ? ' edit' : ''); m.dataset.pad = i;
+    m.style.left = msToX(t) + 'px'; m.innerHTML = '<span>' + (i + 1) + '</span>';
+    if (vw.edit) m.onpointerdown = (e) => dragMarker(e, i, m);
+    inner.appendChild(m);
+  });
+  const s = $('slice'), sp = S.dev && S.dev.spans ? S.dev.spans[S.sel] : 0;
+  s.style.display = sp && !vw.playonly ? '' : 'none';
+  s.style.left = msToX(vw.starts[S.sel]) + 'px'; s.style.width = msToX(sp || 0) + 'px';
+  drawWave();
+}
+function drawWave() {
+  const vw = view(), sc = $('scroll'), cv = $('cv');
+  if (!vw) return;
+  const w = sc.clientWidth, h = sc.clientHeight, dpr = devicePixelRatio || 1, x0 = sc.scrollLeft;
+  if (cv.width !== w * dpr || cv.height !== h * dpr) { cv.width = w * dpr; cv.height = h * dpr; cv.style.width = w + 'px'; }
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  const p = S.peaks.get(vw.video), bt = beatsFor(vw.video);
+  if (bt && bt.beats.length) {
+    const isBar = barSet(bt);
+    bt.beats.forEach((t, k) => {
+      const x = Math.round(msToX(t) - x0) + 0.5; if (x < -2 || x > w + 2) return;
+      const bar = isBar(k); if (!bar && S.zoom < 4) return;
+      const one = Math.abs(t - bt.down) < 1;
+      g.strokeStyle = one ? '#4a4d55' : bar ? '#2c2f35' : '#1d1f23'; g.lineWidth = one ? 3 : 1;
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+    });
+  }
+  if (!p || p.state !== 'ok') return;
+  g.fillStyle = vw.nobank ? '#4f5258' : '#6f737b';
+  const perMs = p.sr / p.bs / 1000, mid = h / 2, amp = h / 2 - 8;
+  for (let x = 0; x < w; x++) {
+    const ms0 = (x + x0) / W.innerW * W.dur, ms1 = (x + x0 + 1) / W.innerW * W.dur;
+    const b0 = Math.floor(ms0 * perMs), b1 = Math.min(p.n, Math.max(b0 + 1, Math.floor(ms1 * perMs)));
+    if (b0 >= p.n) break;
+    let lo = 0, hi = 0;
+    for (let b = b0; b < b1; b++) { const a = p.data[b * 2], c = p.data[b * 2 + 1]; if (a < lo) lo = a; if (c > hi) hi = c; }
+    g.fillRect(x, mid - hi / 128 * amp, 1, Math.max(1, (hi - lo) / 128 * amp));
+  }
+}
+function nearest(arr, ms) { // arr aufsteigend
+  let lo = 0, hi = arr.length - 1;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (arr[m] < ms) lo = m; else hi = m; }
+  return Math.abs(arr[lo] - ms) <= Math.abs(arr[hi] - ms) ? arr[lo] : arr[hi];
+}
+function dragMarker(e, i, m) {
+  const b = curBank(); if (!b) return;
+  e.preventDefault(); S.sel = i; m.setPointerCapture(e.pointerId);
+  const before = b.starts.slice(), tip = $('tip'), bt = beatsFor(b.video), snap = bt && bt.ok && bt.beats.length;
+  let ms = before[i], moved = false;
+  S.markerDrag = true; // Marker nicht neu bauen, sonst geht die Pointer-Capture verloren
+  $('inner').querySelectorAll('.mk').forEach((x) => x.classList.toggle('sel', x === m));
+  render();
+  m.onpointermove = (ev) => {
+    const r = $('inner').getBoundingClientRect();
+    ms = Math.max(0, Math.min(W.dur, (ev.clientX - r.left) / r.width * W.dur));
+    const free = !snap || ev.altKey;
+    ms = Math.round(free ? ms : nearest(bt.beats, ms)); moved = true;
+    m.style.left = msToX(ms) + 'px'; $('slice').style.left = msToX(ms) + 'px';
+    tip.style.display = 'block'; tip.style.left = msToX(ms) + 6 + 'px';
+    tip.textContent = 'Pad ' + (i + 1) + ' · ' + fmt(ms) + (free ? ' · frei' : '');
+  };
+  m.onpointerup = m.onpointercancel = () => {
+    m.onpointermove = m.onpointerup = m.onpointercancel = null; tip.style.display = 'none'; S.markerDrag = false;
+    if (moved && ms !== before[i]) { b.starts[i] = ms; render(); setStart(b, i, ms, before); } else render();
+  };
+}
+
+// ---------- Pads (Pad 1 unten links) ----------
+// Die 16 Pads entstehen einmal und werden nur aktualisiert, sonst rissen Klick und Drag beim nächsten SSE-Event ab
+for (let row = 3; row >= 0; row--) for (let col = 0; col < 4; col++) {
+  const i = row * 4 + col, p = document.createElement('div');
+  p.className = 'pad'; p.id = 'pad' + i;
+  p.innerHTML = '<span class="n">' + (i + 1) + '</span><div class="bar"><i></i></div><span class="s num"></span>'
+    + '<button class="ghost roll" title="Neues Snippet">' + icon('dice') + '</button>';
+  p.onpointerdown = (e) => { if (e.button || e.target.closest('.roll') || !view()) return; hit(i); };
+  p.querySelector('.roll').onclick = () => { S.sel = i; roll(i); };
+  p.ondragstart = (e) => { S.drag = { kind: 'pad', i }; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'Pad ' + (i + 1)); };
+  p.ondragend = () => { S.drag = null; };
+  p.ondragover = (e) => { if (S.drag && S.drag.kind === 'pad') { e.preventDefault(); p.classList.add('over'); } };
+  p.ondragleave = () => p.classList.remove('over');
+  p.ondrop = (e) => { if (!S.drag || S.drag.kind !== 'pad') return; e.preventDefault(); e.stopPropagation(); p.classList.remove('over'); const from = S.drag.i; S.drag = null; swap(from, i); };
+  $('grid').appendChild(p);
+}
+function renderPads() {
+  const vw = view();
+  if (!vw) { $('insp').innerHTML = ''; renderPads.sig = null; return; }
+  const swappable = writable() && !!vw.bank;
+  $('padhint').textContent = vw.nobank ? 'keine Bank · anspielbar, nicht bearbeitbar' : 'Klick spielt · auf anderes Pad ziehen tauscht';
+  for (let i = 0; i < 16; i++) {
+    const p = $('pad' + i);
+    p.classList.toggle('sel', i === S.sel); p.draggable = swappable;
+    p.querySelector('.bar i').style.left = Math.min(100, vw.starts[i] / W.dur * 100) + '%';
+    p.querySelector('.s').textContent = fmt(vw.starts[i]);
+    p.querySelector('.roll').style.display = vw.edit ? '' : 'none';
+  }
+  if (document.activeElement === $('bpm')) return; // Tempo wird gerade getippt
+  const v = vw.video, vt = (S.lib && S.lib.videos[v] && S.lib.videos[v].title) || v, tb = videoBpm(v), tempoOn = !!vw.bank && writable();
+  const tt = S.dev && S.dev.teletext;
+  const sig = JSON.stringify([v, vt, tb, tempoOn, vw.edit, vw.nobank, S.sel, vw.starts[S.sel], tt]);
+  if (sig === renderPads.sig) return;
+  renderPads.sig = sig;
+  $('insp').innerHTML = '<span class="lbl">Ausgewählt</span><div class="big">Pad ' + (S.sel + 1) + '</div>'
+    + '<div class="row"><span>Start</span><b class="num">' + fmt(vw.starts[S.sel]) + '</b></div>'
+    + '<div class="row"><span>Länge</span><b>vom Device</b></div>'
+    + '<div class="row"><span>Video</span><b id="inspvideo"></b></div>'
+    + '<div class="btns"><button id="rollbtn">' + icon('dice') + ' Neues Snippet</button><button id="hitbtn">Anspielen</button></div>'
+    + '<span class="lbl" style="margin-top:6px">Tempo</span>'
+    + '<div id="tempo"><input id="bpm" type="number" min="30" max="300" step="0.1" class="num"><button class="small" id="half">½×</button><button class="small" id="double">2×</button>'
+    + (tb.confirmed ? '' : '<button class="small" id="tempook">Tempo stimmt</button>') + '</div>'
+    + (vw.nobank ? '<span class="hint">keine Bank: Track im Editor nicht bearbeitbar' + (tt ? ' · Teletext lädt ' + Math.round((tt.progress || 0) * 100) + ' %' : '') + '</span>' : '')
+    + (!tb.confirmed && tb.bpm ? '<span class="hint">Tempo aus der Analyse, nicht bestätigt</span>' : '');
+  $('inspvideo').textContent = vt + (tb.bpm ? ' · ' + fmtBpm(tb.bpm) + ' BPM' : '');
+  $('rollbtn').disabled = !vw.edit; $('rollbtn').onclick = () => roll(S.sel);
+  $('hitbtn').onpointerdown = (e) => { e.stopPropagation(); hit(S.sel); };
+  const inp = $('bpm');
+  inp.value = tb.bpm ? Math.round(tb.bpm * 10) / 10 : '';
+  inp.disabled = !tempoOn;
+  $('half').disabled = $('double').disabled = !tempoOn || !tb.bpm;
+  const setTempo = (bpm) => { if (bpm >= 30 && bpm <= 300) cmd('tempo', { video: v, bpm: Math.round(bpm * 10) / 10 }); else toast('Tempo 30–300 BPM', { err: true }); };
+  inp.onkeydown = (e) => { if (e.key === 'Enter') inp.blur(); };
+  inp.onchange = () => { const x = parseFloat(inp.value); if (x) setTempo(x); };
+  $('half').onclick = () => setTempo(tb.bpm / 2);
+  $('double').onclick = () => setTempo(tb.bpm * 2);
+  const ok = $('tempook'); if (ok) { ok.disabled = !tempoOn; ok.onclick = () => cmd('tempook', { video: v }); }
+}
+
+// ---------- Abspielkopf ----------
+function animPlay() {
+  const pl = $('play'), p = S.play, vw = view();
+  if (!p || !vw) { pl.style.display = 'none'; return; }
+  const d = performance.now() - p.t0;
+  if (d > p.dur) { S.play = null; pl.style.display = 'none'; return; }
+  pl.style.display = 'block'; pl.style.left = msToX(p.from + (p.to - p.from) * (p.dur ? d / p.dur : 1)) + 'px';
+  requestAnimationFrame(animPlay);
+}
+
+// ---------- Suche (Slide-in) ----------
+function openSearch() { if (!writable()) return; document.body.classList.add('search'); $('q').focus(); $('q').select(); if (!$('results').children.length && $('q').value) runSearch(); }
+function closeSearch() { document.body.classList.remove('search', 'dragging'); }
+$('opensearch').onclick = openSearch; $('closesearch').onclick = closeSearch; $('shade').onclick = closeSearch;
+let searchT;
+$('q').oninput = () => { clearTimeout(searchT); searchT = setTimeout(runSearch, 400); };
+$('q').onkeydown = (e) => { if (e.key === 'Enter') { clearTimeout(searchT); runSearch(); } };
+async function runSearch() {
+  const q = $('q').value.trim(), ul = $('results');
+  if (!q) { ul.innerHTML = ''; return; }
+  ul.innerHTML = '<li class="info">Suche …</li>';
+  const r = await cmd('search', { q }, true);
+  if (r.code === 'superseded') return;
+  if (!r.ok) { ul.innerHTML = '<li class="info"></li>'; ul.firstChild.textContent = r.text; return; }
+  ul.innerHTML = r.results.length ? '' : '<li class="info">Keine Treffer</li>';
+  r.results.forEach((x) => {
+    const li = document.createElement('li'); li.draggable = true;
+    li.innerHTML = '<img loading="lazy" alt=""><div><div class="t"></div><div class="m num">' + fmtDur(x.dur) + (x.long ? '<span class="tag">nur 10 min</span>' : '') + '</div></div>';
+    li.querySelector('img').src = 'https://i.ytimg.com/vi/' + encodeURIComponent(x.id) + '/mqdefault.jpg';
+    li.querySelector('.t').textContent = x.title;
+    li.onclick = () => newBank(x.id, x.title);
+    li.ondragstart = (e) => { S.drag = { kind: 'video', id: x.id, title: x.title }; e.dataTransfer.setData('text/plain', x.title); setTimeout(() => document.body.classList.add('dragging'), 0); };
+    li.ondragend = () => { S.drag = null; document.body.classList.remove('dragging'); $('pads').classList.remove('dropping'); };
+    ul.appendChild(li);
+  });
+}
+$('pads').ondragover = (e) => { if (S.drag && S.drag.kind === 'video') { e.preventDefault(); $('pads').classList.add('dropping'); } };
+$('pads').ondragleave = (e) => { if (!$('pads').contains(e.relatedTarget)) $('pads').classList.remove('dropping'); };
+$('pads').ondrop = (e) => { if (S.drag && S.drag.kind === 'video') { e.preventDefault(); const d = S.drag; S.drag = null; $('pads').classList.remove('dropping'); newBank(d.id, d.title); } };
+// Ablage außerhalb der Pads/Liste: kein Navigieren des Browsers
+document.addEventListener('dragover', (e) => { if (S.drag && S.drag.kind === 'video') e.preventDefault(); });
+document.addEventListener('drop', (e) => e.preventDefault());
+
+// ---------- Größen: Bibliothek breiter/schmaler/eingeklappt, Waveform höher/flacher ----------
+const layout = { sw: 280, wh: 42, collapsed: false };
+try { Object.assign(layout, JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}')); } catch (e) { /* ohne gespeicherte Werte: Standard */ }
+function applyLayout() {
+  document.documentElement.style.setProperty('--sw', layout.sw + 'px');
+  document.documentElement.style.setProperty('--wh', layout.wh + '%');
+  $('body').classList.toggle('collapsed', !!layout.collapsed);
+}
+function saveLayout() { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch (e) { /* egal */ } }
+function splitter(el, onMove) {
+  el.onpointerdown = (e) => {
+    e.preventDefault(); // sonst startet eine Textauswahl samt nativem Drag und bricht die Capture ab
+    el.setPointerCapture(e.pointerId); el.classList.add('on');
+    el.onpointermove = (ev) => { onMove(ev); applyLayout(); renderWave(); };
+    el.onpointerup = (ev) => { onMove(ev); applyLayout(); renderWave(); el.onpointermove = el.onpointerup = null; el.classList.remove('on'); saveLayout(); };
+  };
+}
+splitter($('vsplit'), (e) => { layout.sw = Math.round(Math.max(200, Math.min(480, e.clientX))); });
+splitter($('hsplit'), (e) => { const r = $('main').getBoundingClientRect(); layout.wh = Math.round(Math.max(18, Math.min(70, (e.clientY - r.top) / r.height * 100))); });
+$('toggleside').onclick = () => { layout.collapsed = !layout.collapsed; applyLayout(); saveLayout(); renderWave(); };
+applyLayout();
+
+// ---------- Kopfzeile, Tastatur ----------
+function step(d) { const n = banks().length; if (!n) return; const i = curIdx(), j = i < 0 ? 0 : Math.max(0, Math.min(n - 1, i + d)); if (j !== i) selectBank(banks()[j].id); }
+$('prev').onclick = () => step(-1); $('next').onclick = () => step(1);
+$('undo').onclick = undo; $('redo').onclick = redo;
+$('fetchall').onclick = async () => { const r = await cmd('fetchall'); if (r.ok) toast(r.todo ? r.todo + ' Tracks werden geladen' : 'Nichts nachzuladen'); };
+document.addEventListener('keydown', (e) => {
+  const mod = e.metaKey || e.ctrlKey, inField = /INPUT|TEXTAREA/.test(document.activeElement.tagName);
+  if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); openSearch(); return; }
+  if (e.key === 'Escape') { closeSearch(); return; }
+  if (inField) return; // dort gilt das Undo des Browsers
+  if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if (document.body.classList.contains('search')) return;
+  if (e.key === 'ArrowUp') { e.preventDefault(); step(-1); }
+  if (e.key === 'ArrowDown') { e.preventDefault(); step(1); }
+});
+
+// ---------- Zeichnen ----------
+function render() {
+  const vw = view();
+  document.body.classList.toggle('nobank', !!(vw && vw.nobank));
+  document.body.classList.toggle('blank', !vw);
+  const L = S.lib;
+  $('blank').innerHTML = !L ? '' : L.state === 'kaputt' || L.state === 'neuer' ? '<b>' + esc(L.state === 'neuer' ? 'Bibliothek aus neuerer Version' : 'Bibliothek kaputt') + '</b><span>Speichern ist gesperrt, bis die Datei wieder lesbar ist.</span>'
+    : !banks().length ? '<b>Bibliothek leer</b><span>Mit „Video suchen“ (⌘K) die erste Bank anlegen.</span>' : '<span>Keine Bank aktiv</span>';
+  if (S.sel > 15) S.sel = 0;
+  renderHeader(); renderList(); renderWave(); renderPads();
+}
+let renderQ = false;
+function later() { if (!renderQ) { renderQ = true; requestAnimationFrame(() => { renderQ = false; render(); }); } }
+window.addEventListener('resize', later);
+
+// ---------- Verbindung (SSE) ----------
+function setConn(on) { S.conn = on; document.body.classList.toggle('offline', !on); later(); }
+function connect() {
+  const es = new EventSource('/editor/events');
+  const on = (ev, fn) => es.addEventListener(ev, (e) => { fn(JSON.parse(e.data)); later(); });
+  on('hello', (h) => {
+    if (S.hello && h.session !== S.hello.session) { clearHist(); toast('steuert jetzt ' + h.track); }
+    S.hello = h; setConn(true);
+  });
+  on('lib', (L) => {
+    if (S.lib && L.rev !== S.lib.rev && L.by !== CLIENT && L.by !== 'device' && hist.length) { clearHist(); toast('Bibliothek wurde anderswo geändert'); }
+    S.lib = L; if (L.cache) S.cache = L.cache;
+  });
+  on('device', (d) => {
+    const old = S.dev;
+    if (!old || old.bankId !== d.bankId || old.sel !== d.sel) S.sel = d.sel || 0;
+    S.dev = d;
+    if (!old || old.bankId !== d.bankId) requestAnimationFrame(showSel);
+  });
+  on('beats', (b) => { S.beats = b; });
+  on('cache', (c) => { S.cache = c; });
+  on('play', (p) => { S.play = { ...p, t0: performance.now() }; requestAnimationFrame(animPlay); });
+  on('stop', (p) => { if (S.play && S.play.pad === p.pad) S.play = null; });
+  on('msg', (m) => toast(m.text, { err: m.level === 'error' }));
+  on('job', (j) => {
+    const key = j.kind + ':' + (j.video || j.bankId);
+    if (j.kind === 'newbank' && S.newbank && j.video === S.newbank.video) {
+      S.newbank.progress = j.progress || 0;
+      if (j.phase === 'done') {
+        const nb = S.newbank; S.newbank = null;
+        if (j.bankId) { pushStep(creationStep('Neue Bank „' + nb.title + '“', j.bankId)); toast('Neue Bank angelegt'); }
+      }
+    }
+    if (j.phase === 'done' || j.phase === 'fail') delete S.jobs[key]; else S.jobs[key] = j;
+  });
+  es.onerror = () => {
+    setConn(false);
+    if (es.readyState === EventSource.CLOSED) setTimeout(connect, 1500); // z. B. 503: der Browser gibt sonst auf
+  };
+}
+histButtons();
+connect();
+</script>
+</body>
+</html>
