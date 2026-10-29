@@ -62,7 +62,7 @@ function createMock(opts = {}) {
   const spanOf = () => Array.from({ length: 16 }, (_, i) => 1800 + i * 40);
   function devFor(b) {
     return { bankId: b ? b.id : 0, nr: b ? m.lib.banks.indexOf(b) + 1 : 0, video: b ? b.video : '-', sel: m.dev ? m.dev.sel : 0, mode: 0,
-      rev: m.lib.rev, starts: b ? b.starts.slice() : [], spans: spanOf(), teletext: null };
+      rev: 0, starts: b ? b.starts.slice() : [], spans: spanOf(), teletext: null };
   }
   m.scenario = function (name) {
     m.name = name;
@@ -90,7 +90,7 @@ function createMock(opts = {}) {
   function broadcastAll() {
     for (const c of m.clients) { send(c, 'lib', libMsg('extern')); send(c, 'device', m.dev); const b = beatsMsg(); if (b) send(c, 'beats', b); }
   }
-  function changed(by) { m.lib.rev++; m.dev.rev = m.lib.rev; m.emit('lib', libMsg(by)); }
+  function changed(by) { m.lib.rev++; m.emit('lib', libMsg(by)); }
   function activate(b) { m.dev = devFor(b); m.emit('device', m.dev); const bt = beatsMsg(); if (bt) m.emit('beats', bt); }
   function syncDev() { const b = byId(m.dev.bankId); if (b) { m.dev = devFor(b); m.emit('device', m.dev); } }
   m.setDown = function (d) { m.down = d; if (d) for (const c of m.clients) c.destroy(); };

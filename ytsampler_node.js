@@ -1,7 +1,6 @@
 // YT Sampler – Node for Max Teil
-// Suche und Download über yt-dlp (+ ffmpeg). Audio landet als WAV im Cache.
-// Nachrichten rein:  search <begriff…> | pick <index> | load <url|id>
-// Nachrichten raus:  rclear | radd <titel> | status <text> | loaded <pfad> <dauer_ms> <id> <titel>
+// Bibliothek, Snippets, Analyse, Downloads, Session-Dateien, Webserver für Teletext und Editor.
+// Protokolle zu [js] und Editor: .scratch/bank-editor/spec.md Abschnitt 3 und 6.
 
 const Max = require('max-api');
 const { spawn } = require('child_process');
@@ -707,10 +706,6 @@ function showResults() {
   lastResults = allResults
     .filter((r) => r.duration > 0 && r.duration <= maxLenSec)   // ohne Länge = Livestream o. Ä.
     .slice(0, SEARCH_SHOW);
-  Max.outlet('rclear');
-  // Kopfzeile: sonst sieht der erste Treffer aus, als wäre er schon geladen
-  Max.outlet('radd', lastResults.length ? `▾ ${lastResults.length} Treffer – auswählen` : '– keine Treffer –');
-  lastResults.forEach((r) => Max.outlet('radd', `${r.title} · ${fmtDur(r.duration)}`));
   ui.sel = Math.min(ui.sel, Math.max(0, lastResults.length - 1));
   const hidden = allResults.length - lastResults.length;
   const lim = `${Math.round(maxLenSec / 60)} min`;
@@ -790,7 +785,11 @@ async function loadVideo(input) {
       status('Tonart-Analyse fehlgeschlagen: ' + clean(e.message).slice(0, 80));
     }
   } catch (e) {
-    if (!job.aborted) status(errMsg(e));
+    if (!job.aborted) {
+      const m = errMsg(e);
+      ui.message = m;
+      Max.outlet('loadfail', id, m.replace(/^Fehler: /, ''));
+    }
   } finally {
     if (devJob === job) {
       devJob = null;
@@ -869,6 +868,8 @@ Max.addHandler('session', (id) => {
     Max.outlet('newsession', id);
   }
   sessionId = id;
+  sendLibstate();   // vor state: [js] kennt dann schon die Anzahl der Bänke
+  edDirty('hello');
   fs.writeFileSync(lockFile(id), String(process.pid));
   let data = null;
   try { data = JSON.parse(fs.readFileSync(sessionFile(id), 'utf8')); } catch (e) { /* neu */ }
@@ -1123,7 +1124,8 @@ function libChange(op, args, by) {
   let res;
   try {
     const r = libRead();
-    if (!r.lib) { libNow = r; throw libErr(r.state === 'neuer' ? 'libnewer' : 'libbroken'); }
+    // libNow bleibt: libWatch merkt den Wechsel und meldet ihn an [js] und Editor
+    if (!r.lib) throw libErr(r.state === 'neuer' ? 'libnewer' : 'libbroken');
     res = LIB[op](r.lib, args) || {};
     dropOrphans(r.lib);
     r.lib.rev++;
@@ -1294,7 +1296,7 @@ function snipSchedule(id) {
   snipTimers.set(id, setTimeout(() => {
     snipTimers.delete(id);
     const bank = libNow.lib && libNow.lib.banks.find((b) => b.id === id);
-    if (!bank || snipCurrent(bank)) return;
+    if (!bank || snipCurrent(bank)) { libEvents.emit('status'); return; }   // z. B. duplicate hat schon kopiert
     try { cutSnippets(bank); } catch (e) { libEvents.emit('msg', { level: 'error', code: e.code || 'cutfail', text: e.text || e.message }); }
   }, SNIP_DEBOUNCE));
 }
@@ -1340,7 +1342,9 @@ function snipCleanup(now = Date.now()) {
 // Spec 2.5: Größe aller Dateien im Cache
 function cacheSize() {
   let bytes = 0;
-  for (const n of fs.readdirSync(CACHE)) { try { bytes += fs.statSync(path.join(CACHE, n)).size; } catch (e) { /* weg */ } }
+  let names = [];
+  try { names = fs.readdirSync(CACHE); } catch (e) { /* im Finder gelöscht */ }
+  for (const n of names) { try { bytes += fs.statSync(path.join(CACHE, n)).size; } catch (e) { /* weg */ } }
   return { bytes, warn: bytes >= CACHE_WARN };
 }
 
@@ -1488,6 +1492,327 @@ async function newBank(video, by) {
 }
 
 // =====================================================================
+// Device und Editor (Spec 3.2–3.4, 6.1, 6.2): Bank laden, Nachrichten von [js], /cmd, SSE, Peaks.
+// "aktiv" = die Bank, die dieses Device hat oder gerade lädt.
+// =====================================================================
+const VIDEO_RE = /^[\w-]{11}$/;
+const CMD_MAX = 65536;
+let dev = { bankId: 0, video: '-', sel: 0, mode: 0, rev: 0, starts: [], spans: [] };   // letzter bankstate
+let activeId = 0;
+let track = '';            // Spurname für hello
+let libBy = 'extern';      // by der letzten Bibliotheksänderung (SSE lib)
+let sending = false;       // sendBank schneidet gerade selbst
+let activeSnip = '';       // .json der aktiven Bank beim Laden (zweites Device schneidet -> neu laden)
+
+const libBroken = () => libErr(libNow.state === 'neuer' ? 'libnewer' : 'libbroken');
+const bankById = (id) => (libNow.lib ? libNow.lib.banks.find((b) => b.id === id) : null);
+const bankNr = (id) => (libNow.lib ? libNow.lib.banks.findIndex((b) => b.id === id) + 1 : 0);
+const readText = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return ''; } };
+
+// Bank ins Device: bankname, bank …, danach die Analyse. Ohne Snippets bankfail an [js] und libErr.
+function sendBank(b) {
+  let s;
+  sending = true;
+  try { s = snipEnsure(b); } catch (e) { Max.outlet('bankfail', b.id, clean(e.text || e.message)); throw e; } finally { sending = false; }
+  const v = libNow.lib.videos[b.video];
+  if (activeId !== b.id) fs.unwatchFile(snipJson(activeId), onActiveSnip);
+  fs.watchFile(snipJson(b.id), { interval: 500 }, onActiveSnip);   // doppelt angemeldet zählt einmal
+  activeId = b.id;
+  activeSnip = readText(snipJson(b.id));
+  Max.outlet('bankname', b.id, clean(b.name));
+  Max.outlet('bank', b.id, bankNr(b.id), (v && v.bpm) || 0, ...s.starts, ...s.lens, s.dur, s.video, s.path);
+  ensureAnalysis(s.video, clean(b.name), true).catch((e) => status('Tonart-Analyse fehlgeschlagen: ' + clean(e.message).slice(0, 80)));
+  edDirty('beats');
+}
+const trySend = (b) => { try { sendBank(b); } catch (e) { Max.post(`YT Sampler: Bank ${b.id} nicht geladen: ${e.message}`); } };
+
+// Eigene Schnitte der aktiven Bank sofort laden, fremde (zweites Device) über watchFile
+libEvents.on('job', (j) => { if (j.kind === 'cut' && j.phase === 'done' && j.bankId === activeId && !sending) { const b = bankById(activeId); if (b) trySend(b); } });
+function onActiveSnip() {
+  const t = readText(snipJson(activeId)), b = bankById(activeId);
+  if (t && t !== activeSnip && b) trySend(b);
+}
+
+function sendLibstate() {
+  Max.outlet('libstate', libNow.lib ? libNow.lib.banks.length : 0, bankNr(activeId), libNow.state);
+}
+const bpmToDevice = (v, bpm) => { const b = bankById(activeId); if (b && b.video === v) Max.outlet('bpm', v, bpm); };
+
+libEvents.on('change', (stand, by) => { libBy = by; sendLibstate(); edDirty('lib'); edDirty('device'); edDirty('beats'); });
+libEvents.on('status', () => edDirty('lib'));
+libEvents.on('cache', () => edDirty('cache'));
+libEvents.on('job', (j) => edEmit('job', j));
+libEvents.on('msg', (m) => edEmit('msg', m));
+
+// ---------- [js] -> Node (6.2) ----------
+Max.addHandler('bankstate', (id, video, sel, mode, rev, ...sw) => {
+  dev = { bankId: Math.floor(id) || 0, video: String(video), sel, mode, rev, starts: sw.slice(0, 16), spans: sw.slice(16, 32) };
+  activeId = dev.bankId;
+  edDirty('device'); edDirty('beats');
+});
+Max.addHandler('bankpeek', (nr) => {
+  const b = libNow.lib && libNow.lib.banks[Math.floor(nr) - 1];
+  Max.outlet('bankpeek', Math.floor(nr), libNow.lib ? libNow.lib.banks.length : 0, clean(b ? b.name : ''));
+});
+Max.addHandler('banksel', (nr) => {
+  const b = libNow.lib && libNow.lib.banks[Math.floor(nr) - 1];
+  if (b) trySend(b);   // über der letzten Bank: nichts
+});
+Max.addHandler('bankopen', (id) => {
+  if (!libNow.lib) return;   // kaputt: [js] fragt wieder, sobald libstate ok kommt
+  const b = bankById(Math.floor(id));
+  if (b) trySend(b); else Max.outlet('bankgone', Math.floor(id));
+});
+Max.addHandler('bpmset', (video, bpm) => {
+  const v = String(video);
+  if (!libNow.lib || !has(libNow.lib.videos, v)) return;
+  try { libChange('tempo', { video: v, bpm: +bpm }, 'device'); } catch (e) { Max.post(`YT Sampler: Tempo nicht gespeichert: ${e.message}`); }
+});
+Max.addHandler('playing', (pad, from, to, dur) => edEmit('play', { pad, from, to, dur }));
+Max.addHandler('playstop', (pad) => edEmit('stop', { pad }));
+Max.addHandler('trackname', (...w) => { track = w.join(' '); edDirty('hello'); });
+
+// ---------- POST /cmd (3.3) ----------
+const isVideo = (v) => typeof v === 'string' && VIDEO_RE.test(v);
+function libBank(id) {
+  need(isInt(id, 1));
+  if (!libNow.lib) throw libBroken();
+  const b = bankById(id);
+  if (!b) throw libErr('nobank');
+  return b;
+}
+function checkWav(b) { if (!hasWav(b.video)) throw libErr('playonly'); }
+
+// Editor-Suche: eigene Trefferliste, neue Suche bricht die alte ab. URL oder ID -> genau dieses Video.
+let edSearchJob = null;
+async function edSearch(q) {
+  need(typeof q === 'string');
+  if (edSearchJob) abort(edSearchJob);
+  const job = edSearchJob = { aborted: false, child: null };
+  const id = extractId(q);
+  try {
+    const out = await run('yt-dlp', id ? ['-J', '--no-playlist', '--no-warnings', `https://www.youtube.com/watch?v=${id}`]
+      : ['--flat-playlist', '--dump-single-json', '--no-warnings', `ytsearch${SEARCH_FETCH}:${q.trim()}`], null, job);
+    const data = JSON.parse(out);
+    const results = (id ? [data] : data.entries || []).filter((e) => e && e.id && e.duration > 0)
+      .map((e) => ({ id: e.id, title: String(e.title || e.id), dur: Math.round(e.duration), long: e.duration > MAX_SECONDS }));
+    return { results };
+  } catch (e) {
+    if (job.aborted) throw libErr('superseded');
+    throw libErr('searchfail', errMsg(e).replace(/^Fehler: /, ''));
+  } finally {
+    if (edSearchJob === job) edSearchJob = null;
+  }
+}
+
+// (Felder, client) -> Antwortfelder, wirft libErr
+const CMD = {
+  select(q) {
+    const b = libBank(q.id);
+    if (!hasWav(b.video)) fetchVideo(b.video, 'select').catch(() => { /* steht in videoFail */ });
+    sendBank(b);
+  },
+  rename(q, by) {
+    libChange('rename', { id: q.id, name: q.name }, by);
+    if (q.id === activeId) Max.outlet('bankname', q.id, clean(bankById(q.id).name));
+  },
+  duplicate(q, by) {
+    const r = libChange('duplicate', { id: q.id }, by);
+    snipCopy(q.id, r.id);
+    trySend(bankById(r.id));
+    return r;
+  },
+  delete(q, by) {
+    const was = q.id === activeId;
+    const r = libChange('delete', { id: q.id }, by);
+    const L = libNow.lib.banks, next = L[r.removed.at - 1] || L[r.removed.at - 2];
+    if (was && next) trySend(next);   // keiner mehr: libstate leer ging schon raus
+    return r;
+  },
+  move: (q, by) => { libChange('move', { id: q.id, to: q.to }, by); },
+  restore: (q, by) => { libChange('restore', { bank: q.bank, at: q.at, video: q.video }, by); },
+  setstart(q, by) {
+    const b = libBank(q.id);
+    need(isPad(q.pad) && isInt(q.ms, 0));
+    checkWav(b);
+    libChange('setstart', { id: q.id, pad: q.pad, ms: q.ms }, by);
+  },
+  setstarts(q, by) {
+    const b = libBank(q.id);
+    need(isStarts(q.starts));
+    if (!hasWav(b.video)) {
+      const j = readJson(snipJson(b.id));
+      if (!j || !Array.isArray(j.starts) || !q.starts.every((s) => j.starts.includes(s))) throw libErr('playonly');
+    }
+    libChange('setstarts', { id: q.id, starts: q.starts }, by);
+  },
+  swap: (q, by) => { libChange('swap', { id: q.id, a: q.a, b: q.b }, by); },
+  roll(q, by) {
+    const b = libBank(q.id);
+    need(isPad(q.pad));
+    const ms = rollStart(b.video, b.starts);
+    libChange('setstart', { id: q.id, pad: q.pad, ms }, by);
+    return { ms };
+  },
+  hit: (q) => { need(isPad(q.pad)); Max.outlet('padhit', q.pad); },
+  up: (q) => { need(isPad(q.pad)); Max.outlet('padup', q.pad); },
+  search: (q) => edSearch(q.q),
+  newbank(q, by) {
+    need(isVideo(q.video));
+    if (!libNow.lib) throw libBroken();
+    newBank(q.video, by).then((id) => sendBank(bankById(id))).catch((e) => {
+      if (e.code !== 'loadfail') edEmit('msg', { level: 'error', code: e.code || 'cutfail', text: e.text || e.message });   // loadfail meldet der Download selbst
+    });
+  },
+  tempo(q, by) {
+    const r = libChange('tempo', { video: q.video, bpm: q.bpm }, by);
+    bpmToDevice(q.video, r.bpm);
+  },
+  tempook(q, by) {
+    if (!libNow.lib) throw libBroken();
+    need(typeof q.video === 'string' && has(libNow.lib.videos, q.video));
+    const a = getAnalysis(q.video, true);
+    if (!a || !(a.bpm > 0)) throw libErr('notempo');
+    const r = libChange('tempo', { video: q.video, bpm: a.bpm }, by);
+    bpmToDevice(q.video, r.bpm);
+    return r;
+  },
+  fetch(q) {
+    need(isVideo(q.video));
+    if (!hasWav(q.video)) fetchVideo(q.video, 'fetch').catch(() => { /* steht in videoFail */ });
+  },
+  fetchall: () => fetchAll(),
+};
+
+async function runCmd(q) {
+  need(isObj(q) && typeof q.cmd === 'string' && has(CMD, q.cmd));
+  return (await CMD[q.cmd](q, typeof q.client === 'string' && q.client ? q.client : 'editor')) || {};
+}
+
+// Schutz: nur JSON, nur vom eigenen Host/Origin, höchstens 64 KB. Unlesbares JSON -> 400, Schutzregel -> 403.
+function cmdRoute(req, res) {
+  const hosts = [`localhost:${webPort}`, `127.0.0.1:${webPort}`];
+  const origin = req.headers.origin;
+  const deny = (code) => { res.writeHead(code, { Connection: 'close' }); res.end(); };
+  if (req.method !== 'POST' || !/^application\/json(;|$)/i.test(req.headers['content-type'] || '') || !hosts.includes(req.headers.host)
+      || (origin !== undefined && !hosts.some((h) => origin === 'http://' + h)) || +(req.headers['content-length'] || 0) > CMD_MAX) {
+    deny(403); req.resume(); return;
+  }
+  const chunks = [];
+  let size = 0;
+  req.on('data', (d) => { size += d.length; if (size <= CMD_MAX) chunks.push(d); });
+  req.on('end', async () => {
+    if (size > CMD_MAX) { deny(403); return; }
+    let q;
+    try { q = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch (e) { deny(400); return; }
+    let out;
+    try { out = { ok: true, ...(await runCmd(q)) }; } catch (e) {
+      if (!e.code || !ERR[e.code]) Max.post(`YT Sampler: Befehl ${q && q.cmd} fehlgeschlagen: ${e.stack || e}`);
+      out = { ok: false, code: e.code && ERR[e.code] ? e.code : 'badreq', text: e.text || `${ERR.badreq}: ${clean(e.message)}` };
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(out));
+  });
+}
+
+// ---------- SSE /editor/events (3.4) ----------
+const edClients = new Set();
+const edPending = new Set();
+const edLast = {};          // zuletzt gesendet je Zustands-Event: Gleiches nicht noch einmal
+let edTimer = null;
+
+const ED = {
+  hello: () => ({ port: webPort, session: sessionId, track }),
+  lib() {
+    const L = libNow.lib;
+    const m = { rev: L ? L.rev : 0, by: libBy, state: libNow.state, cache: cacheSize(), banks: [], videos: {} };
+    if (!L) { m.error = `${ERR[libNow.state === 'neuer' ? 'libnewer' : 'libbroken']}: ${libNow.error}`; return m; }
+    m.banks = L.banks.map((b) => ({ id: b.id, name: b.name, video: b.video, starts: b.starts, ...snipStatus(b) }));
+    for (const v of Object.keys(L.videos)) {
+      const e = { title: L.videos[v].title };
+      if (has(L.videos[v], 'bpm')) e.bpm = L.videos[v].bpm;
+      if (has(videoFail, v)) e.fail = videoFail[v];
+      m.videos[v] = e;
+    }
+    return m;
+  },
+  device: () => ({ ...dev, nr: bankNr(dev.bankId), teletext: ui.loading ? { phase: ui.phase, progress: Math.round(ui.progress) } : null }),
+  cache: () => cacheSize(),
+  // Track der aktiven Bank, ohne Bank der des Device (Teletext)
+  beats() {
+    const b = bankById(activeId), v = b ? b.video : dev.video;
+    if (!v || v === '-') return null;
+    let a = null;
+    try { a = getAnalysis(v, !!b); } catch (e) { /* ohne Analyse keine Beats */ }
+    return beatsOf(v, a);
+  },
+};
+const sse = (res, ev, data) => res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`);
+function edEmit(ev, data) { for (const r of edClients) sse(r, ev, data); }
+
+// Zustands-Events gebündelt (30 ms wie pushUi), Inhalt erst beim Senden berechnet
+function edDirty(ev) {
+  if (!edClients.size) return;
+  edPending.add(ev);
+  if (!edTimer) edTimer = setTimeout(edFlush, 30);
+}
+function edFlush() {
+  edTimer = null;
+  for (const ev of Object.keys(ED)) {
+    if (!edPending.delete(ev)) continue;
+    const d = ED[ev]();
+    const j = JSON.stringify(d);
+    if (!d || j === edLast[ev]) continue;
+    edLast[ev] = j;
+    for (const r of edClients) r.write(`event: ${ev}\ndata: ${j}\n\n`);
+  }
+}
+
+function edConnect(req, res) {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+  res.write('retry: 1500\n\n');
+  for (const ev of ['hello', 'lib', 'device', 'cache', 'beats']) {
+    const d = ED[ev]();
+    if (d) { sse(res, ev, d); edLast[ev] = JSON.stringify(d); }
+  }
+  edClients.add(res);
+  req.on('close', () => edClients.delete(res));
+}
+
+// ---------- GET /peaks/<video> (3.2) ----------
+// 8 Byte Kopf (Samplerate, Blockgröße), dann pro 256 Frames Int8 Min, Int8 Max über beide Kanäle
+const PEAK_BLOCK = 256;
+function peaks(v) {
+  const w = wavInfo(cacheWav(v));
+  if (w.bits !== 16) throw new Error('nur 16 Bit');
+  const per = PEAK_BLOCK * w.channels, blocks = Math.floor(w.dataSize / 2 / per), step = 4096;
+  const out = Buffer.alloc(8 + blocks * 2);
+  out.writeUInt32LE(w.sr, 0); out.writeUInt32LE(PEAK_BLOCK, 4);
+  const buf = Buffer.alloc(step * per * 2), pcm = new Int16Array(buf.buffer, buf.byteOffset, step * per);
+  const fd = fs.openSync(cacheWav(v), 'r');
+  try {
+    for (let b0 = 0; b0 < blocks; b0 += step) {
+      const n = Math.min(step, blocks - b0);
+      fs.readSync(fd, buf, 0, n * per * 2, w.offset + b0 * per * 2);
+      for (let k = 0; k < n; k++) {
+        let mn = 127, mx = -128;
+        for (let i = k * per, e = i + per; i < e; i++) { const x = pcm[i] >> 8; if (x < mn) mn = x; if (x > mx) mx = x; }
+        out.writeInt8(mn, 8 + (b0 + k) * 2); out.writeInt8(mx, 9 + (b0 + k) * 2);
+      }
+    }
+  } finally { fs.closeSync(fd); }
+  return out;
+}
+function peaksRoute(v, res) {
+  if (!VIDEO_RE.test(v)) { res.writeHead(400); res.end(); return; }
+  if (!hasWav(v)) { res.writeHead(404); res.end(); return; }
+  let data;
+  try { data = peaks(v); } catch (e) { res.writeHead(500); res.end(); return; }
+  res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'private, max-age=86400' });
+  res.end(data);
+}
+
+// =====================================================================
 // Teletext-Webseite: http://localhost:8765
 // Server-Sent Events schicken den Zustand live, POST /key nimmt Tasten an.
 // =====================================================================
@@ -1497,11 +1822,11 @@ const WEB_DIR = path.join(DATA, 'web');
 const clients = new Set();
 let webPort = 0;
 
-// Seite neben das Skript legen und nach D/web spiegeln
+// Seite (teletext.html, editor.html) neben dem Skript nach D/web spiegeln
 // (so findet der Server sie auch, wenn das Device eingefroren ist)
-function pagePath() {
-  const local = path.join(__dirname, 'teletext.html');
-  const copy = path.join(WEB_DIR, 'teletext.html');
+function pagePath(name) {
+  const local = path.join(__dirname, name);
+  const copy = path.join(WEB_DIR, name);
   try {
     if (fs.existsSync(local)) {
       fs.mkdirSync(WEB_DIR, { recursive: true });
@@ -1533,6 +1858,7 @@ pushUi = () => {
     pushTimer = null;
     const msg = `data: ${JSON.stringify(viewState())}\n\n`;
     for (const res of clients) res.write(msg);
+    edDirty('device');   // device.teletext (Phase, Fortschritt)
   }, 30);
 };
 
@@ -1673,13 +1999,24 @@ function startWeb(port, tries) {
       return;
     }
     if (url === '/' || url === '/index.html') {
-      fs.readFile(pagePath(), (err, data) => {
+      fs.readFile(pagePath('teletext.html'), (err, data) => {
         if (err) { res.writeHead(404); res.end('teletext.html nicht gefunden'); return; }
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
         res.end(data);
       });
       return;
     }
+    if (url === '/editor') {
+      fs.readFile(pagePath('editor.html'), (err, data) => {
+        if (err) { res.writeHead(404); res.end('editor.html nicht gefunden'); return; }
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+        res.end(data);
+      });
+      return;
+    }
+    if (url === '/editor/events') { edConnect(req, res); return; }
+    if (url === '/cmd') { cmdRoute(req, res); return; }
+    if (url.startsWith('/peaks/')) { peaksRoute(url.slice(7), res); return; }
     res.writeHead(404); res.end();
   });
   server.on('error', (e) => {
@@ -1688,11 +2025,11 @@ function startWeb(port, tries) {
     else Max.post(`YT Sampler: Webserver nicht gestartet: ${e.message}`);
   });
   server.listen(port, '127.0.0.1', () => {
-    webPort = port;
+    webPort = server.address().port;   // YTS_PORT=0: frei gewählt
     Max.post(`YT Sampler: Teletext unter http://localhost:${port}`);
   });
   // Verbindung offen halten
-  setInterval(() => { for (const r of clients) r.write(': ping\n\n'); }, 15000).unref();
+  setInterval(() => { for (const r of [...clients, ...edClients]) r.write(': ping\n\n'); }, 15000).unref();
 }
 startWeb(WEB_PORT, 5);
 
@@ -1703,7 +2040,6 @@ try { snipCleanup(); } catch (e) { Max.post(`YT Sampler: Aufräumen fehlgeschlag
 // Startcheck; Session und Längenfilter vom Device anfordern
 if (DATA_SETUP.error) status(DATA_SETUP.error);
 Max.outlet('needsession');
-Max.outlet('needmaxlen');
 (async () => {
   try {
     const v = (await run('yt-dlp', ['--version'])).trim();
@@ -1719,4 +2055,5 @@ module.exports = {
   AN, SNIP_DIR, SNIP_MS, computeAnalysis, saveAnalysis, readAnalysis, getAnalysis, ensureAnalysis, trackBeats, silentRanges,
   hasWav, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, cacheSize, videoFail,
   beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, newBank, loadVideo, get analysis() { return analysis; },
+  runCmd, peaks, get webPort() { return webPort; }, get activeId() { return activeId; },
 };

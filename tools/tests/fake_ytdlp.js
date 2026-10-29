@@ -2,6 +2,16 @@
 // Video-IDs mit „FAIL“ scheitern. Protokoll: "start <id>", "end <id>", "kill <id>".
 const fs = require('fs');
 const args = process.argv.slice(2);
+// Suche: "ytsearchN:<begriff>". Begriff mit „FAIL“ scheitert, sonst nach FAKE_DELAY drei Treffer (einer ohne Dauer)
+const sq = /^ytsearch\d+:(.*)$/.exec(args[args.length - 1]);
+if (sq) {
+  if (sq[1].includes('FAIL')) { process.stderr.write('ERROR: Suche kaputt\n'); process.exit(1); }
+  setTimeout(() => {
+    process.stdout.write(JSON.stringify({ entries: [{ id: 'SuchTreffer', title: `${sq[1]}, eins`, duration: 200 },
+      { id: 'LiveStream0', title: 'live', duration: null }, { id: 'LangerTrack', title: 'lang', duration: 3600 }] }));
+  }, +process.env.FAKE_DELAY || 0);
+  return;
+}
 const id = (args[args.length - 1].match(/v=([\w-]{11})/) || [])[1];
 const log = (s) => fs.appendFileSync(process.env.FAKE_LOG, s + '\n');
 

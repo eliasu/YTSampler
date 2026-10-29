@@ -634,6 +634,7 @@ function loaded() {
     replaceTask.cancel();                      // letzte Wahl gewinnt
     outlet(4, "replace", String(a[0]));
     B = null; st.bankId = 0;
+    muted = 0;                                 // ohne Bank spielt das Device auch bei leerer/kaputter Bibliothek
     durMs = parseFloat(a[1]) || 0;
     resetAnalysis();
     var id = String(a[2]);
