@@ -109,9 +109,10 @@
   #wavemsg { position:absolute; inset:0; display:none; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:var(--dim); z-index:5; background:var(--bg); }
   #wavemsg.on { display:flex; }
   #wavemsg b { color:var(--text); font-weight:500; font-size:14px; }
-  .seg { display:flex; border:1px solid var(--line2); border-radius:7px; overflow:hidden; }
-  .seg button { border:none; border-radius:0; padding:4px 9px; background:none; color:var(--dim); }
-  .seg button.on { background:var(--raise); color:var(--text); }
+  #zoom { display:flex; align-items:center; gap:2px; }
+  #zoom button { padding:2px 7px; }
+  #zoomr { width:110px; accent-color:var(--dim); padding:0; border:none; background:none; }
+  #zoomfit { min-width:46px; }
   #blank { position:absolute; inset:12px 14px 14px 8px; display:none; flex-direction:column; align-items:center; justify-content:center; gap:12px; color:var(--dim); text-align:center; }
   #blank b { color:var(--text); font-size:16px; font-weight:600; }
   body.blank #blank { display:flex; } body.blank #wave, body.blank #pads, body.blank #hsplit { visibility:hidden; }
@@ -122,6 +123,8 @@
   .pad { position:relative; background:var(--raise); border:1px solid var(--line2); border-radius:10px; cursor:pointer; padding:8px 10px; display:flex; flex-direction:column; justify-content:space-between; user-select:none; min-height:0; transition:background .08s; touch-action:none; }
   .pad:hover { border-color:#4a4d55; }
   .pad .n { font-weight:600; font-size:14px; color:var(--dim); }
+  .pad .k { margin-left:7px; font-weight:400; vertical-align:1px; color:var(--faint); }
+  .pad.hit .k { color:#1a1200; border-color:#1a1200; }
   .pad .s { font-size:11.5px; color:var(--dim); }
   .pad .bar { position:absolute; left:10px; right:10px; bottom:26px; height:3px; border-radius:2px; background:var(--line2); }
   .pad .bar i { position:absolute; top:0; bottom:0; width:3px; background:var(--acc); border-radius:2px; }
@@ -215,7 +218,7 @@
           <span class="lbl">Waveform</span>
           <span class="tag" id="nobank">keine Bank</span>
           <span class="hint" id="wavehint"></span>
-          <div class="seg" id="zoom"></div>
+          <div id="zoom"><button class="ghost" id="zoomout" title="Herauszoomen (−)">−</button><input type="range" id="zoomr" min="0" max="1000" value="0" title="Zoom (⌘/Strg + Mausrad, Pinch)"><button class="ghost" id="zoomin" title="Hineinzoomen (+)">+</button><button class="ghost small num" id="zoomfit" title="Ganzer Track (0)">1×</button></div>
         </div>
         <div id="scroll"><div id="inner"><canvas id="cv"></canvas><div id="slice"></div><div id="play"></div><div id="tip"></div></div>
           <div id="wavemsg"></div></div>
@@ -267,6 +270,10 @@ function toast(text, opt = {}) {
   if (opt.undo) { const b = document.createElement('button'); b.textContent = 'Rückgängig'; b.onclick = () => { t.className = ''; undo(); }; t.appendChild(b); }
   clearTimeout(toastT); toastT = setTimeout(() => { t.className = ''; }, opt.ms || (opt.err ? 3500 : 1800));
 }
+// Fortschritt kommt von Node in Prozent (0–100), nicht als Anteil
+const pct = (p) => Math.round(Math.max(0, Math.min(100, Number(p) || 0))) + ' %';
+const JOB_TEXT = { info: 'lädt …', long: 'lädt …', convert: 'konvertiert', analyse: 'analysiert', cut: 'schneidet' };
+const jobText = (j) => JOB_TEXT[j.phase] || 'lädt ' + pct(j.progress);
 let savedT;
 function flashSaved() { $('saved').textContent = 'gespeichert ✓'; clearTimeout(savedT); savedT = setTimeout(() => { $('saved').textContent = 'automatisch gespeichert'; }, 900); }
 
@@ -383,18 +390,22 @@ async function move(b, to) {
 async function newBank(video, title) {
   closeSearch();
   const r = await cmd('newbank', { video });
-  if (r.ok) { S.newbank = { video, title, progress: 0 }; toast('Lädt „' + title + '“ …'); render(); }
+  if (r.ok) { S.newbank = { video, title, phase: 'info', progress: 0 }; toast('Lädt „' + title + '“ …'); render(); }
 }
 let holding = -1;
+// Pads per Tastatur, nach physischer Lage (KeyboardEvent.code) wie das 4×4, Pad 1 unten links. Beschriftung für deutsche Tastatur
+const PAD_KEYS = ['KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyQ', 'KeyW', 'KeyE', 'KeyR', 'Digit1', 'Digit2', 'Digit3', 'Digit4'];
+const PAD_LABEL = 'YXCVASDFQWER1234';
 function hit(i) {
   if (holding >= 0) up();
   holding = i; S.sel = i; cmd('hit', { pad: i });
   const p = $('pad' + i); if (p) { p.classList.add('hit'); setTimeout(() => { const q = $('pad' + i); if (q) q.classList.remove('hit'); }, 140); }
   render(); showSel();
 }
-function up() { if (holding < 0) return; cmd('up', { pad: holding }); holding = -1; }
-document.addEventListener('pointerup', up);
-document.addEventListener('pointercancel', up);
+function up(i) { if (holding < 0 || (i != null && i !== holding)) return; cmd('up', { pad: holding }); holding = -1; } // i: nur dieses Pad loslassen
+document.addEventListener('pointerup', () => up());
+document.addEventListener('pointercancel', () => up());
+window.addEventListener('blur', () => up());
 
 // ---------- Kopfzeile, Bibliothek ----------
 function renderHeader() {
@@ -444,7 +455,7 @@ function renderList() {
     if (!b.wav && b.snip === 'missing') marks.push('<span class="tag bad">nicht ladbar</span>');
     else if (!b.wav) marks.push('<span class="tag">nur spielbar</span>');
     if (b.snip === 'cutting' || b.snip === 'stale') marks.push('<span class="tag busy">' + (b.snip === 'cutting' ? 'schneidet' : 'veraltet') + '</span>');
-    if (job) marks.push('<span class="tag busy">lädt ' + Math.round(job.progress * 100) + ' %</span>');
+    if (job) marks.push('<span class="tag busy">' + jobText(job) + '</span>');
     else if (!b.wav && b.snip === 'missing') marks.push('<button class="small fetch">Track laden</button>');
     if (v.fail) marks.push('<span class="tag bad" title="' + esc(v.fail) + '">' + esc(v.fail) + '</span>');
     if (marks.length) { const m = document.createElement('span'); m.className = 'marks'; m.innerHTML = marks.join(''); n.appendChild(m); }
@@ -469,7 +480,7 @@ function renderList() {
   if (S.newbank) {
     const li = document.createElement('li'); li.className = 'pending';
     li.innerHTML = '<span class="nr num">' + (banks().length + 1) + '</span><span class="name"></span><span></span>';
-    li.querySelector('.name').innerHTML = esc(S.newbank.title) + '<span class="sub">Neue Bank · lädt ' + Math.round(S.newbank.progress * 100) + ' %</span>';
+    li.querySelector('.name').innerHTML = esc(S.newbank.title) + '<span class="sub">Neue Bank · ' + jobText(S.newbank) + '</span>';
     ul.appendChild(li);
   }
   $('fetchall').style.display = banks().some((b) => !b.wav) ? '' : 'none';
@@ -512,19 +523,57 @@ function barSet(bt) { // Taktanfänge: jeder vierte Schlag ab der „1“
 let W = { dur: 1, innerW: 1 };
 const msToX = (ms) => ms / W.dur * W.innerW;
 
-[1, 4, 16].forEach((z) => { const b = document.createElement('button'); b.textContent = z + '×'; b.onclick = () => setZoom(z); $('zoom').appendChild(b); });
-function setZoom(z) { S.zoom = z; render(); showSel(); }
-$('scroll').addEventListener('wheel', (e) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); setZoom(e.deltaY < 0 ? Math.min(16, S.zoom * 4) : Math.max(1, S.zoom / 4)); } }, { passive: false });
+// Zoom stufenlos: 1× = ganzer Track, höchstens ZOOM_PX Pixel pro Peak-Block (ohne Peaks 64×)
+const ZOOM_PX = 2, ZOOM_STEP = 1.5;
+function maxZoom() {
+  const vw = view(), p = vw && S.peaks.get(vw.video), w = $('scroll').clientWidth || 1;
+  return p && p.state === 'ok' ? Math.max(1, p.n * ZOOM_PX / w) : 64;
+}
+// ax = Stelle im sichtbaren Ausschnitt (px), die beim Zoomen stehen bleibt. Ohne: der gewählte Marker, wenn sichtbar, sonst die Mitte
+function setZoom(z, ax) {
+  if (S.markerDrag) return;
+  const sc = $('scroll'), vw = view();
+  z = Math.max(1, Math.min(maxZoom(), z));
+  if (ax == null) { const mx = vw ? msToX(vw.starts[S.sel]) - sc.scrollLeft : -1; ax = mx >= 0 && mx <= sc.clientWidth ? mx : sc.clientWidth / 2; }
+  // Innerhalb einer Geste (Pinch, Rad) gilt der erste Anker weiter: scrollLeft ist gerundet, sonst wandert die Stelle
+  const a = setZoom.anchor, now = performance.now();
+  const ms = a && Math.abs(a.ax - ax) < 2 && now - a.t < 400 && a.dur === W.dur ? a.ms : (sc.scrollLeft + ax) / W.innerW * W.dur;
+  setZoom.anchor = { ax, ms, t: now, dur: W.dur };
+  S.zoom = z; renderWave();
+  sc.scrollLeft = msToX(ms) - ax; drawWave();
+}
+const wheelPx = (e, d) => (e.deltaMode === 1 ? d * 33 : e.deltaMode === 2 ? d * 400 : d);
+$('scroll').addEventListener('wheel', (e) => {
+  const sc = $('scroll');
+  if (e.ctrlKey || e.metaKey) { // ⌘/Strg + Mausrad, Trackpad-Pinch (kommt als wheel mit ctrlKey)
+    e.preventDefault();
+    const d = Math.max(-100, Math.min(100, wheelPx(e, e.deltaY)));
+    setZoom(S.zoom * Math.exp(-d * 0.01), e.clientX - sc.getBoundingClientRect().left);
+  } else {
+    setZoom.anchor = null;
+    if (!e.shiftKey && Math.abs(e.deltaY) > Math.abs(e.deltaX)) { e.preventDefault(); sc.scrollLeft += wheelPx(e, e.deltaY); } // senkrechtes Rad schiebt
+  }
+}, { passive: false });
 $('scroll').addEventListener('scroll', drawWave);
+$('scroll').addEventListener('pointerdown', () => { setZoom.anchor = null; });
+const zoomToR = (z) => Math.round(Math.log(z) / Math.log(maxZoom()) * 1000) || 0;
+$('zoomr').oninput = () => setZoom(Math.exp($('zoomr').value / 1000 * Math.log(maxZoom())));
+$('zoomr').onchange = () => $('zoomr').blur(); // sonst fangen Pfeile und Pad-Tasten am Regler fest
+$('zoomin').onclick = () => setZoom(S.zoom * ZOOM_STEP);
+$('zoomout').onclick = () => setZoom(S.zoom / ZOOM_STEP);
+$('zoomfit').onclick = () => setZoom(1);
 function showSel() { const vw = view(); if (!vw) return; const sc = $('scroll'); sc.scrollLeft = msToX(vw.starts[S.sel]) - sc.clientWidth / 3; }
 
 function renderWave() {
   if (S.markerDrag) return drawWave();
   const vw = view(), sc = $('scroll'), inner = $('inner'), msg = $('wavemsg');
   inner.querySelectorAll('.mk').forEach((m) => m.remove());
-  Array.from($('zoom').children).forEach((bt) => bt.classList.toggle('on', bt.textContent === S.zoom + '×'));
   if (!vw) return;
-  const p = peaksFor(vw.video, vw.bank ? vw.bank.wav : true);
+  const p = peaksFor(vw.video, vw.bank ? vw.bank.wav : true), mz = maxZoom();
+  S.zoom = Math.max(1, Math.min(mz, S.zoom));
+  $('zoomr').value = zoomToR(S.zoom);
+  $('zoomfit').textContent = (S.zoom < 10 ? Math.round(S.zoom * 10) / 10 : Math.round(S.zoom)).toLocaleString('de-DE') + '×';
+  $('zoomin').disabled = S.zoom >= mz - 1e-6; $('zoomout').disabled = $('zoomfit').disabled = S.zoom <= 1 + 1e-6;
   W = { dur: durOf(vw, p), innerW: sc.clientWidth * S.zoom };
   inner.style.width = W.innerW + 'px';
   msg.className = '';
@@ -532,7 +581,7 @@ function renderWave() {
     const job = S.jobs['fetch:' + vw.video];
     msg.className = 'on';
     msg.innerHTML = '<b>Track fehlt</b><span>Die Bank spielt aus den Snippets. Starts lassen sich erst mit dem ganzen Track ändern.</span>'
-      + (job ? '<span class="tag busy">lädt ' + Math.round(job.progress * 100) + ' %</span>' : '<button id="fetchone">Track laden</button>');
+      + (job ? '<span class="tag busy">' + jobText(job) + '</span>' : '<button id="fetchone">Track laden</button>');
     const fb = $('fetchone'); if (fb) { fb.disabled = !writable(); fb.onclick = () => cmd('fetch', { video: vw.video }); }
   } else if (p.state === 'loading') { msg.className = 'on'; msg.innerHTML = '<span>Waveform lädt …</span>'; }
   else if (p.state === 'missing') { msg.className = 'on'; msg.innerHTML = '<b>Track fehlt</b>'; }
@@ -557,10 +606,10 @@ function drawWave() {
   const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
   const p = S.peaks.get(vw.video), bt = beatsFor(vw.video);
   if (bt && bt.beats.length) {
-    const isBar = barSet(bt);
+    const isBar = barSet(bt), showBeats = bt.bpm > 0 && msToX(60000 / bt.bpm) >= 6; // Schlaglinien erst mit Platz dazwischen
     bt.beats.forEach((t, k) => {
       const x = Math.round(msToX(t) - x0) + 0.5; if (x < -2 || x > w + 2) return;
-      const bar = isBar(k); if (!bar && S.zoom < 4) return;
+      const bar = isBar(k); if (!bar && !showBeats) return;
       const one = Math.abs(t - bt.down) < 1;
       g.strokeStyle = one ? '#4a4d55' : bar ? '#2c2f35' : '#1d1f23'; g.lineWidth = one ? 3 : 1;
       g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
@@ -611,7 +660,8 @@ function dragMarker(e, i, m) {
 for (let row = 3; row >= 0; row--) for (let col = 0; col < 4; col++) {
   const i = row * 4 + col, p = document.createElement('div');
   p.className = 'pad'; p.id = 'pad' + i;
-  p.innerHTML = '<span class="n">' + (i + 1) + '</span><div class="bar"><i></i></div><span class="s num"></span>'
+  p.title = 'Taste ' + PAD_LABEL[i];
+  p.innerHTML = '<span class="n">' + (i + 1) + '<kbd class="k">' + PAD_LABEL[i] + '</kbd></span><div class="bar"><i></i></div><span class="s num"></span>'
     + '<button class="ghost roll" title="Neues Snippet">' + icon('dice') + '</button>';
   p.onpointerdown = (e) => { if (e.button || e.target.closest('.roll') || !view()) return; hit(i); };
   p.querySelector('.roll').onclick = () => { S.sel = i; roll(i); };
@@ -626,7 +676,7 @@ function renderPads() {
   const vw = view();
   if (!vw) { $('insp').innerHTML = ''; renderPads.sig = null; return; }
   const swappable = writable() && !!vw.bank;
-  $('padhint').textContent = vw.nobank ? 'keine Bank · anspielbar, nicht bearbeitbar' : 'Klick spielt · auf anderes Pad ziehen tauscht';
+  $('padhint').textContent = vw.nobank ? 'keine Bank · anspielbar, nicht bearbeitbar' : 'Klick oder Taste spielt · auf anderes Pad ziehen tauscht';
   for (let i = 0; i < 16; i++) {
     const p = $('pad' + i);
     p.classList.toggle('sel', i === S.sel); p.draggable = swappable;
@@ -648,7 +698,7 @@ function renderPads() {
     + '<span class="lbl" style="margin-top:6px">Tempo</span>'
     + '<div id="tempo"><input id="bpm" type="number" min="30" max="300" step="0.1" class="num"><button class="small" id="half">½×</button><button class="small" id="double">2×</button>'
     + (tb.confirmed ? '' : '<button class="small" id="tempook">Tempo stimmt</button>') + '</div>'
-    + (vw.nobank ? '<span class="hint">keine Bank: Track im Editor nicht bearbeitbar' + (tt ? ' · Teletext lädt ' + Math.round((tt.progress || 0) * 100) + ' %' : '') + '</span>' : '')
+    + (vw.nobank ? '<span class="hint">keine Bank: Track im Editor nicht bearbeitbar' + (tt ? ' · Teletext lädt ' + pct(tt.progress) : '') + '</span>' : '')
     + (!tb.confirmed && tb.bpm ? '<span class="hint">Tempo aus der Analyse, nicht bestätigt</span>' : '');
   $('inspvideo').textContent = vt + (tb.bpm ? ' · ' + fmtBpm(tb.bpm) + ' BPM' : '');
   $('rollbtn').disabled = !vw.edit; $('rollbtn').onclick = () => roll(S.sel);
@@ -736,7 +786,7 @@ $('prev').onclick = () => step(-1); $('next').onclick = () => step(1);
 $('undo').onclick = undo; $('redo').onclick = redo;
 $('fetchall').onclick = async () => { const r = await cmd('fetchall'); if (r.ok) toast(r.todo ? r.todo + ' Tracks werden geladen' : 'Nichts nachzuladen'); };
 document.addEventListener('keydown', (e) => {
-  const mod = e.metaKey || e.ctrlKey, inField = /INPUT|TEXTAREA/.test(document.activeElement.tagName);
+  const ae = document.activeElement, mod = e.metaKey || e.ctrlKey, inField = ae.tagName === 'TEXTAREA' || (ae.tagName === 'INPUT' && ae.type !== 'range');
   if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); openSearch(); return; }
   if (e.key === 'Escape') { closeSearch(); return; }
   if (inField) return; // dort gilt das Undo des Browsers
@@ -744,7 +794,14 @@ document.addEventListener('keydown', (e) => {
   if (document.body.classList.contains('search')) return;
   if (e.key === 'ArrowUp') { e.preventDefault(); step(-1); }
   if (e.key === 'ArrowDown') { e.preventDefault(); step(1); }
+  if (mod || e.altKey) return;
+  const pad = PAD_KEYS.indexOf(e.code);
+  if (pad >= 0) { e.preventDefault(); if (!e.repeat && view()) hit(pad); return; }
+  if (e.key === '+' || e.key === '=') { e.preventDefault(); setZoom(S.zoom * ZOOM_STEP); }
+  if (e.key === '-') { e.preventDefault(); setZoom(S.zoom / ZOOM_STEP); }
+  if (e.key === '0') { e.preventDefault(); setZoom(1); }
 });
+document.addEventListener('keyup', (e) => { const pad = PAD_KEYS.indexOf(e.code); if (pad >= 0) up(pad); });
 
 // ---------- Zeichnen ----------
 function render() {
@@ -788,7 +845,7 @@ function connect() {
   on('job', (j) => {
     const key = j.kind + ':' + (j.video || j.bankId);
     if (j.kind === 'newbank' && S.newbank && j.video === S.newbank.video) {
-      S.newbank.progress = j.progress || 0;
+      S.newbank.progress = j.progress || 0; S.newbank.phase = j.phase;
       if (j.phase === 'done') {
         const nb = S.newbank; S.newbank = null;
         if (j.bankId) { pushStep(creationStep('Neue Bank „' + nb.title + '“', j.bankId)); toast('Neue Bank angelegt'); }

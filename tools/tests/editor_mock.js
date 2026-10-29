@@ -98,12 +98,13 @@ function createMock(opts = {}) {
 
   const fail = (code) => ({ ok: false, code, text: ERR[code] || code });
   const isPad = (p) => Number.isInteger(p) && p >= 0 && p <= 15;
+  // Fortschritt wie Node in Prozent (0–100)
   function job(kind, extra, done) {
     let p = 0;
     const t = setInterval(() => {
-      p = Math.min(1, p + 0.25);
-      m.emit('job', { kind, ...extra, phase: p < 1 ? 'download' : 'done', progress: p, left: 0, ...(p < 1 ? {} : done()) });
-      if (p >= 1) clearInterval(t);
+      p = Math.min(100, p + 25);
+      m.emit('job', { kind, ...extra, phase: p < 100 ? 'download' : 'done', progress: p, left: 0, ...(p < 100 ? {} : done()) });
+      if (p >= 100) clearInterval(t);
     }, opts.jobStep || 250);
   }
 

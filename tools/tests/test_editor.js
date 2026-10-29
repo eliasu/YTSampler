@@ -190,7 +190,8 @@ t('Undo/Redo: duplizieren, neue Bank, löschen (Toast mit Rückgängig)', async 
   m.log = []; await redoKey(b); assert.strictEqual((await waitLog((x) => x.cmd === 'restore')).bank.id, 14);
   await waitLog((x) => x.cmd === 'select' && x.id === 14); await b.waitFor('S.dev.bankId === 14 && !histBusy');
 
-  await b.click('#banklist li:nth-child(1)'); await b.waitFor('S.dev.bankId === 7');
+  // erst wenn die Liste neu gezeichnet ist: sonst trifft der Klick noch das Löschen-Icon der vorigen Bank (14)
+  await b.click('#banklist li:nth-child(1)'); await b.waitFor(`S.dev.bankId === 7 && document.querySelector('#banklist li.on').dataset.id === '7'`);
   m.log = []; await b.click('#banklist li.on .del');
   assert.strictEqual((await waitLog((x) => x.cmd === 'delete')).id, 7);
   await b.waitFor(`$('toast').classList.contains('on') && $('toast').textContent === 'Bank „Rockit Scratches“ gelöscht' + 'Rückgängig'`);
@@ -309,10 +310,105 @@ t('Größen bleiben im localStorage, Bibliothek einklappbar', async () => {
   await b.eval(`localStorage.clear()`);
 });
 
-t('Zoom 1×/4×/16×, Schlaglinien ab 4×, Bank wechseln mit ↑/↓ und ◀ ▶', async () => {
+const keyDown = (code, key, mod = 0, autoRepeat = false) => b.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key, code, modifiers: mod, autoRepeat });
+const keyUp = (code, key, mod = 0) => b.send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, modifiers: mod });
+const wheel = (x, y, deltaY, mod = 0, deltaX = 0) => b.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX, deltaY, modifiers: mod });
+
+t('Zoom stufenlos: +/−/0, Regler, ⌘/Strg-Rad um die Maus, Grenzen, Rad schiebt', async () => {
   await open('normal');
-  await b.click('#zoom button:nth-child(2)');
-  assert(await b.eval(`$('inner').getBoundingClientRect().width > 3.9 * $('scroll').clientWidth`));
+  const st = () => b.eval(`({ z: S.zoom, sl: $('scroll').scrollLeft, cw: $('scroll').clientWidth, iw: $('inner').getBoundingClientRect().width, max: maxZoom(),
+    fit: $('zoomfit').textContent, r: +$('zoomr').value, n: S.peaks.get(view().video).n })`);
+  let s = await st();
+  assert.strictEqual(s.z, 1); assert.strictEqual(s.fit, '1×'); assert.strictEqual(s.r, 0);
+  assert(Math.abs(s.max - s.n * 2 / s.cw) < 1e-6, 'Höchstzoom = 2 px pro Peak-Block');
+  await b.click('#zoomin'); s = await st();
+  assert(Math.abs(s.z - 1.5) < 1e-9 && Math.abs(s.iw - 1.5 * s.cw) < 1, 'Knopf +'); assert.strictEqual(s.fit, '1,5×');
+  await b.key('+', 'BracketRight', 187); s = await st(); assert(Math.abs(s.z - 2.25) < 1e-9, '+ Taste: ' + s.z);
+  await b.key('-', 'Slash', 189); s = await st(); assert(Math.abs(s.z - 1.5) < 1e-9, '− Taste');
+  await b.key('0', 'Digit0', 48); s = await st(); assert.strictEqual(s.z, 1);
+  // Strg + Rad (= Pinch): die Stelle unter der Maus bleibt stehen
+  const [sx, sy] = await b.center('#scroll'), ax = sx - 100;
+  const msAt = `(($('scroll').scrollLeft + ${ax} - $('scroll').getBoundingClientRect().left) / W.innerW * W.dur)`;
+  const ms0 = await b.eval(msAt);
+  for (let k = 0; k < 6; k++) await wheel(ax, sy, -100, CTRL);
+  await b.waitFor(`S.zoom > 10`);
+  assert(Math.abs(await b.eval(msAt) - ms0) < 30, 'Stelle unter der Maus bleibt: ' + ms0 + ' → ' + (await b.eval(msAt)));
+  for (let k = 0; k < 20; k++) await wheel(ax, sy, -100, CTRL);
+  s = await st(); assert(Math.abs(s.z - s.max) < 1e-6, 'oben begrenzt'); assert(await b.eval(`$('zoomin').disabled`));
+  assert.strictEqual(s.r, 1000);
+  // senkrechtes Rad ohne Taste schiebt waagrecht
+  const sl = s.sl; await wheel(sx, sy, 300); await b.waitFor(`$('scroll').scrollLeft > ${sl + 100}`).catch(async (e) => { throw new Error(e.message + ' ' + JSON.stringify(await st())); });
+  for (let k = 0; k < 40; k++) await wheel(ax, sy, 100, CTRL);
+  s = await st(); assert.strictEqual(s.z, 1, 'unten begrenzt'); assert(await b.eval(`$('zoomout').disabled && $('zoomfit').disabled`));
+  // Regler: logarithmisch, Mitte = Wurzel aus dem Höchstzoom
+  await b.eval(`$('zoomr').value = 500; $('zoomr').dispatchEvent(new Event('input'))`);
+  s = await st(); assert(Math.abs(s.z - Math.sqrt(s.max)) < 0.01, 'Regler: ' + s.z);
+  assert.deepStrictEqual(b.errors, []);
+});
+
+t('Marker ziehen stimmt bei hohem Zoom, Schlaglinien je nach Platz', async () => {
+  await open('normal');
+  await b.eval(`S.sel = 4; setZoom(40)`); await b.eval(`showSel()`); await sleep(50);
+  const r = await b.eval(`(() => { const m = document.querySelector('.mk[data-pad="4"]'); return { left: parseFloat(m.style.left), want: msToX(view().starts[4]), px: W.innerW / W.dur }; })()`);
+  assert(Math.abs(r.left - r.want) < 0.01, 'Marker sitzt auf seinem Start');
+  const before = await b.eval('S.lib.banks[0].starts[4]');
+  await dragMarker(4, 50, ALT);
+  const s = await waitLog((x) => x.cmd === 'setstart');
+  assert(Math.abs(s.ms - (before + 50 / r.px)) < 2 / r.px + 1, 'frei gezogen um 50 px = ' + Math.round(50 / r.px) + ' ms, war ' + (s.ms - before));
+  const beatPx = await b.eval(`msToX(60000 / S.beats.bpm)`);
+  assert(beatPx >= 6, 'bei 40× Platz für Schlaglinien');
+});
+
+t('Pads per Tastatur: Y X C V / A S D F / Q W E R / 1 2 3 4, ohne Wiederholung, nicht in Feldern', async () => {
+  await open('normal');
+  const codes = ['KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyQ', 'KeyW', 'KeyE', 'KeyR', 'Digit1', 'Digit2', 'Digit3', 'Digit4'];
+  const keys = 'yxcvasdfqwer1234';
+  for (let i = 0; i < 16; i++) {
+    m.log = [];
+    await keyDown(codes[i], keys[i]); await keyDown(codes[i], keys[i], 0, true); // Auto-Repeat löst nicht neu aus
+    await waitLog((x) => x.cmd === 'hit' && x.pad === i);
+    await keyUp(codes[i], keys[i]); await waitLog((x) => x.cmd === 'up' && x.pad === i);
+    assert.deepStrictEqual(m.log.map((x) => x.cmd + x.pad), ['hit' + i, 'up' + i]);
+  }
+  assert.strictEqual(await b.eval(`document.querySelector('#pad0 .k').textContent + document.querySelector('#pad15 .k').textContent`), 'Y4');
+  // zwei Tasten: die zweite übernimmt, das Loslassen der ersten stoppt sie nicht
+  m.log = []; await keyDown('KeyZ', 'y'); await keyDown('KeyX', 'x'); await keyUp('KeyZ', 'y'); await sleep(100);
+  assert.deepStrictEqual(m.log.map((x) => x.cmd + x.pad), ['hit0', 'up0', 'hit1']);
+  await keyUp('KeyX', 'x'); await waitLog((x) => x.cmd === 'up' && x.pad === 1);
+  // mit ⌘/Strg/Alt nichts, Strg+Z bleibt Undo, im Tempo-Feld wird getippt
+  m.log = []; await b.key('z', 'KeyZ', 90, CTRL); await b.key('a', 'KeyA', 65, ALT); await b.key('1', 'Digit1', 49, CTRL); await sleep(100);
+  assert(!m.log.some((x) => x.cmd === 'hit'), 'mit Modifier kein Pad');
+  await b.click('#bpm'); m.log = []; await b.key('1', 'Digit1', 49); await b.key('q', 'KeyQ', 81); await sleep(100);
+  assert(!m.log.some((x) => x.cmd === 'hit'), 'im Eingabefeld kein Pad');
+  await b.eval(`$('bpm').blur()`);
+  // nach dem Zoom-Regler gehen die Tasten weiter
+  await b.eval(`$('zoomr').focus()`); m.log = []; await b.key('2', 'Digit2', 50); await waitLog((x) => x.cmd === 'hit' && x.pad === 13);
+  // Suche offen: kein Pad
+  await b.key('k', 'KeyK', 75, CTRL); await b.waitFor(`document.body.classList.contains('search')`);
+  await b.eval(`$('q').blur()`); m.log = []; await b.key('a', 'KeyA', 65); await sleep(100);
+  assert(!m.log.some((x) => x.cmd === 'hit'), 'Suche offen');
+  assert.deepStrictEqual(b.errors, []);
+});
+
+t('Fortschritt in Prozent, begrenzt auf 0–100, Phase als Text', async () => {
+  await open('nurspielbar');
+  const job = (j) => m.emit('job', { kind: 'fetch', video: 'Fk4WaterNoG', left: 0, ...j });
+  job({ phase: 'download', progress: 28 });
+  await b.waitFor(`/lädt 28 %/.test($('wavemsg').textContent) && /lädt 28 %/.test($('banklist').textContent)`);
+  job({ phase: 'download', progress: 2800 }); await b.waitFor(`/lädt 100 %/.test($('wavemsg').textContent)`);
+  job({ phase: 'download', progress: -5 }); await b.waitFor(`/lädt 0 %/.test($('wavemsg').textContent)`);
+  job({ phase: 'convert', progress: 100 }); await b.waitFor(`/konvertiert/.test($('wavemsg').textContent)`);
+  // neue Bank: Fortschritt der Attrappe kommt wie bei Node in Prozent
+  await open('normal');
+  await b.key('k', 'KeyK', 75, CTRL); await b.type('Cymande'); await b.key('Enter', 'Enter', 13);
+  await b.waitFor(`document.querySelectorAll('#results li img').length === 1`); await b.click('#results li');
+  await b.waitFor(`/Neue Bank · lädt (25|50|75) %/.test($('banklist').textContent)`);
+  const seen = await b.eval(`$('banklist').textContent.match(/lädt (\\d+) %/)[1]`); assert(+seen <= 100, seen);
+  await b.waitFor(`S.newbank === null && S.dev.bankId === 13`, 4000);
+});
+
+t('Bank wechseln mit ↑/↓ und ◀ ▶', async () => {
+  await open('normal');
   await b.key('ArrowDown', 'ArrowDown', 40); await waitLog((x) => x.cmd === 'select' && x.id === 3);
   await b.waitFor('S.dev.bankId === 3');
   m.log = []; await b.click('#prev'); await waitLog((x) => x.cmd === 'select' && x.id === 7);
@@ -323,6 +419,7 @@ t('Zoom 1×/4×/16×, Schlaglinien ab 4×, Bank wechseln mit ↑/↓ und ◀ ▶
 t('Screenshots', async () => {
   if (!process.argv.includes('--shots')) return;
   await open('normal'); await b.click('#pad5'); await sleep(250); await b.shot('editor-normal');
+  await b.eval(`setZoom(6)`); await sleep(100); await b.shot('editor-zoom');
   await open('nurspielbar'); await b.shot('editor-nur-spielbar');
   await open('keinebank'); await b.shot('editor-keine-bank');
   await open('kaputt'); await b.shot('editor-kaputt');
