@@ -46,6 +46,30 @@ Ablage in zwei Ordnern (Spec 2.1):
 - **Deploy:** Sagt der Nutzer „deploy“, kopiert Claude den aktuellen Stand per `tools/deploy.sh` nach Live, ohne Commit und ohne Version. Vorher selbst prüfen (Sync, `check()`, `node --check`), das Skript prüft nichts. Danach lädt der Nutzer neu und testet. Erst wenn es passt, kommt `release.sh`.
 - Nach Release oder Deploy muss der Nutzer das Device in Live neu laden (siehe `poly~` unten).
 
+## Arbeitsweise mit Sessions
+
+Der Nutzer arbeitet mit einer **Master-Session** (Claude-Desktop-App, oft per Remote Control vom Handy):
+- Besprochen und entschieden wird in der Master-Session. Größere Arbeit lagert sie in eigene Sessions aus. Die bekommen einen eigenen Worktree und dürfen Sub-Agents nutzen.
+- **Arbeitssessions** committen auf ihrem Zweig mit normalem `git commit`. Kein `release.sh`, kein `deploy.sh`, kein Push. Mergen, Deploy, Release und Push macht nur die Master-Session, nacheinander, nach Rückfrage beim Nutzer.
+- **Fragen an den Nutzer** stellen Arbeitssessions nie selbst. Sie schicken sie per SendMessage an die Master-Session: Titel, Kontext in 1–2 Sätzen, 2–4 Optionen mit Empfehlung zuerst, blockiert ja/nein. Die Master-Session zeigt sie als klickbare Karten im Chat (visualize, Modul elicitation) und schickt die Antworten zurück. Jeder Brief für eine neue Session nennt diese Regel und die `local_…`-ID der Master-Session (in list_sessions steht sie als `startedBy`).
+- Den Fortschritt der Sessions zeigt die Master-Session in ihrer Aufgabenliste, bei laufenden Sessions mit verknüpfter Session.
+- Den Patch (`.maxpat`/`.amxd`) ändert immer nur eine Session gleichzeitig. Sessions, die parallel laufen, brauchen getrennte Dateien.
+- Größere Vorhaben werden erst geplant, dann gebaut. Vorbild ist `.scratch/bank-editor/`: Karte (`map.md`), Entscheidungs-Tickets (`issues/`), daraus `spec.md` mit Bau-Paketen. Die Spec ist der gültige Stand, die Tickets erklären das Warum. Begriffe stehen in `GLOSSARY.md`.
+
+## Neuer Rechner
+
+Alles Nötige liegt im Git (`github.com/eliasu/YTSampler`) und in iCloud Drive:
+```
+brew install yt-dlp ffmpeg deno gh
+gh auth login
+git clone https://github.com/eliasu/YTSampler.git ~/Sites/YTSampler
+cd ~/Sites/YTSampler && tools/deploy.sh
+```
+- Gebraucht werden Ableton Live 12 mit Max 9 und für die Editor-Tests Chrome unter /Applications.
+- Bibliothek, Snippets, Sessions und `ir.json` kommen über iCloud Drive (`YTSampler/`, dort „Geladen lassen“). Derselbe Apple-Account muss angemeldet sein.
+- Lokal bleiben `cache/` mit den ganzen WAVs (er baut sich beim Bearbeiten im Editor neu auf) und `chrome-profile/`.
+- Die Erinnerungen von Claude unter `~/.claude/` kommen nicht mit. Was wichtig ist, steht deshalb hier.
+
 ## Signalfluss im Hauptpatch
 
 - `[js]`-Ausgänge: 0 → `poly~ ytvoice 16 args ---ytbuf`, 1 → `node.script`, 2 → UI-Router `route shownr showname selinfo wsel status grid` (Rest → Pad-jsui), 3 → `poly~ ytwarpvoice 16 args ---ytbuf`, 4 → `buffer~ ---ytbuf` (`replace <pfad>`, `clear`). Beide `poly~` → `live.gain~` → `plugout~`.
