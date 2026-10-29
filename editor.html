@@ -93,7 +93,6 @@
   #pads { flex:1; }
   .cardhead { display:flex; align-items:center; gap:10px; margin-bottom:10px; min-height:26px; }
   .cardhead .lbl { margin-right:auto; }
-  #nobank { display:none; } body.nobank #nobank { display:inline-block; }
   #scroll { position:relative; flex:1; overflow-x:auto; overflow-y:hidden; background:var(--bg); border-radius:8px; min-height:90px; }
   #scroll::-webkit-scrollbar { height:6px; } #scroll::-webkit-scrollbar-thumb { background:var(--line2); border-radius:3px; }
   #inner { position:relative; height:100%; }
@@ -115,7 +114,30 @@
   #zoomfit { min-width:46px; }
   #blank { position:absolute; inset:12px 14px 14px 8px; display:none; flex-direction:column; align-items:center; justify-content:center; gap:12px; color:var(--dim); text-align:center; }
   #blank b { color:var(--text); font-size:16px; font-weight:600; }
+  #blankmsg { display:flex; flex-direction:column; align-items:center; gap:12px; }
   body.blank #blank { display:flex; } body.blank #wave, body.blank #pads, body.blank #hsplit { visibility:hidden; }
+
+  /* Device-Regler: links die Bühne, rechts gedämpft die Einrichtung */
+  #ctl { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; padding-bottom:10px; margin:-4px 0 10px; border-bottom:1px solid var(--line); }
+  #ctl .grp { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; }
+  #ctl .lbl { font-size:10px; }
+  #ctl .set { margin-left:auto; opacity:.6; transition:opacity .15s; }
+  #ctl .set:hover, #ctl .set:focus-within { opacity:1; }
+  #ctl .f { display:flex; align-items:center; gap:5px; }
+  #ctl .tgs { display:flex; gap:4px; }
+  #ctl .v { min-width:44px; color:var(--dim); font-size:12px; }
+  #ctl select { font:inherit; color:var(--text); background:var(--bg); border:1px solid var(--line2); border-radius:7px; padding:4px 6px; outline:none; }
+  #ctl select:focus { border-color:var(--sel); }
+  #ctl input[type=range] { width:80px; padding:0; border:none; background:none; accent-color:var(--acc); }
+  #p-base { width:50px; padding:4px 6px; }
+  #p-base-v { min-width:28px; }
+  #ctl .tog { min-width:52px; padding:5px 8px; }
+  #ctl .tog.on { background:var(--acc); border-color:var(--acc); color:#1a1200; font-weight:600; }
+  #ctl.locked { opacity:.35; }
+  #ctl.locked .set { opacity:1; }
+  #ctl :disabled { cursor:default; }
+  #blank #ctl { border:none; margin:14px 0 0; justify-content:center; }
+  #blank #ctl .set { margin-left:0; }
 
   /* Pads */
   #padarea { flex:1; display:flex; gap:18px; min-height:0; position:relative; }
@@ -216,7 +238,6 @@
       <section class="card" id="wave">
         <div class="cardhead">
           <span class="lbl">Waveform</span>
-          <span class="tag" id="nobank">keine Bank</span>
           <span class="hint" id="wavehint"></span>
           <div id="zoom"><button class="ghost" id="zoomout" title="Herauszoomen (−)">−</button><input type="range" id="zoomr" min="0" max="1000" value="0" title="Zoom (⌘/Strg + Mausrad, Pinch)"><button class="ghost" id="zoomin" title="Hineinzoomen (+)">+</button><button class="ghost small num" id="zoomfit" title="Ganzer Track (0)">1×</button></div>
         </div>
@@ -226,13 +247,31 @@
       <div id="hsplit"></div>
       <section class="card" id="pads">
         <div class="cardhead"><span class="lbl">Pads</span><span class="hint" id="padhint"></span></div>
+        <div id="ctl">
+          <div class="grp">
+            <label class="f"><span class="lbl">Slice</span><select id="p-div" data-p="div"></select></label>
+            <label class="f"><span class="lbl">Rate</span><input type="range" id="p-rate" data-p="rate" min="0.25" max="2" step="0.01" title="Doppelklick: 1×"><span class="v num" id="p-rate-v"></span></label>
+            <div class="tgs">
+              <button class="tog" id="p-mode" data-p="mode" title="Trigger: Slice-Länge · Hold: solange gedrückt">Trigger</button>
+              <button class="tog" id="p-rev" data-p="rev" title="Rückwärts">Rev</button>
+              <button class="tog" id="p-tune" data-p="tune" title="In Tonart des Sets stimmen">Tune</button>
+              <button class="tog" id="p-warp" data-p="warp" title="An Projekttempo anpassen">Warp</button>
+              <button class="tog" id="p-quant" data-p="quant" title="Anschläge auf 1/16">Quant</button>
+            </div>
+          </div>
+          <div class="grp set">
+            <label class="f"><span class="lbl">Volume</span><input type="range" id="p-vol" data-p="vol" min="-70" max="6" step="0.1" title="Doppelklick: 0 dB"><span class="v num" id="p-vol-v"></span></label>
+            <label class="f"><span class="lbl">Voices</span><select id="p-voices" data-p="voices"></select></label>
+            <label class="f"><span class="lbl">Base Note</span><input type="number" id="p-base" data-p="base" class="num" min="0" max="127" step="1"><span class="v num" id="p-base-v"></span></label>
+          </div>
+        </div>
         <div id="padarea">
           <div id="grid"></div>
           <div id="insp"></div>
           <div id="drop">Loslassen: neue Bank aus diesem Video</div>
         </div>
       </section>
-      <div id="blank"></div>
+      <div id="blank"><div id="blankmsg"></div></div>
     </main>
   </div>
 </div>
@@ -295,13 +334,10 @@ const bankById = (id) => banks().find((b) => b.id === id);
 const curBank = () => (S.dev ? bankById(S.dev.bankId) : null);
 const curIdx = () => banks().indexOf(curBank());
 
-// Was Waveform und Pads zeigen: aktive Bank, sonst der Track des Device („keine Bank“)
+// Was Waveform und Pads zeigen: die aktive Bank. Ohne Bank zeigt der Editor #blank
 function view() {
   const b = curBank();
-  if (b) return { bank: b, video: b.video, starts: b.starts, edit: writable() && b.wav, playonly: !b.wav };
-  if (S.dev && S.dev.bankId === 0 && S.dev.video && S.dev.video !== '-' && S.dev.starts && S.dev.starts.length === 16)
-    return { bank: null, video: S.dev.video, starts: S.dev.starts, edit: false, nobank: true };
-  return null;
+  return b ? { bank: b, video: b.video, starts: b.starts, edit: writable() && b.wav, playonly: !b.wav } : null;
 }
 function videoBpm(v) {
   const e = S.lib && S.lib.videos[v];
@@ -328,6 +364,7 @@ async function runStep(dir) {
   const r = await step[dir]();
   histBusy = false;
   if (!r.ok) return; // Text kam schon als Toast, der Schritt bleibt stehen
+  if ((dir === 'undo' ? hist[hpos - 1] : hist[hpos]) !== step) return; // Historie wurde inzwischen geleert
   hpos += dir === 'undo' ? -1 : 1; histButtons();
   toast((dir === 'undo' ? 'Rückgängig: ' : 'Wiederholt: ') + step.label);
 }
@@ -412,7 +449,6 @@ function renderHeader() {
   const b = curBank(), n = banks().length, i = curIdx();
   if (b) $('navname').innerHTML = '<span class="num">' + (i + 1) + ' / ' + n + '</span>&nbsp;&nbsp;<b>' + esc(b.name) + '</b>';
   else if (S.lib && S.lib.state === 'leer') $('navname').innerHTML = '<span>Bibliothek leer</span>';
-  else if (view() && view().nobank) $('navname').innerHTML = '<span>keine Bank</span>';
   else $('navname').innerHTML = '<span>–</span>';
   $('prev').disabled = !S.conn || n === 0 || i === 0;
   $('next').disabled = !S.conn || n === 0 || i === n - 1;
@@ -616,7 +652,7 @@ function drawWave() {
     });
   }
   if (!p || p.state !== 'ok') return;
-  g.fillStyle = vw.nobank ? '#4f5258' : '#6f737b';
+  g.fillStyle = '#6f737b';
   const perMs = p.sr / p.bs / 1000, mid = h / 2, amp = h / 2 - 8;
   for (let x = 0; x < w; x++) {
     const ms0 = (x + x0) / W.innerW * W.dur, ms1 = (x + x0 + 1) / W.innerW * W.dur;
@@ -676,7 +712,7 @@ function renderPads() {
   const vw = view();
   if (!vw) { $('insp').innerHTML = ''; renderPads.sig = null; return; }
   const swappable = writable() && !!vw.bank;
-  $('padhint').textContent = vw.nobank ? 'keine Bank · anspielbar, nicht bearbeitbar' : 'Klick oder Taste spielt · auf anderes Pad ziehen tauscht';
+  $('padhint').textContent = 'Klick oder Taste spielt · auf anderes Pad ziehen tauscht';
   for (let i = 0; i < 16; i++) {
     const p = $('pad' + i);
     p.classList.toggle('sel', i === S.sel); p.draggable = swappable;
@@ -686,8 +722,7 @@ function renderPads() {
   }
   if (document.activeElement === $('bpm')) return; // Tempo wird gerade getippt
   const v = vw.video, vt = (S.lib && S.lib.videos[v] && S.lib.videos[v].title) || v, tb = videoBpm(v), tempoOn = !!vw.bank && writable();
-  const tt = S.dev && S.dev.teletext;
-  const sig = JSON.stringify([v, vt, tb, tempoOn, vw.edit, vw.nobank, S.sel, vw.starts[S.sel], tt]);
+  const sig = JSON.stringify([v, vt, tb, tempoOn, vw.edit, S.sel, vw.starts[S.sel]]);
   if (sig === renderPads.sig) return;
   renderPads.sig = sig;
   $('insp').innerHTML = '<span class="lbl">Ausgewählt</span><div class="big">Pad ' + (S.sel + 1) + '</div>'
@@ -698,7 +733,6 @@ function renderPads() {
     + '<span class="lbl" style="margin-top:6px">Tempo</span>'
     + '<div id="tempo"><input id="bpm" type="number" min="30" max="300" step="0.1" class="num"><button class="small" id="half">½×</button><button class="small" id="double">2×</button>'
     + (tb.confirmed ? '' : '<button class="small" id="tempook">Tempo stimmt</button>') + '</div>'
-    + (vw.nobank ? '<span class="hint">keine Bank: Track im Editor nicht bearbeitbar' + (tt ? ' · Teletext lädt ' + pct(tt.progress) : '') + '</span>' : '')
     + (!tb.confirmed && tb.bpm ? '<span class="hint">Tempo aus der Analyse, nicht bestätigt</span>' : '');
   $('inspvideo').textContent = vt + (tb.bpm ? ' · ' + fmtBpm(tb.bpm) + ' BPM' : '');
   $('rollbtn').disabled = !vw.edit; $('rollbtn').onclick = () => roll(S.sel);
@@ -713,6 +747,78 @@ function renderPads() {
   $('half').onclick = () => setTempo(tb.bpm / 2);
   $('double').onclick = () => setTempo(tb.bpm * 2);
   const ok = $('tempook'); if (ok) { ok.disabled = !tempoOn; ok.onclick = () => cmd('tempook', { video: v }); }
+}
+
+// ---------- Device-Regler (Spec 3.0, 5.1) ----------
+// Ein Zustand: die echten Live-Parameter aus device.params. Bedienung schickt /cmd param, die Anzeige folgt dem Echo.
+// Kein Schritt in der Historie, kein „gespeichert ✓“.
+const DIV_NAMES = ['1/64', '1/32', '1/16T', '1/16', '1/8T', '1/8', '1/4T', '1/4', '1/2', '1 Bar', '2 Bars']; // wie DIVS in [js]
+const VOICE_NAMES = ['Mono', '2', '3', '4', '5', '8', '16'];                                               // wie VOICE_OPTS
+const NOTE = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
+const noteName = (n) => NOTE[n % 12] + (Math.floor(n / 12) - 2); // wie Live: 36 = C1
+const PARAM_MS = 50, HOLD_MS = 700; // Schieber: höchstens alle 50 ms senden; nach dem Loslassen so lange auf das Echo warten
+const SLIDE = {
+  rate: { def: 1, round: (v) => Math.round(v * 1000) / 1000, fmt: (v) => v.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '×' },
+  vol: { def: 0, round: (v) => Math.round(v * 10) / 10, fmt: (v) => v.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' dB' },
+};
+const ctl = { hold: {}, thr: {} }; // hold[name] = { v, until }: lokaler Wert beim Ziehen (until Infinity) und kurz danach
+DIV_NAMES.forEach((n, i) => $('p-div').add(new Option(n, i)));
+VOICE_NAMES.forEach((n, i) => $('p-voices').add(new Option(n, i)));
+const ctlOn = () => S.conn && !!(S.dev && S.dev.params);
+function sendParam(name, value) { if (ctlOn()) cmd('param', { name, value }); }
+function shown(name) {
+  const p = S.dev.params[name], h = ctl.hold[name];
+  if (h && (h.until === Infinity || (performance.now() < h.until && Math.abs(p - h.v) > 1e-6))) return h.v;
+  delete ctl.hold[name]; return p;
+}
+// gedrosselt senden, letzter Wert gewinnt; final: sofort (Loslassen)
+function slideSend(name, v, final) {
+  const t = ctl.thr[name] || (ctl.thr[name] = { last: 0, timer: 0, v: null, sent: null });
+  t.v = v; clearTimeout(t.timer); t.timer = 0;
+  const go = () => { t.timer = 0; t.last = performance.now(); if (final || t.sent !== t.v) { t.sent = t.v; sendParam(name, t.v); } }; // Loslassen immer, das Device kann inzwischen gedreht worden sein
+  const wait = PARAM_MS - (performance.now() - t.last);
+  if (final || wait <= 0) go(); else t.timer = setTimeout(go, wait);
+}
+function slideEnd(name) {
+  const h = ctl.hold[name]; if (!h || h.until !== Infinity) return;
+  h.until = performance.now() + HOLD_MS; slideSend(name, h.v, true); setTimeout(later, HOLD_MS + 20);
+}
+for (const name of Object.keys(SLIDE)) {
+  const el = $('p-' + name), cf = SLIDE[name];
+  el.oninput = () => {
+    const h = ctl.hold[name];
+    if (!h || h.until !== Infinity) { const t = ctl.thr[name]; if (t) t.sent = null; } // neue Geste
+    const v = cf.round(+el.value); ctl.hold[name] = { v, until: Infinity };
+    $('p-' + name + '-v').textContent = cf.fmt(v); slideSend(name, v);
+  };
+  el.onchange = () => { slideEnd(name); el.blur(); }; // sonst fangen Pfeile und Pad-Tasten am Regler fest
+  el.ondblclick = () => { ctl.hold[name] = { v: cf.def, until: Infinity }; slideEnd(name); renderCtl(); };
+}
+document.addEventListener('pointerup', () => Object.keys(SLIDE).forEach(slideEnd));
+for (const name of ['mode', 'rev', 'tune', 'warp', 'quant']) $('p-' + name).onclick = () => sendParam(name, shown(name) ? 0 : 1);
+for (const name of ['div', 'voices']) { const el = $('p-' + name); el.onchange = () => { sendParam(name, +el.value); el.blur(); }; }
+$('p-base').onkeydown = (e) => { if (e.key === 'Enter') $('p-base').blur(); };
+$('p-base').onchange = () => {
+  const x = Math.round(parseFloat($('p-base').value));
+  if (x >= 0 && x <= 127) sendParam('base', x); else { toast('Base Note 0–127', { err: true }); renderCtl.force = true; renderCtl(); }
+};
+function renderCtl() {
+  const on = ctlOn(), c = $('ctl'), p = on && S.dev.params;
+  c.classList.toggle('locked', !on);
+  c.title = on ? '' : S.conn ? 'Device meldet noch keine Regler' : 'kein Device';
+  c.querySelectorAll('select, input, button').forEach((e) => { e.disabled = !on; });
+  if (!p) return;
+  $('p-div').value = p.div; $('p-voices').value = p.voices;
+  for (const name of ['mode', 'rev', 'tune', 'warp', 'quant']) $('p-' + name).classList.toggle('on', !!p[name]);
+  $('p-mode').textContent = p.mode ? 'Hold' : 'Trigger';
+  for (const name of Object.keys(SLIDE)) {
+    const v = shown(name), el = $('p-' + name);
+    if (!(ctl.hold[name] && ctl.hold[name].until === Infinity)) el.value = v;
+    $('p-' + name + '-v').textContent = SLIDE[name].fmt(v);
+  }
+  if (document.activeElement !== $('p-base') || renderCtl.force) $('p-base').value = p.base;
+  renderCtl.force = false;
+  $('p-base-v').textContent = noteName(p.base);
 }
 
 // ---------- Abspielkopf ----------
@@ -806,13 +912,15 @@ document.addEventListener('keyup', (e) => { const pad = PAD_KEYS.indexOf(e.code)
 // ---------- Zeichnen ----------
 function render() {
   const vw = view();
-  document.body.classList.toggle('nobank', !!(vw && vw.nobank));
   document.body.classList.toggle('blank', !vw);
   const L = S.lib;
-  $('blank').innerHTML = !L ? '' : L.state === 'kaputt' || L.state === 'neuer' ? '<b>' + esc(L.state === 'neuer' ? 'Bibliothek aus neuerer Version' : 'Bibliothek kaputt') + '</b><span>Speichern ist gesperrt, bis die Datei wieder lesbar ist.</span>'
+  $('blankmsg').innerHTML = !L ? '' : L.state === 'kaputt' || L.state === 'neuer' ? '<b>' + esc(L.state === 'neuer' ? 'Bibliothek aus neuerer Version' : 'Bibliothek kaputt') + '</b><span>Speichern ist gesperrt, bis die Datei wieder lesbar ist.</span>'
     : !banks().length ? '<b>Bibliothek leer</b><span>Mit „Video suchen“ (⌘K) die erste Bank anlegen.</span>' : '<span>Keine Bank aktiv</span>';
   if (S.sel > 15) S.sel = 0;
-  renderHeader(); renderList(); renderWave(); renderPads();
+  // ohne Bank stehen die Regler unter der Meldung, sonst in der Pad-Karte
+  const home = vw ? $('pads') : $('blank'), c = $('ctl');
+  if (c.parentNode !== home) { if (vw) home.insertBefore(c, $('padarea')); else home.appendChild(c); }
+  renderHeader(); renderList(); renderWave(); renderPads(); renderCtl();
 }
 let renderQ = false;
 function later() { if (!renderQ) { renderQ = true; requestAnimationFrame(() => { renderQ = false; render(); }); } }
