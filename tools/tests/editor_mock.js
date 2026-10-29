@@ -1,8 +1,9 @@
 // Attrappe des Editor-Servers (Spec 3.2–3.4, 6.5): /editor, /editor/events (SSE), /cmd, /peaks.
 // Bibliothek, Device und Downloads nur im Speicher. Nie auf 8765–8770, dort läuft das echte Device.
 //   node tools/tests/editor_mock.js [port] [szenario]     → http://localhost:<port>/editor
-// Szenario umschalten im Browser: /mock/normal, /mock/nurspielbar, /mock/keinebank, /mock/leer,
+// Szenario umschalten im Browser: /mock/normal, /mock/nurspielbar, /mock/nichtsgeladen, /mock/leer,
 // /mock/kaputt, /mock/neuer, /mock/down (kein Device), /mock/up.
+// Device-Regler (Spec 3.0, 3.2/3.3): device.params, /cmd param stellt den Wert und schickt device zurück.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -32,6 +33,11 @@ function beatsOf(video, bpm) {
   return { beats: out, down: out[8] };
 }
 function bars(video) { const v = VIDEOS[video], b = beatsOf(video, v[1]); return b.beats.filter((t, k) => k >= 8 && (k - 8) % 4 === 0); }
+// Regler wie Spec 3.0, 3.1: [min, max, ganz]
+const PARAMS = { div: [0, 10, true], rate: [0.25, 2], mode: [0, 1, true], rev: [0, 1, true], tune: [0, 1, true], warp: [0, 1, true],
+  quant: [0, 1, true], vol: [-70, 6], voices: [0, 6, true], base: [0, 127, true] };
+const PARAMS_START = { div: 5, rate: 1, mode: 0, rev: 0, tune: 1, warp: 0, quant: 1, vol: -3.5, voices: 6, base: 36 };
+const DIV_FRAC = [1 / 64, 1 / 32, 1 / 24, 1 / 16, 1 / 12, 1 / 8, 1 / 6, 1 / 4, 1 / 2, 1, 2];
 function makeStarts(video, seed) { const b = bars(video), out = []; for (let i = 0; out.length < 16; i++) { const t = b[(seed * 7 + i * 5) % b.length]; if (!out.includes(t)) out.push(t); } return out.sort((a, c) => a - c); }
 
 function scenarioLib(name) {
@@ -57,19 +63,23 @@ function scenarioLib(name) {
 function createMock(opts = {}) {
   const m = {
     log: [], clients: new Set(), down: false, session: 1, track: '3-YT Sampler', port: 0,
-    lib: null, dev: null, beatsOk: null, searchSeq: 0, slowSearch: 0,
+    lib: null, dev: null, beatsOk: null, searchSeq: 0, slowSearch: 0, params: { ...PARAMS_START },
   };
-  const spanOf = () => Array.from({ length: 16 }, (_, i) => 1800 + i * 40);
+  // Spanne wie [js] grob: Slice-Länge im Quelltempo, durch Rate (Warp und Hold hier egal)
+  const spanOf = (video) => {
+    const bpm = (m.lib.videos[video] && m.lib.videos[video].bpm) || (VIDEOS[video] ? VIDEOS[video][1] : 120), p = m.params || PARAMS_START;
+    return Array.from({ length: 16 }, () => Math.round(Math.min(16000, 240000 / bpm * DIV_FRAC[p.div] / p.rate)));
+  };
   function devFor(b) {
-    return { bankId: b ? b.id : 0, nr: b ? m.lib.banks.indexOf(b) + 1 : 0, video: b ? b.video : '-', sel: m.dev ? m.dev.sel : 0, mode: 0,
-      rev: 0, starts: b ? b.starts.slice() : [], spans: spanOf(), teletext: null };
+    return { bankId: b ? b.id : 0, nr: b ? m.lib.banks.indexOf(b) + 1 : 0, video: b ? b.video : '-', sel: m.dev ? m.dev.sel : 0,
+      starts: b ? b.starts.slice() : [], spans: b ? spanOf(b.video) : [], params: m.params ? { ...m.params } : null };
   }
   m.scenario = function (name) {
     m.name = name;
     m.lib = scenarioLib(name);
-    const b = m.lib.banks[name === 'nurspielbar' ? 2 : 0];
+    m.params = { ...PARAMS_START };
+    const b = name === 'nichtsgeladen' ? null : m.lib.banks[name === 'nurspielbar' ? 2 : 0];
     m.dev = devFor(b);
-    if (name === 'keinebank') { m.dev = devFor(null); m.dev.video = 'Mt3CissyStr'; m.dev.starts = makeStarts('Mt3CissyStr', 3); }
     m.beatsOk = null;
     broadcastAll();
   };
@@ -93,6 +103,8 @@ function createMock(opts = {}) {
   function changed(by) { m.lib.rev++; m.emit('lib', libMsg(by)); }
   function activate(b) { m.dev = devFor(b); m.emit('device', m.dev); const bt = beatsMsg(); if (bt) m.emit('beats', bt); }
   function syncDev() { const b = byId(m.dev.bankId); if (b) { m.dev = devFor(b); m.emit('device', m.dev); } }
+  // wie Node, wenn [js] einen neuen bankstate schickt (z. B. Regler am Device gedreht); params null = noch kein bankstate
+  m.setParams = function (p) { m.params = p && { ...m.params, ...p }; m.dev = devFor(byId(m.dev.bankId)); m.emit('device', m.dev); };
   m.setDown = function (d) { m.down = d; if (d) for (const c of m.clients) c.destroy(); };
   m.close = () => new Promise((r) => { for (const c of m.clients) c.destroy(); m.server.close(r); });
 
@@ -210,6 +222,13 @@ function createMock(opts = {}) {
         return { ok: true };
       }
       case 'fetchall': return { ok: true, todo: m.lib.banks.filter((x) => !x.wav).length };
+      case 'param': { // auch bei kaputter Bibliothek erlaubt; Bestätigung nur über device.params
+        const r = PARAMS[q.name], v = q.value;
+        if (!r || typeof v !== 'number' || !Number.isFinite(v) || v < r[0] || v > r[1] || (r[2] && !Number.isInteger(v))) return fail('badreq');
+        if (!m.params) return { ok: true };
+        setTimeout(() => m.setParams({ [q.name]: v }), opts.paramDelay || 0);
+        return { ok: true };
+      }
     }
     return fail('badreq');
   }
@@ -277,13 +296,13 @@ function createMock(opts = {}) {
   return m;
 }
 
-module.exports = { createMock, VIDEOS };
+module.exports = { createMock, VIDEOS, PARAMS_START };
 
 if (require.main === module) {
   const port = Number(process.argv[2] || 8790), sc = process.argv[3] || 'normal';
   if (port >= 8765 && port <= 8770) { console.error('8765–8770 gehört dem echten Device'); process.exit(1); }
   createMock({ scenario: sc }).listen(port).then((m) => {
     console.log(`Attrappe läuft: http://localhost:${m.port}/editor  (Szenario ${sc})`);
-    console.log(`Umschalten: http://localhost:${m.port}/mock/<normal|nurspielbar|keinebank|leer|kaputt|neuer|down|up>`);
+    console.log(`Umschalten: http://localhost:${m.port}/mock/<normal|nurspielbar|nichtsgeladen|leer|kaputt|neuer|down|up>`);
   });
 }

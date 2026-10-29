@@ -246,20 +246,146 @@ t('nicht ladbar: Wählen meldet nosnip, Track laden in der Zeile', async () => {
   await b.click('#banklist li:nth-child(5) .fetch'); await waitLog((x) => x.cmd === 'fetch' && x.video === 'Es9UfoUfo00');
 });
 
-t('keine Bank: Track sichtbar und anspielbar, nicht bearbeitbar', async () => {
-  await open('keinebank');
-  const r = await b.eval(`({ cls: document.body.classList.contains('nobank'), tag: getComputedStyle($('nobank')).display, nav: $('navname').textContent,
-    mk: document.querySelectorAll('.mk').length, edit: document.querySelectorAll('.mk.edit').length, on: document.querySelectorAll('#banklist li.on').length,
-    drag: $('pad3').draggable, roll: $('rollbtn').disabled, bpm: $('bpm').disabled, hint: $('padhint').textContent })`);
-  assert(r.cls && r.tag !== 'none'); assert.strictEqual(r.nav, 'keine Bank');
-  assert.strictEqual(r.mk, 16); assert.strictEqual(r.edit, 0); assert.strictEqual(r.on, 0);
-  assert.strictEqual(r.drag, false); assert(r.roll && r.bpm); assert(/keine Bank/.test(r.hint));
-  const [px, py] = await b.center('#pad7');
-  await b.mouse('mouseMoved', px, py); await b.mouse('mousePressed', px, py);
-  await waitLog((x) => x.cmd === 'hit' && x.pad === 7);
-  await b.waitFor(`getComputedStyle($('play')).display === 'block'`);             // Abspielkopf läuft, solange gehalten
-  await b.mouse('mouseReleased', px, py); await waitLog((x) => x.cmd === 'up' && x.pad === 7);
-  await b.waitFor(`getComputedStyle($('play')).display === 'none'`);
+t('nichts geladen (bankId 0): leere Fläche statt Waveform, keine „keine Bank“-Ansicht', async () => {
+  await open('nichtsgeladen');
+  const r = await b.eval(`({ blank: document.body.classList.contains('blank'), msg: $('blankmsg').textContent, nav: $('navname').textContent,
+    on: document.querySelectorAll('#banklist li.on').length, tag: !!$('nobank') })`);
+  assert(r.blank); assert.strictEqual(r.msg, 'Keine Bank aktiv'); assert.strictEqual(r.nav, '–'); assert.strictEqual(r.on, 0); assert(!r.tag);
+  m.log = []; await b.key('a', 'KeyA', 65); await sleep(100);
+  assert(!m.log.some((x) => x.cmd === 'hit'), 'ohne Bank kein Pad');
+  assert.deepStrictEqual(b.errors, []);
+});
+
+// ---------- Device-Regler (Spec 3.0, 5.1) ----------
+const ctlState = () => b.eval(`({ div: $('p-div').value, divText: $('p-div').selectedOptions[0].textContent, rate: +$('p-rate').value, rateV: $('p-rate-v').textContent,
+  mode: $('p-mode').textContent, on: ['mode', 'rev', 'tune', 'warp', 'quant'].filter((n) => $('p-' + n).classList.contains('on')),
+  vol: +$('p-vol').value, volV: $('p-vol-v').textContent, voices: $('p-voices').selectedOptions[0].textContent, base: $('p-base').value, note: $('p-base-v').textContent,
+  locked: $('ctl').classList.contains('locked'), disabled: [...$('ctl').querySelectorAll('select, input, button')].filter((e) => e.disabled).length,
+  count: $('ctl').querySelectorAll('select, input, button').length })`);
+const params = () => m.log.filter((x) => x.cmd === 'param');
+
+t('Regler: Leiste in der Pad-Karte zeigt device.params und folgt dem Device', async () => {
+  await open('normal');
+  const pos = await b.eval(`(() => { const c = $('ctl'), h = $('pads').querySelector('.cardhead').getBoundingClientRect(), r = c.getBoundingClientRect(), g = $('grid').getBoundingClientRect();
+    return { parent: c.parentNode.id, below: r.top >= h.bottom - 1, above: r.bottom <= g.top + 1, set: c.querySelector('.set').contains($('p-vol')) && c.querySelector('.set').contains($('p-base')) && c.querySelector('.set').contains($('p-voices')),
+      setRight: c.querySelector('.set').getBoundingClientRect().left > $('p-quant').getBoundingClientRect().right,
+      dim: +getComputedStyle(c.querySelector('.set')).opacity, divs: [...$('p-div').options].map((o) => o.textContent).join(' '), voices: [...$('p-voices').options].map((o) => o.textContent).join(' ') }; })()`);
+  assert.strictEqual(pos.parent, 'pads'); assert(pos.below && pos.above, 'zwischen Kartenkopf und Pads');
+  assert(pos.set && pos.setRight && pos.dim < 1, 'Einrichtung rechts, gedämpft');
+  assert.strictEqual(pos.divs, '1/64 1/32 1/16T 1/16 1/8T 1/8 1/4T 1/4 1/2 1 Bar 2 Bars');
+  assert.strictEqual(pos.voices, 'Mono 2 3 4 5 8 16');
+  let s = await ctlState();
+  assert.deepStrictEqual([s.div, s.divText, s.rate, s.rateV, s.mode, s.on, s.vol, s.volV, s.voices, s.base, s.note, s.locked, s.disabled],
+    ['5', '1/8', 1, '1,00×', 'Trigger', ['tune', 'quant'], -3.5, '-3,5 dB', '16', '36', 'C1', false, 0]);
+  m.setParams({ div: 9, rate: 0.5, mode: 1, rev: 1, tune: 0, warp: 1, quant: 0, vol: 6, voices: 0, base: 60 }); // am Device gedreht
+  await b.waitFor(`$('p-mode').textContent === 'Hold'`);
+  s = await ctlState();
+  assert.deepStrictEqual([s.divText, s.rate, s.rateV, s.on, s.volV, s.voices, s.base, s.note], ['1 Bar', 0.5, '0,50×', ['mode', 'rev', 'warp'], '6,0 dB', 'Mono', '60', 'C3']);
+  assert.strictEqual(await b.eval(`parseFloat($('slice').style.width) > 0`), true, 'Spanne sichtbar');
+  assert.deepStrictEqual(b.errors, []);
+});
+
+t('Regler: Umschalter und Menüs schicken param sofort, kein Undo, kein „gespeichert“', async () => {
+  await open('normal');
+  const w0 = await b.eval(`parseFloat($('slice').style.width)`);
+  for (const [name, value] of [['rev', 1], ['mode', 1], ['warp', 1], ['tune', 0], ['quant', 0]]) {
+    m.log = []; await b.click('#p-' + name);
+    const x = await waitLog((y) => y.cmd === 'param');
+    assert.deepStrictEqual({ name: x.name, value: x.value }, { name, value });
+    await b.waitFor(`$('p-${name}').classList.contains('on') === ${!!value}`);
+  }
+  assert.strictEqual(await b.eval(`$('p-mode').textContent`), 'Hold');
+  m.log = []; await b.click('#p-mode'); assert.strictEqual((await waitLog((y) => y.cmd === 'param')).value, 0);
+  await b.waitFor(`$('p-mode').textContent === 'Trigger'`);
+  m.log = []; await b.eval(`$('p-div').value = '10'; $('p-div').dispatchEvent(new Event('change'))`);
+  assert.deepStrictEqual(await waitLog((y) => y.cmd === 'param'), { client: last().client, cmd: 'param', name: 'div', value: 10 });
+  await b.waitFor(`parseFloat($('slice').style.width) > ${w0}`); // Spanne folgt der Slice-Länge
+  m.log = []; await b.eval(`$('p-voices').value = '3'; $('p-voices').dispatchEvent(new Event('change'))`);
+  assert.strictEqual((await waitLog((y) => y.cmd === 'param' && y.name === 'voices')).value, 3);
+  assert.strictEqual(await b.eval(`document.activeElement === $('p-voices')`), false, 'Menü gibt den Fokus ab (Pad-Tasten)');
+  // Base Note: tippen, Enter
+  m.log = []; await b.click('#p-base'); await b.eval(`$('p-base').select()`); await b.type('48'); await b.key('Enter', 'Enter', 13);
+  assert.strictEqual((await waitLog((y) => y.cmd === 'param' && y.name === 'base')).value, 48);
+  await b.waitFor(`$('p-base-v').textContent === 'C2'`);
+  m.log = []; await b.click('#p-base'); await b.eval(`$('p-base').select()`); await b.type('200'); await b.key('Enter', 'Enter', 13);
+  await b.waitFor(`$('toast').textContent === 'Base Note 0–127' && $('p-base').value === '48'`);
+  assert.deepStrictEqual(params(), [], 'ungültig: nichts gesendet');
+  // Pad-Tasten gehen nach den Reglern weiter
+  m.log = []; await b.click('#p-rev'); await waitLog((y) => y.cmd === 'param'); await b.key('a', 'KeyA', 65); await waitLog((y) => y.cmd === 'hit' && y.pad === 4);
+  assert.strictEqual(await b.eval(`$('undo').disabled`), true, 'Regler sind kein Schritt');
+  assert.strictEqual(await b.eval(`$('saved').textContent`), 'automatisch gespeichert');
+  assert.deepStrictEqual(b.errors, []);
+});
+
+t('Regler: Schieber gedrosselt, zeigt beim Ziehen den lokalen Wert, Doppelklick = Standard', async () => {
+  await open('normal');
+  const r = await b.eval(`(() => { const e = $('p-rate').getBoundingClientRect(); return [e.left, e.right, e.top + e.height / 2]; })()`);
+  const [x0, x1, y] = r, steps = 30;
+  m.log = [];
+  await b.mouse('mouseMoved', x0 + 2, y); await b.mouse('mousePressed', x0 + 2, y);
+  const t0 = Date.now();
+  for (let k = 1; k <= steps; k++) { await b.mouse('mouseMoved', x0 + 2 + (x1 - x0 - 4) * k / steps, y); await sleep(8); }
+  const dt = Date.now() - t0;
+  m.setParams({ rate: 1.25 }); await sleep(80);                                     // Echo mitten im Ziehen: Schieber bleibt lokal
+  const during = await b.eval(`[+$('p-rate').value, $('p-rate-v').textContent]`);
+  assert.deepStrictEqual(during, [2, '2,00×'], 'beim Ziehen lokal: ' + during);
+  await b.mouse('mouseReleased', x1 - 2, y);
+  await waitLog((x) => x.cmd === 'param' && x.value === 2);
+  await sleep(120);
+  const sent = params();
+  assert(sent.every((x) => x.name === 'rate'));
+  assert(sent.length >= 2 && sent.length <= Math.ceil(dt / 50) + 2, sent.length + ' Befehle in ' + dt + ' ms');
+  assert.strictEqual(sent[sent.length - 1].value, 2, 'letzter Wert gewinnt');
+  assert(sent.every((x) => x.value === Math.round(x.value * 1000) / 1000), 'auf 3 Stellen');
+  await b.waitFor(`S.dev.params.rate === 2 && $('p-rate-v').textContent === '2,00×'`);
+  m.setParams({ rate: 1.5 });                                                       // nach dem Loslassen gilt wieder params
+  await b.waitFor(`+$('p-rate').value === 1.5 && $('p-rate-v').textContent === '1,50×'`);
+  // Doppelklick: Rate 1, Volume 0 dB
+  m.log = []; await b.click('#p-rate'); await b.click('#p-rate', 2);
+  await waitLog((x) => x.cmd === 'param' && x.name === 'rate' && x.value === 1);
+  await b.waitFor(`$('p-rate-v').textContent === '1,00×' && S.dev.params.rate === 1`);
+  m.log = []; await b.click('#p-vol'); await b.click('#p-vol', 2);
+  await waitLog((x) => x.cmd === 'param' && x.name === 'vol' && x.value === 0);
+  await b.waitFor(`$('p-vol-v').textContent === '0,0 dB'`);
+  assert(params().every((x) => x.name !== 'vol' || x.value === Math.round(x.value * 10) / 10), 'Volume auf 1 Stelle');
+  // Tastatur: Pfeil rechts am Schieber sendet und gibt den Fokus ab
+  m.log = []; await b.eval(`$('p-vol').focus()`); await b.key('ArrowRight', 'ArrowRight', 39);
+  await waitLog((x) => x.cmd === 'param' && x.name === 'vol' && x.value === 0.1);
+  assert.strictEqual(await b.eval(`document.activeElement === $('p-vol')`), false);
+  assert.deepStrictEqual(b.errors, []);
+});
+
+t('Regler: gesperrt ohne Device und ohne params, frei bei leerer/kaputter Bibliothek', async () => {
+  await open('normal');
+  m.setParams(null);
+  await b.waitFor(`$('ctl').classList.contains('locked')`);
+  let s = await ctlState(); assert.strictEqual(s.disabled, s.count);
+  m.log = []; await b.eval(`$('p-rev').click()`); await sleep(80); assert.deepStrictEqual(params(), []);
+  m.setParams({ ...require('./editor_mock').PARAMS_START, rev: 1 });
+  await b.waitFor(`!$('ctl').classList.contains('locked') && $('p-rev').classList.contains('on')`);
+  m.setDown(true); await b.waitFor(`document.body.classList.contains('offline') && $('ctl').classList.contains('locked')`);
+  s = await ctlState(); assert.strictEqual(s.disabled, s.count);
+  m.down = false;
+  for (const sc of ['leer', 'kaputt']) {
+    await open(sc);
+    const r = await b.eval(`({ inBlank: $('blank').contains($('ctl')), vis: getComputedStyle($('ctl')).visibility, locked: $('ctl').classList.contains('locked') })`);
+    assert(r.inBlank && r.vis === 'visible' && !r.locked, sc + ': ' + JSON.stringify(r));
+    m.log = []; await b.click('#p-warp');
+    assert.deepStrictEqual(await waitLog((x) => x.cmd === 'param'), { client: last().client, cmd: 'param', name: 'warp', value: 1 }, sc);
+    await b.waitFor(`$('p-warp').classList.contains('on')`); // Echo abwarten, sonst landet es im nächsten Szenario
+  }
+  // zurück in die Pad-Karte, sobald eine Bank da ist
+  await open('normal');
+  assert.strictEqual(await b.eval(`$('ctl').parentNode.id`), 'pads');
+});
+
+t('Attrappe: /cmd param prüft Name und Bereich (badreq)', async () => {
+  await open('normal');
+  const post = (q) => b.eval(`fetch('/cmd', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: ${JSON.stringify(JSON.stringify(q))} }).then((r) => r.json())`);
+  for (const q of [{ name: 'grid', value: 1 }, { name: 'div', value: 11 }, { name: 'div', value: 2.5 }, { name: 'rev', value: 2 }, { name: 'rate', value: 3 }, { name: 'vol', value: '0' }, { name: 'base', value: -1 }])
+    assert.strictEqual((await post({ cmd: 'param', ...q })).code, 'badreq', JSON.stringify(q));
+  assert.deepStrictEqual(await post({ cmd: 'param', name: 'rate', value: 0.25 }), { ok: true });
+  await b.waitFor(`S.dev.params.rate === 0.25`);
 });
 
 t('Bibliothek kaputt/neuer: Fehlerleiste, Schreiben gesperrt', async () => {
@@ -421,7 +547,7 @@ t('Screenshots', async () => {
   await open('normal'); await b.click('#pad5'); await sleep(250); await b.shot('editor-normal');
   await b.eval(`setZoom(6)`); await sleep(100); await b.shot('editor-zoom');
   await open('nurspielbar'); await b.shot('editor-nur-spielbar');
-  await open('keinebank'); await b.shot('editor-keine-bank');
+  await open('leer'); await b.shot('editor-leer');
   await open('kaputt'); await b.shot('editor-kaputt');
   await open('normal'); m.setDown(true); await b.waitFor(`document.body.classList.contains('offline')`); await sleep(100); await b.shot('editor-kein-device');
   m.down = false;
