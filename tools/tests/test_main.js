@@ -1,13 +1,14 @@
 // Attrappen-Test für ytsampler_main.js ([js] in Max): Bänke, Song/Buffer-ms, Snippet-Klammer, Overlay, Bank-Regler,
-// ready()-Sperren und der Teletext-Weg im Vergleich mit v1.3.6.
+// ready()-Sperren, Reglerwerte im bankstate, param vom Editor, Session nur mit bankId, Bank am Regler laden.
 // Aufruf aus dem Projektordner: node tools/tests/test_main.js
-var fs = require('fs'), vm = require('vm'), assert = require('assert'), cp = require('child_process'), path = require('path');
+var fs = require('fs'), vm = require('vm'), assert = require('assert'), path = require('path');
 
 var ROOT = path.join(__dirname, '..', '..');
 
-// lädt ein [js]-Skript mit Attrappen für outlet, Task, arrayfromargs, post, this.patcher.getnamed, LiveAPI
+// lädt ein [js]-Skript mit Attrappen für outlet, Task, arrayfromargs, post, this.patcher.getnamed, LiveAPI.
+// m.values[name] = Wert für getvalueof() (fehlt er, hat das Objekt kein getvalueof)
 function load(src) {
-    var m = { out: [], named: [], tasks: [], api: null, clock: 1000 };
+    var m = { out: [], named: [], tasks: [], api: null, clock: 1000, values: {} };
     var ctx = {
         outlet: function (n) {
             var a = [n];
@@ -18,13 +19,15 @@ function load(src) {
         post: function () {},
         Task: function (fn, that) { this.fn = fn; this.pending = false; m.tasks.push(this); },
         LiveAPI: function (cb, p) { this.cb = cb; this.path = p; m.api = this; },
-        patcher: { getnamed: function (name) { return { message: function () { m.named.push([name].concat(Array.prototype.slice.call(arguments))); } }; } }
+        patcher: { getnamed: function (name) {
+            var o = { message: function () { m.named.push([name].concat(Array.prototype.slice.call(arguments))); } };
+            if (name in m.values) o.getvalueof = function () { return m.values[name]; };
+            return o;
+        } }
     };
     ctx.Task.prototype.schedule = function (ms) { this.pending = true; this.ms = ms; };
     ctx.Task.prototype.cancel = function () { this.pending = false; };
     vm.createContext(ctx);
-    // fester Zufall, damit alt und neu dasselbe würfeln
-    vm.runInContext('(function(){ var x = 12345; Math.random = function () { x = (x * 1103515245 + 12345) % 2147483648; return x / 2147483648; }; })();', ctx);
     vm.runInContext(src, ctx);
     ctx.nowMs = function () { return m.clock; };
     m.ctx = ctx;
@@ -35,11 +38,13 @@ function load(src) {
     return m;
 }
 
+var SRC = fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8');
 function startDevice(m) {
     m.send('init');
     m.fire(m.ctx.initTask);
     m.send('statenone');
 }
+function bankstates(m) { return m.on(1, 'bankstate'); }
 
 var STARTS = [], LENS = [];
 for (var i = 0; i < 16; i++) { STARTS.push(10000 + i * 20000); LENS.push(16000); }
@@ -61,12 +66,14 @@ var tests = [];
 function t(name, fn) { tests.push([name, fn]); }
 
 t('ready()-Sperren: Regler und Tempo vor init tun nichts', function () {
-    var m = load(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
+    var m = load(SRC);
     m.send('libstate', 3, 1, 'ok');
     m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
     m.take();
-    m.send('banknum', 2); m.send('banknext'); m.send('bankprev'); m.send('srcbpm', 90); m.send('bpmhalf'); m.send('bpmdouble');
+    m.named = [];
+    m.send('banknum', 2); m.send('banknext'); m.send('bankprev'); m.send('param', 'warp', 1);
     assert.deepStrictEqual(m.on(1), [], 'nichts an Node');
+    assert.deepStrictEqual(m.named, [], 'param vor ready() stellt nichts');
     assert.ok(!m.ctx.selTask.pending);
     startDevice(m); m.take();
     m.send('banknum', 2);
@@ -76,7 +83,7 @@ t('ready()-Sperren: Regler und Tempo vor init tun nichts', function () {
 });
 
 t('bank: klingende Stimmen in beiden poly~ aus, replace erst nach dem Task, letzte Wahl gewinnt', function () {
-    var m = load(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
+    var m = load(SRC);
     startDevice(m);
     m.send('libstate', 3, 1, 'ok');
     m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
@@ -103,7 +110,7 @@ t('bank: klingende Stimmen in beiden poly~ aus, replace erst nach dem Task, letz
 });
 
 t('Song-ms -> Buffer-ms in pos/wplay, playing in Song-ms', function () {
-    var m = load(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
+    var m = load(SRC);
     startDevice(m);
     m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
     m.send('bpm', 120); m.take();
@@ -118,8 +125,8 @@ t('Song-ms -> Buffer-ms in pos/wplay, playing in Song-ms', function () {
     assert.strictEqual(m.on(3, 'wplay')[0][2], 4 * 16000);
 });
 
-t('Klammer am Snippet-Ende: Trigger, Hold (10 ms), Hold rückwärts, Warp+Grid', function () {
-    var m = load(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
+t('Klammer am Snippet-Ende: Trigger, Hold (10 ms), Hold rückwärts, Warp mit Beats', function () {
+    var m = load(SRC);
     startDevice(m);
     m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
     m.send('bpm', 120);
@@ -143,10 +150,10 @@ t('Klammer am Snippet-Ende: Trigger, Hold (10 ms), Hold rückwärts, Warp+Grid',
     assert.ok(m.on(1, 'playstop').length === 0);
     m.send('note', 36 + 5, 0, 1);
     assert.deepStrictEqual(m.on(1, 'playstop')[0], [1, 'playstop', 5]);
-    // Warp + Grid: Quelle 100 BPM, Live 120, Slice 2 Takte -> Quelle bräuchte 4800 ms, Fach hat 3000
+    // Warp mit Beats (ohne Grid-Schalter): Quelle 100 BPM, Live 120, Slice 2 Takte -> Quelle bräuchte 4800 ms, Fach hat 3000
     m.send('playmode', 0); m.send('reverse', 0);
     feedBeats(m, 100, 0);
-    m.send('warp', 1); m.send('gridon', 1); m.take();
+    m.send('warp', 1); m.take();
     m.send('note', 36 + 5, 100, 1);
     var wp = m.on(3, 'wplay')[0], wr = m.on(3, 'rel')[0];
     var R = wp[3], realDur = wr[2] + wr[3];
@@ -158,24 +165,25 @@ t('Klammer am Snippet-Ende: Trigger, Hold (10 ms), Hold rückwärts, Warp+Grid',
     assert.ok(Math.abs((wr[2] + wr[3]) * wp[3] - 4800) < 1, '2 Takte in der Quelle');
 });
 
-t('effStart mit Bank fest, kein Einrasten durch Grid/Snap', function () {
-    var m = load(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
+t('effStart fest, kein Einrasten bei Beats', function () {
+    var m = load(SRC);
     startDevice(m);
     STARTS[2] = 50123;
     m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
     feedBeats(m, 100, 0);
-    m.send('gridon', 1); m.send('snapmode', 2);
     assert.strictEqual(m.ctx.effStart(2), 50123);
+    assert.ok(!('gridon' in m.ctx) && !('snapmode' in m.ctx), 'Grid/Snap gibt es nicht mehr');
     STARTS[2] = 50000;
 });
 
-t('Overlay in Buffer-ms: dur, beats, bars, pads', function () {
-    var m = load(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
+t('Overlay in Buffer-ms ohne Schalter: show nach beatsOK, dur, beats, bars, pads', function () {
+    var m = load(SRC);
     startDevice(m);
     m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    assert.deepStrictEqual(m.on(2, 'grid').filter(function (o) { return o[2] === 'show'; }).pop(), [2, 'grid', 'show', 0], 'ohne Beats aus');
     m.take();
     var b = feedBeats(m, 100, 1);
-    m.send('gridon', 1);
+    assert.deepStrictEqual(m.on(2, 'grid').filter(function (o) { return o[2] === 'show'; }).pop(), [2, 'grid', 'show', 1], 'mit Beats an');
     var g = m.on(2, 'grid'), last = g.lastIndexOf(g.filter(function (o) { return o[2] === 'clear'; }).pop());
     g = g.slice(last);
     assert.deepStrictEqual(g.filter(function (o) { return o[2] === 'dur'; })[0], [2, 'grid', 'dur', 256000]);
@@ -197,7 +205,7 @@ t('Overlay in Buffer-ms: dur, beats, bars, pads', function () {
 });
 
 t('bankstate nur bei Änderung, Song-ms, w gekappt auf l', function () {
-    var m = load(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
+    var m = load(SRC);
     startDevice(m);
     m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
     m.send('bpm', 120); m.send('playmode', 1);
@@ -210,10 +218,86 @@ t('bankstate nur bei Änderung, Song-ms, w gekappt auf l', function () {
     assert.deepStrictEqual(b.slice(1, 7), ['bankstate', 7, 'F2RnxZnubCM', 0, 1, 1]);
     assert.deepStrictEqual(b.slice(7, 23), STARTS);
     assert.deepStrictEqual(b.slice(23, 39), LENS, 'Hold: ganze Snippets');
+    // angehängt: div rate tune warp quant vol voices base
+    assert.strictEqual(b.length, 39 + 8);
+    assert.deepStrictEqual(b.slice(39), [5, 1, 0, 0, 0, 0, 6, 36]);
+});
+
+t('bankstate: die zehn Reglerwerte, gerundet, nur bei Änderung', function () {
+    var m = load(SRC);
+    startDevice(m);
+    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    m.send('bpm', 120);
+    var steps = [['division', 3], ['rate', 1.23456], ['playmode', 1], ['reverse', 1], ['tune', 1], ['warp', 1],
+        ['quantize', 1], ['volume', -3.54], ['voicecount', 2], ['basenote', 48]];
+    steps.forEach(function (st) {
+        m.take();
+        m.send.apply(null, st);
+        assert.strictEqual(bankstates(m).length, 1, st[0] + ' meldet einmal');
+    });
+    var b = bankstates(m)[0];
+    assert.deepStrictEqual(b.slice(5, 7), [1, 1], 'mode rev');
+    assert.deepStrictEqual(b.slice(39), [3, 1.235, 1, 1, 1, -3.5, 2, 48]);
+    assert.strictEqual(m.ctx.P.voices, 3, 'Index 2 = 3 Stimmen');
+    // Mikroänderung unterhalb der Rundung: kein neues bankstate
+    m.take(); m.send('volume', -3.52); m.send('rate', 1.2349);
+    assert.strictEqual(bankstates(m).length, 0);
+    // nochmal derselbe Wert: nichts
+    m.take(); m.send('basenote', 48); m.send('tune', 1);
+    assert.strictEqual(bankstates(m).length, 0);
+});
+
+t('param vom Editor -> setNamed mit varname, unbekannt -> nichts', function () {
+    var m = load(SRC);
+    startDevice(m);
+    var want = { div: 'Division', rate: 'Rate', mode: 'Mode', rev: 'Reverse', tune: 'Tune', warp: 'Warp',
+        quant: 'Quantize', vol: 'Volume', voices: 'Voices', base: 'Base Note' };
+    Object.keys(want).forEach(function (n) {
+        m.named = [];
+        m.send('param', n, 1);
+        assert.deepStrictEqual(m.named, [[want[n], 1]], n);
+    });
+    m.named = [];
+    m.send('param', 'bank', 3); m.send('param', 'constructor', 1); m.send('param', 'Tonal', 1);
+    assert.deepStrictEqual(m.named, [], 'nur die zehn Regler');
+    m.send('param', 'vol', -12.5);
+    assert.deepStrictEqual(m.named, [['Volume', -12.5]]);
+});
+
+t('MIDI: Kanal 15 und 16 spielen Pads, Kanal zählt nicht', function () {
+    var m = load(SRC);
+    startDevice(m);
+    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    m.send('bpm', 120); m.take();
+    m.send('note', 36 + 2, 100, 16);
+    m.send('note', 36 + 3, 100, 15);
+    m.send('note', 36 + 4, 100, 1);
+    assert.deepStrictEqual(m.on(1, 'playing').map(function (o) { return o[2]; }), [2, 3, 4]);
+    assert.deepStrictEqual(m.on(1, 'key'), []);
+    assert.strictEqual(m.on(0, 'pos').length, 3);
+});
+
+t('Feste Attack 2 ms / Release 20 ms in env, rel, gateoff', function () {
+    var m = load(SRC);
+    startDevice(m);
+    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    m.send('bpm', 120); m.take();
+    m.send('note', 36, 100, 1);
+    var env = m.on(0, 'env'), rel = m.on(0, 'rel')[0];
+    assert.deepStrictEqual(env[1], [0, 'env', 100 / 127, 2]);
+    assert.strictEqual(rel[3], 20);
+    assert.strictEqual(rel[2], 250 - 20);
+    ['threshold', 'attack', 'release', 'srcbpm', 'bpmhalf', 'bpmdouble', 'loaded', 'loadfail', 'silence'].forEach(function (f) {
+        assert.ok(!(f in m.ctx), f + ' gibt es nicht mehr');
+    });
+    // Hold loslassen: gateoff 20
+    m.send('playmode', 1); m.send('note', 37, 100, 1); m.take();
+    m.send('note', 37, 0, 1);
+    assert.deepStrictEqual(m.on(0, 'gateoff'), [[0, 'gateoff', 20]]);
 });
 
 t('Prev/Next: Enden, über 128, 350 ms Ruhe', function () {
-    var m = load(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
+    var m = load(SRC);
     startDevice(m);
     m.send('libstate', 130, 129, 'ok');
     m.send.apply(null, bankMsg(7, 129, 100, '/x/7.wav'));
@@ -246,83 +330,168 @@ t('Prev/Next: Enden, über 128, 350 ms Ruhe', function () {
     assert.notStrictEqual(m.on(2, 'status').pop()[2], 'nicht ladbar', 'nach 2 s wieder die normale Zeile');
 });
 
-t('Unbestätigtes, unsicheres Tempo: mit Bank Warp und Grid, ohne Bank nicht', function () {
-    var m = load(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
+t('Tempo: erkanntes Tempo gilt, Warp folgt Beats, ohne Beats festes Verhältnis', function () {
+    var m = load(SRC);
     startDevice(m);
     m.send.apply(null, bankMsg(7, 1, 0, '/x/7.wav'));
+    m.send('bpm', 120); m.send('warp', 1); m.send('division', 9);   // 1 Takt
     m.send('tempo', 100, 0.1);
-    feedBeats(m, 100, 0);
-    m.send('bpm', 120); m.send('warp', 1); m.send('gridon', 1); m.take();
-    assert.strictEqual(m.ctx.st.srcAuto, 1, 'nicht bestätigt');
-    m.send('note', 36, 100, 1);
-    assert.strictEqual(m.on(3, 'wplay').length, 1, 'Warp-Stimme mit Bank');
-    assert.ok(Math.abs(m.on(3, 'wplay')[0][3] - 1.2) < 1e-9, 'Tempo 120/100');
-    assert.ok(m.ctx.gridOK(), 'Grid mit Bank');
-    // ohne Bank (Teletext): bisherige Regel
-    m.send('loaded', '/c/abcdefghijk.wav', 240000, 'abcdefghijk', 'Teletext');
-    m.send('tempo', 100, 0.1);
-    feedBeats(m, 100, 0); m.take();
-    m.send('note', 36, 100, 1);
-    assert.strictEqual(m.on(3, 'wplay').length, 0, 'kein Warp ohne Bank');
-    assert.ok(!m.ctx.gridOK(), 'kein Grid ohne Bank');
-    m.send('tempo', 100, 0.8); m.take();
-    m.send('note', 37, 100, 1);
-    assert.strictEqual(m.on(3, 'wplay').length, 1, 'sicheres Tempo: Warp auch ohne Bank');
+    m.send('analysisready');                       // beattrack angefordert, Beats noch nicht da
+    assert.ok(!m.ctx.beatsOK());
+    m.take(); m.send('note', 36, 100, 1);
+    var wp = m.on(3, 'wplay')[0], wr = m.on(3, 'rel')[0];
+    assert.ok(Math.abs(wp[3] - 1.2) < 1e-9, 'festes Verhältnis 120/100');
+    assert.ok(Math.abs((wr[2] + wr[3]) - 2000) < 1e-6, '1 Takt bei 120 BPM');
+    assert.ok(m.on(2, 'selinfo').pop()[2].indexOf(' T') < 0, 'ohne Beats keine Taktposition');
+    // Beats weichen vom Quelltempo ab (96 statt 100 BPM): Slice endet auf dem Raster der Quelle, nicht beim festen Verhältnis
+    var b = beatsFor(96, 400000);
+    m.send('beatsclear'); m.send.apply(null, ['beatsadd'].concat(b)); m.send('beatsdone', 0, b.length);
+    assert.ok(m.ctx.beatsOK(), 'erkanntes Tempo + Beats');
+    m.take(); m.send('note', 36, 100, 1);
+    wp = m.on(3, 'wplay')[0]; wr = m.on(3, 'rel')[0];
+    assert.ok(Math.abs((wr[2] + wr[3]) * wp[3] - 4 * 60000 / 96) < 1, 'Raster der Quelle: 4 Schläge à 625 ms');
+    assert.ok(/  T\d+\.\d/.test(m.on(2, 'selinfo').pop()[2]), 'Taktposition mit Beats');
+    // kein Tempo: W: kein Tempo
+    m.send.apply(null, bankMsg(8, 2, 0, '/x/8.wav')); m.take();
+    m.send('updateSel');
+    assert.ok(m.on(2, 'selinfo').pop()[2].indexOf('W: kein Tempo') > 0);
 });
 
-t('Tempo: gleiche Zahl bestätigt, bpmset an Node, bpm von Node ohne Echo', function () {
-    var m = load(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
+t('Tempo vom Editor: bpm <video> <bpm> bestätigt, kein bpmset, Analyse überschreibt es nicht', function () {
+    var m = load(SRC);
     startDevice(m);
     m.send.apply(null, bankMsg(7, 1, 0, '/x/7.wav'));
     m.send('analysisready');
     m.send('tempo', 99.5, 0.1);
-    assert.strictEqual(m.ctx.st.srcAuto, 1);
-    m.take();
-    m.send('srcbpm', 99.5);
-    assert.strictEqual(m.ctx.st.srcAuto, 0, 'gleiche Zahl bestätigt');
-    assert.deepStrictEqual(m.on(1, 'bpmset'), [[1, 'bpmset', 'F2RnxZnubCM', 99.5]]);
-    assert.deepStrictEqual(m.on(1, 'beattrack'), [[1, 'beattrack', 99.5]]);
-    m.take(); m.send('bpmdouble');
-    assert.deepStrictEqual(m.on(1, 'bpmset'), [[1, 'bpmset', 'F2RnxZnubCM', 199]]);
+    assert.strictEqual(m.ctx.srcBpm, 99.5);
     m.take();
     m.send('bpm', 'F2RnxZnubCM', 100);
-    assert.strictEqual(m.ctx.st.srcBpm, 100);
+    assert.strictEqual(m.ctx.srcBpm, 100);
+    assert.strictEqual(m.ctx.srcAuto, 0);
     assert.deepStrictEqual(m.on(1, 'bpmset'), [], 'kein Echo');
     assert.deepStrictEqual(m.on(1, 'beattrack'), [[1, 'beattrack', 100]]);
+    m.send('tempo', 120, 0.9);
+    assert.strictEqual(m.ctx.srcBpm, 100, 'bestätigt bleibt');
     m.send('bpm', 'anderesVide', 80);
-    assert.strictEqual(m.ctx.st.srcBpm, 100, 'anderes Video zählt nicht');
+    assert.strictEqual(m.ctx.srcBpm, 100, 'anderes Video zählt nicht');
     m.send('bpm', 128);
     assert.strictEqual(m.ctx.P.bpm, 128, 'Lives Tempo kommt weiter an');
+    // bank mit bestätigtem Tempo
+    m.send.apply(null, bankMsg(8, 2, 87, '/x/8.wav'));
+    m.send('tempo', 120, 0.9);
+    assert.strictEqual(m.ctx.srcBpm, 87);
 });
 
-t('Session v2: bankId -> bankopen, bankgone -> Kopie laden, 1.x-Session -> load', function () {
-    var m = load(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
+t('Session: speichert nur bankId, liest alte Dateien, bankId -> bankopen', function () {
+    var m = load(SRC);
     m.send('init'); m.fire(m.ctx.initTask);
+    m.send('libstate', 3, 1, 'ok');
     var o = { bankId: 7, id: 'F2RnxZnubCM', title: 'Funk', pads: STARTS, srcBpm: 99.5, srcAuto: 0, bpmConf: 0.4 };
     m.take();
     m.send('state', encodeURIComponent(JSON.stringify(o)));
     assert.deepStrictEqual(m.on(1, 'bankopen'), [[1, 'bankopen', 7]]);
-    assert.deepStrictEqual(m.on(1, 'load'), []);
-    m.take();
-    m.send('bankgone', 7);
-    assert.deepStrictEqual(m.on(1, 'load'), [[1, 'load', 'F2RnxZnubCM']]);
-    assert.deepStrictEqual(m.on(2, 'status').pop(), [2, 'status', 'Bank gelöscht']);
-    m.send('loaded', '/c/F2RnxZnubCM.wav', 400000, 'F2RnxZnubCM', 'Titanic');
-    assert.deepStrictEqual(Array.from(m.ctx.st.pads), STARTS, 'Starts der Kopie bleiben');
-    assert.strictEqual(m.ctx.st.bankId, 0);
+    assert.deepStrictEqual(m.on(1, 'bankload'), []);
+    assert.deepStrictEqual(m.on(2, 'status').pop(), [2, 'status', 'Lade letzten Stand …']);
+    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
     var saved = JSON.parse(decodeURIComponent(m.on(1, 'savestate').pop()[2]));
-    assert.deepStrictEqual(Object.keys(saved).sort(), ['bankId', 'bpmConf', 'id', 'pads', 'srcAuto', 'srcBpm', 'title']);
-    assert.deepStrictEqual(m.on(2, 'showname').pop(), [2, 'showname', 'keine Bank: Titanic']);
-    // 1.x-Session ohne bankId
-    m = load(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
-    m.send('init'); m.fire(m.ctx.initTask);
-    m.send('state', encodeURIComponent(JSON.stringify({ id: 'abcdefghijk', title: 'Alt', pads: STARTS, locks: [], favs: [], fav: 2 })));
-    assert.deepStrictEqual(m.on(1, 'load'), [[1, 'load', 'abcdefghijk']]);
-    assert.strictEqual(m.ctx.st.bankId, 0);
+    assert.deepStrictEqual(saved, { bankId: 7 });
+    assert.deepStrictEqual(Object.keys(m.ctx.st), ['bankId']);
+    // Node neu gestartet, derselbe Stand: nichts neu laden
+    m.take(); m.send('needsession');
+    m.send('state', m.ctx.lastSaved);
+    assert.deepStrictEqual(m.on(1, 'bankopen'), []);
+    assert.deepStrictEqual(m.on(1, 'bankload'), []);
 });
 
-t('Bibliothek leer/kaputt: mit Bank stumm, ohne Bank (Teletext) spielt weiter', function () {
-    var m = load(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
+t('Ohne Bank: 1.x-/Teletext-Session, statenone, bankId 0 -> bankload <Regler>, erst nach libstate ok', function () {
+    // libstate ok vor state (Reihenfolge von Node): sofort
+    var m = load(SRC);
+    m.values.bank = 5;
+    m.send('init'); m.fire(m.ctx.initTask);
+    m.send('libstate', 9, 0, 'ok');
+    m.take();
+    m.send('state', encodeURIComponent(JSON.stringify({ id: 'abcdefghijk', title: 'Alt', pads: STARTS, locks: [], favs: [], fav: 2 })));
+    assert.deepStrictEqual(m.on(1, 'bankload'), [[1, 'bankload', 5]]);
+    assert.deepStrictEqual(m.on(1, 'load'), []);
+    assert.strictEqual(m.ctx.st.bankId, 0);
+    assert.deepStrictEqual(m.on(2, 'status').pop(), [2, 'status', 'Lade letzten Stand …']);
+    // Teletext-Stand aus 2.x (bankId 0 mit Kopie)
+    m = load(SRC); m.values.bank = 2;
+    m.send('init'); m.fire(m.ctx.initTask); m.send('libstate', 9, 0, 'ok'); m.take();
+    m.send('state', encodeURIComponent(JSON.stringify({ bankId: 0, id: 'abcdefghijk', title: 'T', pads: STARTS })));
+    assert.deepStrictEqual(m.on(1, 'bankload'), [[1, 'bankload', 2]]);
+    // statenone vor libstate: warten, dann bei ok laden. Ohne getvalueof (Attrappe fehlt): 1
+    m = load(SRC);
+    startDevice(m);
+    assert.deepStrictEqual(m.on(1, 'bankload'), [], 'noch kein libstate');
+    m.send('libstate', 0, 0, 'leer');
+    assert.deepStrictEqual(m.on(1, 'bankload'), [], 'leer: nichts');
+    assert.deepStrictEqual(m.on(2, 'showname').pop(), [2, 'showname', 'Bibliothek leer']);
+    m.take();
+    m.send('libstate', 1, 0, 'ok');
+    assert.deepStrictEqual(m.on(1, 'bankload'), [[1, 'bankload', 1]]);
+    // libstate ok vor state: erst nach state
+    m = load(SRC); m.values.bank = [130.0];
+    m.send('init'); m.fire(m.ctx.initTask);
+    m.send('libstate', 3, 0, 'ok');
+    assert.deepStrictEqual(m.on(1, 'bankload'), [], 'state noch nicht da');
+    m.send('statenone');
+    assert.deepStrictEqual(m.on(1, 'bankload'), [[1, 'bankload', 128]], 'Regler höchstens 128');
+    // Bank kommt: kein weiteres bankload bei späteren libstate ok
+    m.send.apply(null, bankMsg(7, 3, 100, '/x/7.wav'));
+    m.take(); m.send('libstate', 3, 3, 'ok');
+    assert.deepStrictEqual(m.on(1, 'bankload'), []);
+});
+
+t('bankgone: Bank gelöscht -> bankload <Regler>, Pads tun nichts bis zur neuen Bank', function () {
+    var m = load(SRC);
+    m.values.bank = 4;
+    m.send('init'); m.fire(m.ctx.initTask);
+    m.send('libstate', 5, 0, 'ok');
+    m.send('state', encodeURIComponent(JSON.stringify({ bankId: 7 })));
+    m.send.apply(null, bankMsg(7, 4, 100, '/x/7.wav'));
+    m.fire(m.ctx.replaceTask);
+    m.send('note', 36, 100, 1);                    // klingt
+    m.take();
+    m.send('bankgone', 7);
+    assert.deepStrictEqual(m.on(0, 'gateoff'), [[0, 'gateoff', 5]], 'klingende Stimme aus');
+    assert.deepStrictEqual(m.on(1, 'bankload'), [[1, 'bankload', 4]]);
+    assert.deepStrictEqual(m.on(1, 'load'), []);
+    assert.deepStrictEqual(m.on(2, 'status').pop(), [2, 'status', 'Bank gelöscht']);
+    m.fire(m.ctx.flashTask);
+    assert.deepStrictEqual(m.on(2, 'status').pop(), [2, 'status', 'Lade letzten Stand …']);
+    assert.deepStrictEqual(JSON.parse(decodeURIComponent(m.on(1, 'savestate').pop()[2])), { bankId: 0 });
+    assert.deepStrictEqual(m.on(2, 'shownr').pop(), [2, 'shownr', '-']);
+    m.take(); m.send('note', 36, 100, 1); m.send('padhit', 2);
+    assert.deepStrictEqual(m.on(0), [], 'nichts geladen: stumm');
+    assert.deepStrictEqual(m.on(1, 'playing'), []);
+    m.send.apply(null, bankMsg(9, 4, 100, '/x/9.wav'));
+    m.take(); m.send('note', 36, 100, 1);
+    assert.strictEqual(m.on(0, 'pos').length, 1, 'Nachrücker spielt');
+});
+
+t('bankfail ohne klingende Bank: stumm, „nicht ladbar“, Status', function () {
+    var m = load(SRC);
+    startDevice(m);
+    m.send('libstate', 3, 0, 'ok');
+    assert.deepStrictEqual(m.on(1, 'bankload'), [[1, 'bankload', 1]]);
+    m.take();
+    m.send('bankfail', 1, 'Snippets', 'fehlen');
+    assert.deepStrictEqual(m.on(2, 'shownr').pop(), [2, 'shownr', '-']);
+    assert.deepStrictEqual(m.on(2, 'showname').pop(), [2, 'showname', 'nicht ladbar']);
+    assert.deepStrictEqual(m.on(2, 'status').pop(), [2, 'status', 'Bank im Editor prüfen']);
+    assert.strictEqual(m.ctx.muted, 1);
+    m.take(); m.send('note', 36, 100, 1);
+    assert.deepStrictEqual(m.on(0), []);
+    // andere Bank gewählt: spielt
+    m.send.apply(null, bankMsg(8, 2, 100, '/x/8.wav'));
+    assert.strictEqual(m.ctx.muted, 0);
+    m.take(); m.send('note', 36, 100, 1);
+    assert.strictEqual(m.on(0, 'pos').length, 1);
+});
+
+t('Bibliothek leer/kaputt: stumm, wieder ok -> bankopen', function () {
+    var m = load(SRC);
     startDevice(m);
     m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
     m.take();
@@ -333,17 +502,11 @@ t('Bibliothek leer/kaputt: mit Bank stumm, ohne Bank (Teletext) spielt weiter', 
     assert.deepStrictEqual(m.on(0), [], 'stumm');
     m.send('libstate', 3, 1, 'ok');
     assert.deepStrictEqual(m.on(1, 'bankopen'), [[1, 'bankopen', 7]], 'wieder lesbar -> Bank neu laden');
-    // Teletext
-    m = load(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
-    startDevice(m);
-    m.send('loaded', '/c/x.wav', 200000, 'abcdefghijk', 'Teletext');
-    m.send('libstate', 0, 0, 'leer');
-    m.take(); m.send('note', 36, 100, 1);
-    assert.strictEqual(m.on(0, 'pos').length, 1, 'Teletext spielt');
+    assert.deepStrictEqual(m.on(1, 'bankload'), []);
 });
 
 t('trackname über LiveAPI', function () {
-    var m = load(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
+    var m = load(SRC);
     startDevice(m);
     assert.strictEqual(m.api.path, 'this_device canonical_parent');
     assert.strictEqual(m.api.property, 'name');
@@ -352,44 +515,12 @@ t('trackname über LiveAPI', function () {
     assert.deepStrictEqual(m.on(1, 'trackname'), [[1, 'trackname', '1-YT Sampler']]);
 });
 
-// Teletext-Weg: gleiche Nachrichten an 1.3.6 und an den neuen Stand, Stimmen/Analyse/Overlay müssen gleich sein
-t('Teletext-Weg wie v1.3.6', function () {
-    var oldSrc = cp.execSync('git show v1.3.6:ytsampler_main.js', { cwd: ROOT, encoding: 'utf8' });
-    function runAll(src) {
-        var m = load(src);
-        startDevice(m);
-        m.send('bpm', 124); m.send('scaleroot', 2);
-        m.send('loaded', '/c/abcdefghijk.wav', 240000, 'abcdefghijk', 'Ein', 'Titel');
-        m.send('tuning', -12);
-        m.send('tempo', 98, 0.7);
-        m.send('silence', 0, 3000, 200000, 240000);
-        feedBeats(m, 98, 2);
-        for (var p = 0; p < 16; p++) m.send('padinfo', p, 0.5, p % 12, p % 2, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1);
-        m.send('tune', 1);
-        var steps = [['note', 36, 100, 1], ['note', 40, 90, 2], ['division', 3], ['note', 41, 80, 1], ['gridon', 1], ['snapmode', 1],
-            ['note', 42, 100, 1], ['warp', 1], ['note', 43, 100, 1], ['playmode', 1], ['note', 44, 100, 1], ['note', 44, 0, 1],
-            ['reverse', 1], ['note', 45, 100, 1], ['note', 45, 0, 1], ['rate', 1.5], ['warp', 0], ['note', 46, 100, 1],
-            ['srcbpm', 120], ['note', 47, 100, 1], ['bpmhalf'], ['note', 48, 100, 1], ['padhit', 3], ['padup', 3]];
-        steps.forEach(function (s, k) { m.clock += 37; m.send.apply(null, s); });
-        return m.out.filter(function (o) {
-            if (o[0] === 0 || o[0] === 3) return true;
-            if (o[0] === 1) return ['analyze', 'beattrack', 'load', 'key'].indexOf(o[1]) >= 0;   // analyzeall: Fenster seit 2.1 fest (eigener Test)
-            if (o[0] === 2) return ['selinfo', 'wsel', 'padflash', 'padlight', 'padsel'].indexOf(o[1]) >= 0 ||
-                (o[1] === 'grid' && ['dur', 'beats', 'show', 'pads', 'clear'].indexOf(o[2]) >= 0);
-            return false;
-        }).map(function (o) { return JSON.stringify(o); });
-    }
-    var a = runAll(oldSrc), b = runAll(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
-    for (var k = 0; k < Math.max(a.length, b.length); k++) assert.strictEqual(b[k], a[k], 'Nachricht ' + k);
-    assert.ok(a.length > 100);
-});
-
 // Analysefenster fest 4 s: Slice-Länge, Rate und Mode ändern die Tonart (und damit Tune) nicht
 t('analyzeall: festes Fenster unabhängig von Division, Rate, Mode', function () {
-    var m = load(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
+    var m = load(SRC);
     startDevice(m);
     m.send('bpm', 124);
-    m.send('loaded', '/c/abcdefghijk.wav', 240000, 'abcdefghijk', 'Ein', 'Titel');
+    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
     m.send('analysisready');
     [['division', 0], ['division', 10], ['rate', 2], ['playmode', 1], ['playmode', 0]].forEach(function (s) { m.send.apply(null, s); });
     var spans = m.out.filter(function (o) { return o[0] === 1 && o[1] === 'analyzeall'; }).map(function (o) { return o[2]; });
