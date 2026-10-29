@@ -1,12 +1,12 @@
 # YT Sampler – Hinweise für Claude
 
-Max-for-Live-Instrument (macOS, Apple Silicon, Live 12 / Max 9) nach dem Vorbild von ypc2000.fun: 16 Slices eines YouTube-Tracks auf Pads, per MIDI fingerdrummen. Seit 2.0 kuratiert: Bänke (16 Pads aus einem Track, gespeichert als 16 Snippets à 16 s) in einer globalen Bibliothek, bearbeitet im Browser-Editor, auf der Bühne per `Bank`-Regler durchgeschaltet. Begriffe in `GLOSSARY.md`, die Spezifikation von 2.0 in `.scratch/bank-editor/spec.md`.
+Max-for-Live-Instrument (macOS, Apple Silicon, Live 12 / Max 9) nach dem Vorbild von ypc2000.fun: 16 Slices eines YouTube-Tracks auf Pads, per MIDI fingerdrummen. Seit 2.0 kuratiert: Bänke (16 Pads aus einem Track, gespeichert als 16 Snippets à 16 s) in einer globalen Bibliothek, bearbeitet im Browser-Editor, auf der Bühne per `Bank`-Regler durchgeschaltet. Seit 3.0 **nur noch** kuratiert: Das Device spielt ausschließlich Bänke, kuratiert wird nur im Editor, der Editor spiegelt die Device-Regler. Begriffe in `GLOSSARY.md`. Spezifikationen: 2.0 in `.scratch/bank-editor/spec.md`, 3.0 in `.scratch/device-3/spec.md` (ändert nur, was dort steht, sonst gilt 2.0). Teletext, IR-Fernbedienung, Schreibmaschine und Spielen ohne Bank sind seit 3.0 weg, beschrieben in `.scratch/archiv/teletext-ir-schreibmaschine.md` (Code im Tag `v2.1.0`).
 
-**Charakter:** Live-Werkzeug für die Bühne, kein Produktionswerkzeug. Features, die zu speziell sind oder die Bedienung komplizierter machen, lehnt der Nutzer ab. Im Zweifel einfach halten und vorher fragen. Bewusst abgelehnt: Launch-Quantisierung (Clip-artig auf Takte; Input-Quantize auf 1/16 per Toggle „Quant“ gibt es seit 1.1.0), Button zum Verschieben der „1“, Pads als Clip exportieren. Außerhalb von 2.0 (Spec 1): Pads aus mehreren Tracks, Länge pro Pad, Wiedergabe im Browser, Editor ohne Device, Auswahl zwischen Devices, Import der alten Favoriten, Export.
+**Charakter:** Live-Werkzeug für die Bühne, kein Produktionswerkzeug. Features, die zu speziell sind oder die Bedienung komplizierter machen, lehnt der Nutzer ab. Im Zweifel einfach halten und vorher fragen. Bewusst abgelehnt: Launch-Quantisierung (Clip-artig auf Takte; Input-Quantize auf 1/16 per Toggle „Quant“ gibt es seit 1.1.0), Button zum Verschieben der „1“, Pads als Clip exportieren. Außerhalb von 2.0 (Spec 1): Pads aus mehreren Tracks, Länge pro Pad, Wiedergabe im Browser, Editor ohne Device, Auswahl zwischen Devices, Import der alten Favoriten, Export. Außerhalb von 3.0: Grid/Snap als eigener Schalter, Bankwahl-Regler im Editor spiegeln, Ersatz für IR oder Schreibmaschine.
 
 **Sprache:** Mit dem Nutzer Deutsch. UI-Beschriftungen und Code-Kommentare deutsch. Parameternamen (`parameter_longname`) sind englisch, so bleiben sie.
 
-**Setup des Nutzers:** Pad-Controller „Mutprobe“ (Pro Micro, MIDI-Noten), umgebaute Schreibmaschine (MIDI-Noten auf Kanal 16 = Tasten), Röhrenmonitor über SCART für die Teletext-Seite, dazu Technomaschine und Sidestep-Controller.
+**Setup des Nutzers:** Pad-Controller „Mutprobe“ (Pro Micro, MIDI-Noten), dazu Technomaschine und Sidestep-Controller. Alle MIDI-Kanäle spielen Pads.
 
 ## Dateien
 
@@ -15,23 +15,21 @@ Alle Dateien müssen neben der `.amxd` liegen. Abhängigkeiten: `brew install yt
 | Datei | Rolle |
 |---|---|
 | `YT Sampler.amxd` / `YT Sampler.maxpat` | Device bzw. derselbe Patcher als JSON. **Immer synchron halten.** |
-| `ytsampler_main.js` | `[js]`: Pads, Stimmen, Bank laden, Song-/Buffer-ms, Tune, Warp, Grid, Anzeige, Zustand. **ES5.** |
-| `ytsampler_node.js` | `[node.script]`: Bibliothek, Snippets, Analyse, Würfeln für den Editor, Downloads, Session-Dateien, Webserver für Editor und Teletext. Modernes JS erlaubt. Alle Funktionen stehen auch in `module.exports` (Tests). |
+| `ytsampler_main.js` | `[js]`: Pads, Stimmen, Bank laden, Song-/Buffer-ms, Tune, Warp, Beat-Overlay, Anzeige, Regler an den Editor melden, Zustand. **ES5.** |
+| `ytsampler_node.js` | `[node.script]`: Bibliothek, Snippets, Analyse, Würfeln für den Editor, Downloads, Session-Dateien, Webserver für den Editor. Modernes JS erlaubt. Alle Funktionen stehen auch in `module.exports` (Tests). |
 | `editor.html` | Bank-Editor (http://localhost:8765/editor), eine Datei, ES2020, keine externen Abhängigkeiten. |
 | `ytpads.js` | jsui 4×4-Pads (Pad 1 unten links). **ES5.** |
 | `ytgrid.js` | jsui-Overlay über der Waveform (Takt-/Beatlinien, Pad-Marken), `ignoreclick 1`. **ES5.** |
 | `ytvoice.maxpat` / `ytwarpvoice.maxpat` | Stimmen für die zwei `poly~` (je 16). Erzeugt von `tools/build_voices.py`. |
-| `teletext.html`, `Teletext öffnen.command` | Videotext-Seite (http://localhost:8765) und Starter als randloses Chrome-Fenster. |
-| `ir_teletext/ir_teletext.ino` | Pro Micro mit IR-Empfänger an D7. Reicht rohe IR-Codes als Noten auf Kanal 15 weiter. Wird nicht nach Live kopiert. |
 | `tools/patchlib.py` | `Patch` (Box-Builder), `write_amxd()`, `check()`. |
 | `tools/release.sh` | Neue Version taggen und in die Ableton User Library kopieren. |
-| `tools/deploy.sh` | Nur kopieren, ohne Commit: Zwischenstand in Live testen. `release.sh` ruft es am Ende auf. Kopiert `*.amxd *.maxpat *.js teletext.html editor.html`, `.command`, `README.md`, `VERSION`. |
+| `tools/deploy.sh` | Nur kopieren, ohne Commit: Zwischenstand in Live testen. `release.sh` ruft es am Ende auf. Kopiert `*.amxd *.maxpat *.js editor.html README.md VERSION`. |
 | `tools/tests/` | Testskripte (`node tools/tests/test_*.js`), siehe „Testen“. Werden nicht nach Live kopiert. |
 | `README.md` | Anleitung für den Nutzer. |
 
 Ablage in zwei Ordnern (Spec 2.1):
-- **D** (Datenordner) = `~/Library/Mobile Documents/com~apple~CloudDocs/YTSampler/`, ohne iCloud Drive `~/Music/YTSampler/`. Darin `library.json` (+ `library.lock` mit PID), `backup/bibliothek-JJJJ-MM-TT-hhmmss.json` (10 neueste), `snippets/<bankId>.wav` (16 × 16 s, 44,1 kHz/16 Bit/Stereo) + `<bankId>.json` (`video`, `starts`, `lens`, `dur`) + `<videoId>.chroma`, `sessions/<nr>.json` (`version: 2`) + `<nr>.lock` + einmalig `<nr>.v1.json`, `ir.json` (gelernte Fernbedienung), `web/` (Kopien von `teletext.html`/`editor.html` für eingefrorene Devices). Keine absoluten Pfade in D.
-- **L** = `~/Music/YTSampler/`: `cache/` (`<id>.wav` ganze Tracks, `<id>.json`, `<id>.chroma`), `chrome-profile/`. Wegwerfbar, wird nie automatisch gelöscht.
+- **D** (Datenordner) = `~/Library/Mobile Documents/com~apple~CloudDocs/YTSampler/`, ohne iCloud Drive `~/Music/YTSampler/`. Darin `library.json` (+ `library.lock` mit PID), `backup/bibliothek-JJJJ-MM-TT-hhmmss.json` (10 neueste), `snippets/<bankId>.wav` (16 × 16 s, 44,1 kHz/16 Bit/Stereo) + `<bankId>.json` (`video`, `starts`, `lens`, `dur`) + `<videoId>.chroma`, `sessions/<nr>.json` (`version: 2`, `state` seit 3.0 nur `{bankId}`) + `<nr>.lock` + einmalig `<nr>.v1.json`, `web/editor.html` (Kopie für eingefrorene Devices). Keine absoluten Pfade in D. Reste aus 2.x, die 3.0 nicht anfasst und nicht löscht: `ir.json`, `web/teletext.html`.
+- **L** = `~/Music/YTSampler/`: `cache/` (`<id>.wav` ganze Tracks, `<id>.json`, `<id>.chroma`), Rest aus 2.x `chrome-profile/` (bleibt in `LOCAL_ONLY`). Wegwerfbar, wird nie automatisch gelöscht.
 - **Umzug** beim ersten Start von 2.0: Gibt es iCloud Drive, aber kein D, verschiebt Node alles aus L außer `cache/` und `chrome-profile/` per `rename` nach D. Gescheitert → weiter in L, Status „Umzug nach iCloud fehlgeschlagen“. Tests laufen deshalb nur in einem Temp-HOME (die Harness verweigert sonst).
 
 ## Git und Versionen
@@ -54,7 +52,7 @@ Der Nutzer arbeitet mit einer **Master-Session** (Claude-Desktop-App, oft per Re
 - **Fragen an den Nutzer** stellen Arbeitssessions nie selbst. Sie schicken sie per SendMessage an die Master-Session: Titel, Kontext in 1–2 Sätzen, 2–4 Optionen mit Empfehlung zuerst, blockiert ja/nein. Die Master-Session zeigt sie als klickbare Karten im Chat (visualize, Modul elicitation) und schickt die Antworten zurück. Jeder Brief für eine neue Session nennt diese Regel und die `local_…`-ID der Master-Session (in list_sessions steht sie als `startedBy`).
 - Den Fortschritt der Sessions zeigt die Master-Session in ihrer Aufgabenliste, bei laufenden Sessions mit verknüpfter Session.
 - Den Patch (`.maxpat`/`.amxd`) ändert immer nur eine Session gleichzeitig. Sessions, die parallel laufen, brauchen getrennte Dateien.
-- Größere Vorhaben werden erst geplant, dann gebaut. Vorbild ist `.scratch/bank-editor/`: Karte (`map.md`), Entscheidungs-Tickets (`issues/`), daraus `spec.md` mit Bau-Paketen. Die Spec ist der gültige Stand, die Tickets erklären das Warum. Begriffe stehen in `GLOSSARY.md`.
+- Größere Vorhaben werden erst geplant, dann gebaut. Vorbild sind `.scratch/bank-editor/` und `.scratch/device-3/`: Karte (`map.md`), Entscheidungs-Tickets (`issues/`), daraus `spec.md` mit Bau-Paketen. Die Spec ist der gültige Stand, die Tickets erklären das Warum. Begriffe stehen in `GLOSSARY.md`.
 
 ## Neuer Rechner
 
@@ -66,8 +64,9 @@ git clone https://github.com/eliasu/YTSampler.git ~/Sites/YTSampler
 cd ~/Sites/YTSampler && tools/deploy.sh
 ```
 - Gebraucht werden Ableton Live 12 mit Max 9 und für die Editor-Tests Chrome unter /Applications.
-- Bibliothek, Snippets, Sessions und `ir.json` kommen über iCloud Drive (`YTSampler/`, dort „Geladen lassen“). Derselbe Apple-Account muss angemeldet sein.
-- Lokal bleiben `cache/` mit den ganzen WAVs (er baut sich beim Bearbeiten im Editor neu auf) und `chrome-profile/`.
+- **Intel-Mac mit macOS 14:** Homebrew kann `yt-dlp` und `deno` dort nicht bauen. Stattdessen die fertigen Binaries von den GitHub-Releases nach `~/.local/bin` legen: `yt-dlp_macos` (als `yt-dlp`, ausführbar) und `deno-x86_64-apple-darwin.zip` (entpackt `deno`). `ffmpeg` geht weiter über brew. `~/.local/bin` steht in `EXTRA_PATHS` von Node, so findet das Device die Programme auch unter Live.
+- Bibliothek, Snippets und Sessions kommen über iCloud Drive (`YTSampler/`, dort „Geladen lassen“). Derselbe Apple-Account muss angemeldet sein.
+- Lokal bleibt `cache/` mit den ganzen WAVs (er baut sich beim Bearbeiten im Editor neu auf).
 - Die Erinnerungen von Claude unter `~/.claude/` kommen nicht mit. Was wichtig ist, steht deshalb hier.
 
 ## Signalfluss im Hauptpatch
@@ -77,31 +76,37 @@ cd ~/Sites/YTSampler && tools/deploy.sh
 - `node.script`-Ausgang 0 geht **direkt** an `[js]`, ohne Router. Jeder Node-Selektor braucht eine gleichnamige Funktion in `[js]`, sonst „no function“ im Max-Fenster. `status` aus Node landet in `status()` und wird dort zur normalen Statuszeile.
 - `buffer~` rechter Ausgang (fertig geladen) → `set ---ytbuf` → `waveform~`.
 - `live.thisdevice` → `t b b b`: erst `init` an `[js]`, dann `set ---ytbuf` an `waveform~`, dann `live.path live_set` → Observer `tempo` (→ `prepend bpm`), `root_note`, `scale_intervals`.
-- `notein` → `pack` → `note <pitch> <vel> <kanal>` an `[js]`. Kanal 16 = Schreibmaschine (`key`), Kanal 15 = IR (ignoriert), Rest = Pads.
+- `notein` → `pack` → `note <pitch> <vel> <kanal>` an `[js]`. `[js]` ignoriert den Kanal, alle Kanäle spielen Pads.
+- `live.gain~` (Volume, obj-5) Ausgang 3 (dB) → `prepend volume` (obj-197) → `[js]`. Nur zum Melden an den Editor, der Klang läuft direkt über `live.gain~`.
 - `metro 16n @quantize 16n @active 1` → `tick` an `[js]` (Input-Quantize; läuft nur bei laufendem Transport). Pad-Anschläge gehen über `hit()`, das wartet bis zum nächsten `tick` oder sofort `trigger`/`noteoff` aufruft.
 - Linker Block: `Bank` (`live.numbox` 1–128, varname `bank` für `setNamed`) → `prepend banknum`. Nicht `prepend bank`: `bank` ist die Node-Nachricht zum Laden. `Bank Prev`/`Bank Next` (`live.text`) → `[t b]` → `bankprev`/`banknext`.
-- Die übrigen Regler je über `prepend <name>` an `[js]`. Vom Patch geht nichts mehr direkt an Node.
+- Die übrigen Regler je über `prepend <name>` an `[js]`: `Division` → `division`, `Rate` → `rate`, `Mode` → `playmode`, `Reverse` → `reverse`, `Tune` → `tune`, `Warp` → `warp`, `Quantize` → `quantize`, `Voices` → `voicecount`, `Base Note` → `basenote`. Vom Patch geht nichts direkt an Node.
+- Parameter (14): `Bank`, `Bank Prev`, `Bank Next`, `Division`, `Base Note`, `Voices`, `Rate`, `Mode`, `Reverse`, `Tune`, `Warp`, `Input Quantize`, `Volume`, `Session` (unsichtbar). Seit 3.0 weg: `Tonal`, `Attack`, `Release`, `Source BPM`, `BPM Half`, `BPM Double`, `Grid`, `Snap`.
 - Achtung: `route` entfernt das erste Wort. Was hinter dem Router ankommt, hat kein Selektor-Präfix mehr.
 - `tools/tests/test_wiring.js` prüft das alles gegen die Quelltexte.
 
 ## Nachrichtenprotokolle
 
-Vollständig in Spec 6. Freitext (Name, Pfad, Grund) steht immer am Ende, Namen laufen durch `clean()`, fehlende Video-ID = `-`.
+Vollständig in Spec 2.0 Abschnitt 6, Änderungen in Spec 3.0 Abschnitt 3. Freitext (Name, Pfad, Grund) steht immer am Ende, Namen laufen durch `clean()`, fehlende Video-ID = `-`.
 
 **An die Stimmen** (immer erst `target <k>`, k = 1…16), Positionen in Buffer-ms:
-- beide: `env <wert> [<ms>]`, `rel <verzögerung> <releasezeit>`, `gateoff <releasezeit>`
+- beide: `env <wert> [<ms>]`, `rel <verzögerung> <releasezeit>`, `gateoff <releasezeit>`. Attack 2 ms, Release 20 ms fest (`ATK_MS`, `REL_MS`).
 - Sampler: `pos <von> <bis> <dauer>` (ms) → `line~` fährt die Leseposition, `play~` liest.
 - Warp: `wplay <position> <tempo> <tonhöhe>` → `groove~ @timestretch 1`, Tempo als `sig~` (negativ = rückwärts), Tonhöhe per `pitchshift`. Die Stimme mutet sich via `thispoly~` 50 ms nach dem Release-Ende.
 
-**Song-ms / Buffer-ms:** Mit Bank liegt im Buffer Fach *i* ab `i × 16000`. `[js]` rechnet intern in Song-ms und rechnet nur an den Ausgängen um (`toBuf`): Stimmen, `wsel`, `grid` (`dur 256000`, `pads` = 16 Fachgrenzen, `beats`/`bars` pro Fach). Song-ms bleiben: Infozeile, Analyse-Anfragen, `bankstate`, `playing`, Session. Ohne Bank ist Buffer = Song.
+**Song-ms / Buffer-ms:** Im Buffer liegt Fach *i* ab `i × 16000`. `[js]` rechnet intern in Song-ms und rechnet nur an den Ausgängen um (`toBuf`): Stimmen, `wsel`, `grid` (`dur 256000`, `pads` = 16 Fachgrenzen, `beats`/`bars` pro Fach). Song-ms bleiben: Infozeile, Analyse-Anfragen, `bankstate`, `playing`. Ohne Bank (`B === null`) ist nichts geladen, `durMs = 0`, Pads tun nichts.
 
-**`[js]` → Node:** `session <nr>`, `savestate <uri-kodiertes JSON>`, `load <id>` (Teletext/keine Bank), `analyze <i> <start> <span>`, `analyzeall <span> <16 starts>`, `beattrack <bpm>`, `key <code>`, `bankstate <bankId> <video|-> <sel> <mode> <rev> <s×16> <w×16>` (nur bei Änderung), `bankpeek <nr>`, `banksel <nr>`, `bankopen <bankId>`, `bpmset <video> <bpm>`, `playing <pad> <von> <bis> <dauer>`, `playstop <pad>`, `trackname <name…>`.
-**Node → `[js]`:** `bank <id> <nr> <bpm> <s×16> <l×16> <songdur> <video> <pfad…>` (davor `bankname <id> <name…>`), `bankgone <id>`, `bankfail <id> <grund…>`, `libstate <anzahl> <nr> <ok|leer|kaputt|neuer>`, `bankpeek <nr> <anzahl> <name…>`, `bpm <video> <bpm>` (Lives Tempo kommt als `bpm <tempo>` mit einem Argument), `padhit <i>`/`padup <i>` (Editor), `loaded <pfad> <ms> <id> <titel…>` (nur ohne Bank), `loadfail <video> <grund…>`, `needsession`, `newsession <nr>`, `state <kodiert>`, `statenone`, `status <text…>`, `tuning <cent>`, `tempo <bpm> <konf>`, `silence <von> <bis> …`, `analysisready`, `padinfo <i> <konf> <grundton> <moll> <12 chroma>`, `beatsclear`, `beatsadd <ms…>` (Blöcke à 200), `beatsdone <down> <anzahl>`.
+**Regler-Werte** (`name` → varname → Handler): `div` → `Division` → `division` (Index 0–10 in `DIVS`), `rate` → `Rate` → `rate` (0,25–2), `mode` → `Mode` → `playmode`, `rev` → `Reverse` → `reverse`, `tune` → `Tune` → `tune`, `warp` → `Warp` → `warp`, `quant` → `Quantize` → `quantize` (0/1), `vol` → `Volume` → `volume` (−70–6 dB), `voices` → `Voices` → `voicecount` (Index 0–6 in `VOICE_OPTS`), `base` → `Base Note` → `basenote` (0–127). In `[js]` als `PARAM_VAR`.
+
+**Patch → `[js]`:** `note <p> <v> <kanal>`, `tick`, `init`, `bpm <tempo>` (Live, ein Argument), `scaleroot`/`scaleints` (Observer), `banknum`, `bankprev`, `banknext`, `sessionid`, die zehn Regler-Handler oben.
+**`[js]` → Node:** `session <nr>`, `savestate <uri-kodiertes JSON>` (nur `{bankId}`), `analyzeall <span> <16 starts>`, `beattrack <bpm>`, `bankstate <bankId> <video|-> <sel> <mode> <rev> <s×16> <w×16> <div> <rate> <tune> <warp> <quant> <vol> <voices> <base>` (nur bei Änderung, `rate` auf 3, `vol` auf 1 Nachkommastelle gerundet), `bankpeek <nr>`, `banksel <nr>` (über der letzten Bank: nichts), `bankload <nr>` (wie `banksel`, aber auf die letzte Bank geklammert; Device ohne Bank), `bankopen <bankId>`, `playing <pad> <von> <bis> <dauer>`, `playstop <pad>`, `trackname <name…>`.
+**Node → `[js]`:** `bank <id> <nr> <bpm> <s×16> <l×16> <songdur> <video> <pfad…>` (davor `bankname <id> <name…>`), `bankgone <id>`, `bankfail <id> <grund…>`, `libstate <anzahl> <nr> <ok|leer|kaputt|neuer>`, `bankpeek <nr> <anzahl> <name…>`, `bpm <video> <bpm>` (Tempo-Korrektur aus dem Editor), `padhit <i>`/`padup <i>`, `param <name> <wert>` (Editor stellt einen Regler), `needsession`, `newsession <nr>`, `state <kodiert>`, `statenone`, `status <text…>`, `tuning <cent>`, `tempo <bpm> <konf>`, `analysisready`, `padinfo <i> <konf> <grundton> <moll> <12 chroma>`, `beatsclear`, `beatsadd <ms…>` (Blöcke à 200), `beatsdone <down> <anzahl>`.
 **`[js]` → UI (Ausgang 2):** `shownr <text>`, `showname <text…>`, `selinfo`, `wsel <von> <bis>`, `status`, `grid <clear|dur|beats|bars|show|pads …>`, sowie `padflash`, `padlight`, `padsel` ans Pad-jsui.
+**Gestrichen in 3.0:** Node → `[js]` `loaded`, `loadfail`, `silence`; `[js]` → Node `load`, `key`, `analyze`, `bpmset`; Patch → `[js]` `threshold`, `attack`, `release`, `srcbpm`, `bpmhalf`, `bpmdouble`, `gridon`, `snapmode`.
 
-**HTTP (Node, 127.0.0.1:8765–8770):** Teletext `/`, `/events`, `/key`, `/state`; Editor `GET /editor`, `GET /editor/events` (SSE: `hello`, `lib`, `device`, `cache`, `beats`, `play`, `stop`, `job`, `msg`), `POST /cmd` (Befehle Spec 3.3, Fehlercodes 6.5; nur JSON, Host/Origin localhost, ≤ 64 KB), `GET /peaks/<video>`. Der Editor steuert nur das Device auf 8765.
+**Regler spiegeln:** Editor `POST /cmd {cmd: "param", name, value}` → Node prüft (sonst `badreq`, auch bei kaputter Bibliothek erlaubt) → `param <name> <wert>` an `[js]` → `setNamed(PARAM_VAR[name], wert)` (erst nach `ready()`) → der `live.*`-Regler gibt den Wert aus → `prepend` → Handler → `bankstate` → SSE `device.params`. Eine Wahrheit (die Live-Parameter), keine Schleife: Der Editor schickt nur bei Bedienung.
 
-**IR-Fernbedienung:** läuft an Live vorbei. `teletext.html` liest den Pro Micro per Web MIDI (Note-On Kanal 15) und schickt `POST /key {k: "ir:<code>:<wiederholung>"}`. Mehrere offene Fenster → Node verwirft Dubletten (`IR_DEDUP_MS`). In Live beim Pro Micro „Spur“ ausschalten. Code = Note + 128 × Bit 0 von (Velocity − 1), Wiederholung = Bit 1. Node übersetzt per `ir.json` in `handleKey`-Tasten (`up`, `down`, `pgup`, `pgdn`, `enter`, `back`, `tap:0`–`tap:9`, `power`). Merkmodus: Cmd+Shift+M (oder Strg+Shift+M) auf der Teletext-Seite → `learn`, Esc bricht ab. Ziffern tippen wie beim Handy (`TAP`, 1 = abc … 9 = yz, 0 = Leerzeichen, `TAP_MS`). `power` schaltet `ui.tvOff` → Abschalt-/Einschalt-Animation; aus = nur An/Aus wirkt.
+**HTTP (Node, 127.0.0.1:8765–8770):** `GET /` → 302 `/editor`, `GET /editor`, `GET /editor/events` (SSE: `hello`, `lib`, `device`, `cache`, `beats`, `play`, `stop`, `job`, `msg`), `POST /cmd` (Befehle Spec 2.0 3.3 plus `param`, Fehlercodes 6.5; nur JSON, Host/Origin localhost, ≤ 64 KB), `GET /peaks/<video>`. Der Editor steuert nur das Device auf 8765. SSE `device`: `{bankId, nr, video, sel, starts, spans, params}`, `params` = `{div, rate, mode, rev, tune, warp, quant, vol, voices, base}` oder `null` vor dem ersten `bankstate`.
 
 ## Patch und `.amxd` bearbeiten
 
@@ -137,14 +142,17 @@ So geschrieben bleiben beide Dateien byte-identisch zum bisherigen Format. Aus d
 - **Kein Shell-PATH unter Live.** Node ergänzt die Homebrew-Pfade selbst (`EXTRA_PATHS`).
 - **Max-Symbole vertragen keine Kommas, Semikolons oder Klammern.** Titel laufen durch `clean()`, der Zustand als `encodeURIComponent(JSON)`.
 - **Onset-Timing:** Der Versatz durch den gleitenden Mittelwert und die Fensterposition (0,78 × Fensterlänge) ist korrigiert. Die Konstanten N=512, HOP=64, 0,78 stehen dreifach (`estimateTempo`, `trackBeats`, `findDownbeat`). Wer an der Analyse dreht, muss die Beat-Positionen neu messen.
-- **Mit Bank** rastet nichts ein (`effStart` = Start aus der Bibliothek), es wird nicht gewürfelt und `silence` nicht benutzt. Ein Pad spielt nie über sein Snippet-Ende (Klammer in `playRange`, Hold blendet `SNIP_FADE_MS` vorher aus).
+- **Starts** kommen immer aus der Bibliothek, nichts rastet ein (`effStart(i)` = `pads[i]`). Ein Pad spielt nie über sein Snippet-Ende (Klammer in `playRange`, Hold blendet `SNIP_FADE_MS` vorher aus).
+- **Beats statt Grid:** `beatsOK()` = ≥ 4 Beats und Quelltempo > 0. Dann Overlay-Linien (`grid show 1`), Taktposition in `selinfo` und Warp im Trigger-Modus auf dem Raster der Quelle. Sonst festes Verhältnis Set-Tempo/Quelltempo. Es gibt keinen Schalter.
 - **Bank wechseln:** erst alle Stimmen `gateoff 5`, `replace` 10 ms später per `Task` (letzte Wahl gewinnt). Nie `replace` aus dem Patch, das macht nur Ausgang 4.
-- **„Stumm“** (`libstate leer|kaputt|neuer`) gilt nur mit aktiver Bank oder wenn nichts geladen ist. Teletext und 1.x-Sets spielen weiter.
-- **Würfeln (`randomStart`, nur ohne Bank / Teletext):** bevorzugt Taktanfänge (wenn `beatsOK()`), sonst Rasterpunkt, sonst frei. Verwirft Slices ganz in Stille und schon belegte Starts. `sortPads()` hält die freien Pads chronologisch. Neues Video → `autoRoll`, nachgewürfelt wird bei `beatsdone` (bzw. `analysisready` ohne Tempo). Die „1“: `findIntro()` überspringt den Anfang ohne Kick/Einsätze, `beatsDown` ist die erste „1“ danach.
+- **„Stumm“** gilt immer bei `libstate leer|kaputt|neuer` und wenn nichts geladen ist. `bankfail` ohne klingende Bank macht ebenfalls stumm („nicht ladbar“).
+- **Device ohne Bank** (neues Device, 1.x-/Teletext-Set, `statenone`, `bankId 0`, `bankgone`): `[js]` schickt `bankload <Wert des Reglers „Bank“>` (`bankTarget()` per `getvalueof()`), aber erst nach `state`/`statenone` **und** `libstate ok` (`wantLoad`). Node schickt `libstate` vor `state`.
+- **Würfeln** gibt es nur noch im Editor (Node: `roller`, `rollStart`, `rollBank`). Bevorzugt Taktanfänge, verwirft Slices ganz in Stille (`silentRanges()`). Die „1“: `findIntro()` überspringt den Anfang ohne Kick/Einsätze, die erste „1“ danach.
+- **`param` per `setNamed`:** Ein Wert aus dem Editor läuft durch den echten Regler. Ob Live dabei einen Undo-Eintrag macht oder Automation überschreibt, ist ungeprüft (siehe Offen). Kommt der Wert nicht an, wäre die Variante `setNamed(var, "set", v)` plus direkter Handler-Aufruf zu prüfen.
 - **Analyseformat (`AN.VERSION`) nur abwärtskompatibel ändern.** Analysen in `D/snippets/` lassen sich nicht neu rechnen, wenn die ganze WAV fehlt. Neue Felder anhängen, `AN.VERSION` erhöhen und die alte Version in `AN_READABLE` behalten. Unbekannte Version = „Analyse fehlt“ (im Cache wird neu gerechnet, in D nie überschrieben).
 - **`library.json`** nur über `libChange()` schreiben (Sperre, frisch lesen, `rev + 1`, tmp + `fsync` + `rename`). Unbekannte Felder bleiben erhalten. Kaputt oder `format > 1` → nie anfassen.
 - **Node-Downloads immer mit `.catch`** (`fetchVideo`, `newBank`), sonst beendet ein Fehlschlag den Prozess.
-- **Webserver:** Ist 8765 belegt (zweites Device), weicht er auf bis zu 8770 aus. `Teletext öffnen.command` und der Editor kennen nur 8765 (= erstes Device).
+- **Webserver:** Ist 8765 belegt (zweites Device), weicht er auf bis zu 8770 aus. Der Editor kennt nur 8765 (= erstes Device).
 - **Neue Node-Nachricht an `[js]`** braucht eine gleichnamige Funktion in `[js]`, neue `[js]`-Nachricht an Node ein `Max.addHandler`. `test_wiring.js` meckert sonst.
 
 ## Testen
@@ -158,18 +166,17 @@ Max und Live laufen in der Claude-Session nicht. Möglich sind:
   - `test_library.js`, `test_migration.js`, `test_snippets.js`, `test_analysis.js`, `test_download.js`, `test_http.js`: Node mit Attrappen für `max-api` und `yt-dlp` (`fake_ytdlp.js`), Temp-HOME (`harness.js`), freier Port (`YTS_PORT=0`)
   - `test_editor.js` (gegen `editor_mock.js`, `--shots` schreibt `editor_screens/`), `test_e2e.js` (echter Node + echtes `[js]` + Editor): brauchen Chrome unter /Applications
 - Analyse mit erzeugten WAVs (`wav.js`), deren Tonart, Tempo, Schläge und „1“ bekannt sind
-- `teletext.html` per Headless-Browser rendern
 
 Alles, was nur in echtem Max sichtbar wird, testet der Nutzer in Live. Wenn etwas nicht geht, nach dem Max-Fenster fragen. Fehler von `poly~` und `js` erscheinen dort oft nur beim Laden des Devices.
 
 ## Offen / ungeprüft
 
-- **2.0 in Live (Prüfliste aus Spec 9):** Device lädt ohne Fehler, Breite 1024 und linker Block lesbar (Schriftgröße der Banknummer), Grid-Linien und 16 Fachgrenzen deckungsgleich auf der Snippet-Waveform; Bankwechsel klickfrei auch bei Hold und Warp, Snippet-Ende sauber; Tune/Warp/Warp+Grid wie 1.3; `Bank` per CC mit 350 ms Ruhe, Prev/Next; Editor steuert, „steuert: <Spurname>“ (`LiveAPI` auf `this_device canonical_parent`); Set speichern → Bank verschieben/löschen → Set öffnen; iCloud-Umzug, „Geladen lassen“, Bühne ohne Internet.
+- **3.0 in Live (Prüfliste aus Spec 3.0, 6):** Device lädt ohne Fehler, neue Zeile unter der Waveform lesbar, Schalter groß genug. Altes 2.x-Set: Bank kommt, MIDI-Mappings auf die 14 Parameter gehen noch; 2.x-Set mit Teletext-Stand und neues Device laden die Bank am Regler. Editor-Regler in beide Richtungen, auch per MIDI gedreht; Undo-Eintrag in Live? Automation („Re-Enable Automation“)? Volume aus dem Editor (`live.gain~` Ausgang 3 wirklich dB?). Warp ohne Grid-Schalter folgt dem Raster (klingt wie Warp+Grid in 2.0), Linien im Overlay ohne Schalter. Alle MIDI-Kanäle spielen.
+- **Aus 2.0 noch offen:** Grid-Linien und 16 Fachgrenzen deckungsgleich auf der Snippet-Waveform; Bankwechsel klickfrei auch bei Hold und Warp, Snippet-Ende sauber; `Bank` per CC mit 350 ms Ruhe, Prev/Next; „steuert: <Spurname>“ (`LiveAPI` auf `this_device canonical_parent`); Set speichern → Bank verschieben/löschen → Set öffnen; iCloud-Umzug, „Geladen lassen“, Bühne ohne Internet.
 - Bekannte Grenzen: Löscht ein **anderes** Device die aktive Bank, spielt dieses weiter (Nummer 0) und lädt keinen Nachrücker. Zwei Bibliotheksänderungen innerhalb von 30 ms kommen als ein `lib` mit dem letzten `by`. Tempo am zweiten Device leert die Undo-Historie im Editor.
 - Grid-Overlay: durchsichtig, klickt es durch? (`ignoreclick 1`)
 - Warp in echtem Max: `groove~ @timestretch`, `pitchshift`, Positions-Float im linken Eingang.
 - Treffsicherheit von Tonart, Tempo, Beats und „1“ auf echtem YouTube-Material (bisher nur synthetisch gemessen).
-- Reicht Live MIDI-Kanal 15/16 unverändert an `notein` durch?
-- IR mit echter Fernbedienung (RC5, Address 7); Web-MIDI-Erlaubnis im Teletext-Chrome; fängt Chrome Cmd+Shift+M selbst ab?
 - Tests nie gegen Port 8765 laufen lassen, wenn Live läuft: das ist das echte Device. Die Tests nehmen Port 0.
-- Geparkt: Arduino-Sketch für die Schreibmaschine (Matrix → Noten auf Kanal 16), LED-/Display-Rückmeldung per USB-Serial.
+- Wackelig auf dem Intel-Mac: `test_library.js` „zwei Prozesse schreiben gleichzeitig“ schlägt selten fehl. Nicht kaschieren, beobachten.
+- Geparkt: LED-/Display-Rückmeldung per USB-Serial.

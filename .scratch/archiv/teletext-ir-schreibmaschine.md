@@ -2,15 +2,15 @@
 
 Mit 3.0.0 entfernt (Entscheidung des Nutzers, Planung `.scratch/device-3/`). Hier steht, wie es gebaut war, damit man es wieder aufbauen kann. Kein Code-Dump.
 
-**Wo der Code liegt:** im letzten 2.x-Tag. Das ist `v2.0.1`, außer die Master-Session released vor 3.0.0 noch eine 2.x-Version. Dann gilt deren Tag, und das Bau-Paket 4 trägt ihn hier ein: **letzter Tag mit dem Code: `v2.0.1`**.
+**Wo der Code liegt:** im letzten 2.x-Tag, **`v2.1.0`** (letzter Stand mit Teletext, IR und Schreibmaschine; eingetragen von Bau-Paket 5).
 
 ```
-git show v2.0.1:teletext.html
-git show "v2.0.1:Teletext öffnen.command"
-git show v2.0.1:ir_teletext/ir_teletext.ino
-git show v2.0.1:ytsampler_node.js     # Abschnitt „Teletext-Webseite“ am Ende, loadVideo, search
-git show v2.0.1:ytsampler_main.js     # note(), loaded(), randomStart(), rollAll()
-git show v2.0.1:README.md             # Bedienung aus Nutzersicht
+git show v2.1.0:teletext.html
+git show "v2.1.0:Teletext öffnen.command"
+git show v2.1.0:ir_teletext/ir_teletext.ino
+git show v2.1.0:ytsampler_node.js     # Abschnitt „Teletext-Webseite“ am Ende, loadVideo, search
+git show v2.1.0:ytsampler_main.js     # note(), loaded(), randomStart(), rollAll()
+git show v2.1.0:README.md             # Bedienung aus Nutzersicht
 ```
 
 Davor gab es die Funktionen auch in 1.x, dort noch zusammen mit Favoriten und dem Suchblock im Device (`v1.3.6`).
