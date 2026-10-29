@@ -99,7 +99,14 @@ pat.boxes.forEach(function (b) {
     var v = b.box.saved_attribute_attributes && b.box.saved_attribute_attributes.valueof;
     if (v && v.parameter_longname) { need(!names[v.parameter_longname], 'Parametername doppelt: ' + v.parameter_longname); names[v.parameter_longname] = b.box; }
 });
-['Bank', 'Bank Prev', 'Bank Next', 'Session'].forEach(function (n) { need(names[n], 'Parameter fehlt: ' + n); });
+// Spec 3.0, 2.4: genau diese 14 Parameter, die 8 weggefallenen nicht mehr
+var PARAMS = ['Bank', 'Bank Prev', 'Bank Next', 'Division', 'Base Note', 'Voices', 'Rate', 'Mode', 'Reverse', 'Tune', 'Warp',
+              'Input Quantize', 'Volume', 'Session'];
+PARAMS.forEach(function (n) { need(names[n], 'Parameter fehlt: ' + n); });
+Object.keys(names).forEach(function (n) { need(PARAMS.indexOf(n) >= 0, 'unerwarteter Parameter: ' + n); });
+['Tonal', 'Attack', 'Release', 'Source BPM', 'BPM Half', 'BPM Double', 'Grid', 'Snap'].forEach(function (n) {
+    need(!names[n], 'weggefallener Parameter noch da: ' + n);
+});
 need(names.Bank && names.Bank.varname === 'bank' && names.Bank.saved_attribute_attributes.valueof.parameter_mmin === 1 &&
      names.Bank.saved_attribute_attributes.valueof.parameter_mmax === 128, 'Bank: varname bank, 1–128');
 ['Fav Bank', 'Fav Select', 'Fav Prev', 'Fav Next', 'Fav Add', 'Fav Update', 'Fav Delete', 'Search', 'Load Result', 'Load URL',
@@ -109,6 +116,30 @@ need(names.Bank && names.Bank.varname === 'bank' && names.Bank.saved_attribute_a
 // setNamed-Ziele
 Object.keys(fnSet(main, /setNamed\("(\w+)"/g)).forEach(function (v) {
     need(pat.boxes.some(function (b) { return b.box.varname === v; }), 'setNamed: kein Objekt mit varname ' + v);
+});
+// Regler fürs Spiegeln im Editor (Spec 3.0, 3.1): PARAM_VAR in [js] -> varname -> prepend <Handler> -> [js]
+var HANDLER = { div: 'division', rate: 'rate', mode: 'playmode', rev: 'reverse', tune: 'tune', warp: 'warp',
+                quant: 'quantize', vol: 'volume', voices: 'voicecount', base: 'basenote' };
+var pv = /var PARAM_VAR = (\{[^}]*\})/.exec(main);
+need(pv, '[js]: PARAM_VAR fehlt');
+var PV = pv ? JSON.parse(pv[1].replace(/(\w+):/g, '"$1":')) : {};
+need(Object.keys(PV).sort().join() === Object.keys(HANDLER).sort().join(), 'PARAM_VAR: Namen weichen von Spec 3.1 ab');
+Object.keys(PV).forEach(function (n) {
+    var box = pat.boxes.filter(function (b) { return b.box.varname === PV[n]; })[0];
+    if (!box) return need(false, 'PARAM_VAR ' + n + ': kein Objekt mit varname ' + PV[n]);
+    var o = box.box.maxclass === 'live.gain~' ? 3 : 0;     // live.gain~: Ausgang 3 = Wert in dB
+    var pre = outs(box.box.id, o).filter(function (d) { return B[d[0]].text === 'prepend ' + HANDLER[n]; });
+    need(pre.length === 1 && has(outs(pre[0][0], 0), JS, 0), PV[n] + ' Ausgang ' + o + ' geht nicht über prepend ' + HANDLER[n] + ' an [js]');
+    need(jsFns[HANDLER[n]], '[js]: keine Funktion ' + HANDLER[n]);
+});
+need(jsFns.param && jsFns.volume, '[js]: param oder volume fehlt');
+need(nodeHandlers.bankload && sent[1] && sent[1].bankload, 'bankload: [js] schickt es nicht oder Node hat keinen Handler');
+need(/Max\.outlet\('param'/.test(node), 'Node schickt kein param an [js]');
+// gestrichene Nachrichten (Spec 3.0, 3.4)
+['loaded', 'loadfail', 'silence', 'threshold', 'attack', 'release', 'srcbpm', 'bpmhalf', 'bpmdouble', 'gridon', 'snapmode', 'key']
+    .forEach(function (f) { need(!jsFns[f], '[js]: gestrichene Funktion ' + f); });
+['load', 'key', 'analyze', 'bpmset'].forEach(function (h) {
+    need(!nodeHandlers[h] && !(sent[1] && sent[1][h]), 'gestrichene Nachricht [js] → Node: ' + h);
 });
 need(pat.boxes[pat.boxes.length - 1].box.filename === 'ytgrid.js', 'Grid-Overlay ist nicht die letzte Box');
 

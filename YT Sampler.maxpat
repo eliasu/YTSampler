@@ -1401,7 +1401,7 @@
       160.0,
       30.0
      ],
-     "text": "keine Bank",
+     "text": "",
      "presentation": 1,
      "presentation_rect": [
       5.0,

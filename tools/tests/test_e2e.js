@@ -14,10 +14,24 @@ const DUR = 40000;
 const STARTS = Array.from({ length: 16 }, (_, i) => i * 2000);
 STARTS[15] = DUR - 5000;
 
+// Regler im Patch: varname -> [js]-Handler hinter dem prepend (Spec 3.0, 3.1)
+const ECHO = { Division: 'division', Rate: 'rate', Mode: 'playmode', Reverse: 'reverse', Tune: 'tune', Warp: 'warp',
+  Quantize: 'quantize', Volume: 'volume', Voices: 'voicecount', 'Base Note': 'basenote' };
+
 // [js] mit Attrappen; Ausgang 1 geht an die Node-Handler, Node-Nachrichten an die gleichnamige [js]-Funktion.
 // Beide Richtungen asynchron und der Reihe nach, wie im Max-Scheduler.
+// Der Patcher zeichnet setNamed auf. Ein Wert ohne „set“ geht wie beim live.*-Objekt über prepend zurück an [js].
 function device(max) {
-  const d = { out: [], api: null };
+  const d = { out: [], api: null, named: [], vals: { bank: 1 } };
+  const named = (name) => ({
+    message(...a) {
+      d.named.push([name, ...a]);
+      if (a[0] === 'set' || a[0] === 'int') { d.vals[name] = a[1]; return; }
+      d.vals[name] = a[0];
+      if (ECHO[name]) setImmediate(() => d.ctx[ECHO[name]](a[0]));
+    },
+    getvalueof: () => d.vals[name],
+  });
   const ctx = {
     outlet(n, ...rest) {
       const a = [].concat(...rest);
@@ -28,7 +42,7 @@ function device(max) {
     post: () => {},
     Task: function (fn) { this.fn = fn; },
     LiveAPI: function (cb) { this.cb = cb; d.api = this; },
-    patcher: { getnamed: () => ({ message: () => {} }) },
+    patcher: { getnamed: named },
   };
   ctx.Task.prototype.schedule = function (ms) { clearTimeout(this.t); this.t = setTimeout(this.fn, ms); };
   ctx.Task.prototype.cancel = function () { clearTimeout(this.t); };
@@ -54,8 +68,12 @@ t('Aufbau: Node, [js] und Editor verbunden', async () => {
   await until(() => node.webPort > 0, 'Server');
   assert.ok(node.webPort < 8765 || node.webPort > 8770);
   dev = device(max);
-  dev.ctx.init();                                   // -> session -> libstate, statenone
+  dev.ctx.init();                                   // -> session -> libstate, statenone -> bankload 1 (Regler „Bank“)
   await until(() => dev.ctx.bankCount === 3, 'libstate am Device');
+  await until(() => bankMsgs().length, 'bank am Regler');
+  assert.deepStrictEqual(dev.on(1, 'bankload'), [[1, 'bankload', 1]]);
+  assert.deepStrictEqual(bankMsgs()[0].slice(1, 3), [ids[0], 1]);
+  await until(() => dev.ctx.st.bankId === ids[0], '[js] hat Bank 1');
   b = await launch();
   await b.send('Page.navigate', { url: `http://127.0.0.1:${node.webPort}/editor` });
   await b.waitFor(`typeof S === 'object' && S.conn && S.lib && S.lib.banks.length === 3`, 5000);
@@ -65,6 +83,7 @@ t('Aufbau: Node, [js] und Editor verbunden', async () => {
 
 t('Bank-Regler am Device: banksel -> bank mit Längen, Pfad, Songdauer -> Editor folgt', async () => {
   await sleep(350);                                 // ready() nach init
+  max.out = [];
   dev.ctx.banknum(3);
   await until(() => bankMsgs().length, 'bank');
   const m = bankMsgs()[0];
@@ -91,6 +110,20 @@ t('Pad 6 im Editor anspielen: padhit -> [js] spielt -> SSE play', async () => {
   assert.deepStrictEqual(dev.on(1, 'playing')[0].slice(2, 4), [5, STARTS[5]]);
   const p = await b.eval('window.__play');
   assert.deepStrictEqual([p.pad, p.from], [5, STARTS[5]]);
+});
+
+t('Regler im Editor: param -> setNamed im [js] -> Regler-Echo -> bankstate -> device.params', async () => {
+  await b.waitFor(`S.dev.params && S.dev.params.warp === 0 && !document.querySelector('#ctl').classList.contains('locked')`);
+  await b.click('#p-warp');
+  await until(() => dev.named.some((n) => n[0] === 'Warp' && n[1] === 1), 'setNamed Warp');
+  assert.deepStrictEqual(dev.named.filter((n) => n[0] === 'Warp'), [['Warp', 1]]);
+  await b.waitFor(`S.dev.params.warp === 1 && document.querySelector('#p-warp').classList.contains('on')`);
+  await b.eval(`(() => { const e = document.querySelector('#p-div'); e.value = 7; e.dispatchEvent(new Event('change')); })()`);
+  await until(() => dev.named.some((n) => n[0] === 'Division' && n[1] === 7), 'setNamed Division');
+  await b.waitFor(`S.dev.params.div === 7`);
+  // am Device gedreht: Editor folgt
+  dev.ctx.volume(-6.04);
+  await b.waitFor(`S.dev.params.vol === -6 && document.querySelector('#p-vol-v').textContent.startsWith('-6,0')`);
 });
 
 t('Aktive Bank im Editor löschen: Nachrücker (die davor, weil letzte) lädt im Device, Editor folgt', async () => {
