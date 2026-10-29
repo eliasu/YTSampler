@@ -146,7 +146,7 @@ Tippen geht auf zwei Wegen:
 
 ## Tempo-Erkennung und Warp
 
-Das Tempo wird zusammen mit der Tonart beim Laden erkannt und gecacht. Der Status zeigt z. B. „94 BPM“. Ist die Erkennung unsicher (Sprache, Flächen, freies Tempo), steht „(unsicher)“ dabei, und Warp bleibt für dieses Video aus, bis du das Tempo bestätigst: Wert eintippen oder ÷2/×2 drücken. Die Zeile unter der Waveform zeigt dann „W×1.32“ (Streckfaktor), „W? Tempo bestätigen“ oder „W: kein Tempo“.
+Das Tempo wird zusammen mit der Tonart beim Laden erkannt und gecacht. Der Status zeigt z. B. „94 BPM“. Mit Bank nutzen Warp und Grid das erkannte Tempo sofort; „Tempo stimmt“ im Editor ist dann nur zum Korrigieren da. Ohne Bank (Teletext) gilt: Ist die Erkennung unsicher (Sprache, Flächen, freies Tempo), steht „(unsicher)“ dabei, und Warp bleibt für dieses Video aus, bis du das Tempo bestätigst: Wert eintippen oder ÷2/×2 drücken. Die Zeile unter der Waveform zeigt dann „W×1.32“ (Streckfaktor), „W? Tempo bestätigen“ oder „W: kein Tempo“.
 
 Mit Warp an ist ein Slice derselbe Notenwert im Groove des Originals, gestreckt auf dein Tempo. Das bestätigte Tempo steht in der Bibliothek und gilt für alle Bänke des Videos.
 

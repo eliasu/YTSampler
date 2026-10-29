@@ -373,7 +373,7 @@ t('Teletext-Weg wie v1.3.6', function () {
         steps.forEach(function (s, k) { m.clock += 37; m.send.apply(null, s); });
         return m.out.filter(function (o) {
             if (o[0] === 0 || o[0] === 3) return true;
-            if (o[0] === 1) return ['analyzeall', 'analyze', 'beattrack', 'load', 'key'].indexOf(o[1]) >= 0;
+            if (o[0] === 1) return ['analyze', 'beattrack', 'load', 'key'].indexOf(o[1]) >= 0;   // analyzeall: Fenster seit 2.1 fest (eigener Test)
             if (o[0] === 2) return ['selinfo', 'wsel', 'padflash', 'padlight', 'padsel'].indexOf(o[1]) >= 0 ||
                 (o[1] === 'grid' && ['dur', 'beats', 'show', 'pads', 'clear'].indexOf(o[2]) >= 0);
             return false;
@@ -382,6 +382,19 @@ t('Teletext-Weg wie v1.3.6', function () {
     var a = runAll(oldSrc), b = runAll(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
     for (var k = 0; k < Math.max(a.length, b.length); k++) assert.strictEqual(b[k], a[k], 'Nachricht ' + k);
     assert.ok(a.length > 100);
+});
+
+// Analysefenster fest 4 s: Slice-Länge, Rate und Mode ändern die Tonart (und damit Tune) nicht
+t('analyzeall: festes Fenster unabhängig von Division, Rate, Mode', function () {
+    var m = load(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
+    startDevice(m);
+    m.send('bpm', 124);
+    m.send('loaded', '/c/abcdefghijk.wav', 240000, 'abcdefghijk', 'Ein', 'Titel');
+    m.send('analysisready');
+    [['division', 0], ['division', 10], ['rate', 2], ['playmode', 1], ['playmode', 0]].forEach(function (s) { m.send.apply(null, s); });
+    var spans = m.out.filter(function (o) { return o[0] === 1 && o[1] === 'analyzeall'; }).map(function (o) { return o[2]; });
+    assert.ok(spans.length >= 5);
+    spans.forEach(function (v) { assert.strictEqual(v, 4000); });
 });
 
 var bad = 0;

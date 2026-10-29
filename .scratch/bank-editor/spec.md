@@ -147,7 +147,7 @@ Node ist die Wahrheit für Bibliothek, Snippets, Cache und Analyse. Er schneidet
 
 - **Downloads** werden geteilt in „in den Cache laden“ (Editor: `select`, `fetch`, `fetchall`, `newbank`) und „ins Device laden“ (nur Teletext, schickt `loaded`). Je Weg gilt: Der neueste Wunsch bricht den laufenden `yt-dlp` ab (statt `busy`). Ein Editor-Download bricht nie einen Teletext-Download ab und umgekehrt. Reihenfolge der Editor-Downloads: `select`/`fetch` vor `newbank` vor `fetchall`. Fehlschläge setzen `fail`, `fetchall` überspringt sie.
 - **Würfeln** (`roll`, `newbank`) läuft in Node auf der ganzen WAV, mit den Regeln von `randomStart`: Taktanfang bevorzugt, wenn die Beats gültig sind, sonst frei; keine Slice ganz in Stille; kein Start doppelt. Ein Rasterpunkt ohne Beats entfällt, Node kennt die Device-Division nicht **(festgelegt)**. Spanne für die Stilleprüfung: 16 s. `newbank` sortiert die 16 Starts aufsteigend. `roll` hat keine Nachbargrenze.
-- **Beats gültig** (für Würfeln, Editor-Einrasten): `videos[v].bpm` gesetzt oder Analyse-Konfidenz ≥ 0,3, wie `tempoTrusted()` in `[js]`. Node trackt mit `bpm` aus der Bibliothek, sonst mit dem Analyse-Tempo, und hebt das Ergebnis (`beats`, `down`) pro Video auf.
+- **Beats gültig** (für Würfeln, Editor-Einrasten): `videos[v].bpm` gesetzt oder Analyse-Konfidenz ≥ 0,3, wie `tempoTrusted()` in `[js]` ohne Bank (mit Bank reicht dort ein erkanntes Tempo). Node trackt mit `bpm` aus der Bibliothek, sonst mit dem Analyse-Tempo, und hebt das Ergebnis (`beats`, `down`) pro Video auf.
 - **Basisordner und Umzug** siehe [Migration](#8-migration-1x--200).
 
 ### 3.2 HTTP

@@ -27,7 +27,7 @@ var HOLD_MAX = 1e9;     // Hold-Modus: bis Songende (playRange begrenzt auf durM
 var VMAX = 16;          // Anzahl Instanzen im poly~
 var VOICE_OPTS = [1, 2, 3, 4, 5, 8, 16];
 var NOTE = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
-var HOLD_ANALYSIS = 4000;   // Analysefenster im Hold-Modus (ms)
+var ANALYSIS_MS = 4000;     // Analysefenster pro Pad (ms), fest: Slice-Länge, Rate und Mode ändern die Tonart nicht
 
 // Einstellungen kommen von den live.*-Reglern (die speichert Live selbst)
 var P = { bpm: 120, div: 5, rate: 1, atk: 2, rel: 20, mode: 0, rev: 0, base: 36, voices: 16, tune: 0, thresh: 0.5, warp: 0, grid: 0, snap: 0, quant: 0 };   // snap: 0 = Slice, 1 = Beat, 2 = Bar
@@ -345,7 +345,7 @@ function padSpan(i) {
 }
 
 // Fenster, das der Node-Teil pro Pad analysiert (mind. 2 s, macht der Node-Teil)
-function analysisSpan() { return P.mode ? HOLD_ANALYSIS : spanMs(); }
+function analysisSpan() { return ANALYSIS_MS; }
 
 // Zufälliger Startpunkt in lo…hi (ms): bevorzugt auf einer "1", nie ein Slice aus reiner Stille,
 // möglichst kein Startpunkt, den schon ein anderes Pad hat
