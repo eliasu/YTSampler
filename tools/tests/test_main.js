@@ -246,6 +246,30 @@ t('Prev/Next: Enden, über 128, 350 ms Ruhe', function () {
     assert.notStrictEqual(m.on(2, 'status').pop()[2], 'nicht ladbar', 'nach 2 s wieder die normale Zeile');
 });
 
+t('Unbestätigtes, unsicheres Tempo: mit Bank Warp und Grid, ohne Bank nicht', function () {
+    var m = load(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
+    startDevice(m);
+    m.send.apply(null, bankMsg(7, 1, 0, '/x/7.wav'));
+    m.send('tempo', 100, 0.1);
+    feedBeats(m, 100, 0);
+    m.send('bpm', 120); m.send('warp', 1); m.send('gridon', 1); m.take();
+    assert.strictEqual(m.ctx.st.srcAuto, 1, 'nicht bestätigt');
+    m.send('note', 36, 100, 1);
+    assert.strictEqual(m.on(3, 'wplay').length, 1, 'Warp-Stimme mit Bank');
+    assert.ok(Math.abs(m.on(3, 'wplay')[0][3] - 1.2) < 1e-9, 'Tempo 120/100');
+    assert.ok(m.ctx.gridOK(), 'Grid mit Bank');
+    // ohne Bank (Teletext): bisherige Regel
+    m.send('loaded', '/c/abcdefghijk.wav', 240000, 'abcdefghijk', 'Teletext');
+    m.send('tempo', 100, 0.1);
+    feedBeats(m, 100, 0); m.take();
+    m.send('note', 36, 100, 1);
+    assert.strictEqual(m.on(3, 'wplay').length, 0, 'kein Warp ohne Bank');
+    assert.ok(!m.ctx.gridOK(), 'kein Grid ohne Bank');
+    m.send('tempo', 100, 0.8); m.take();
+    m.send('note', 37, 100, 1);
+    assert.strictEqual(m.on(3, 'wplay').length, 1, 'sicheres Tempo: Warp auch ohne Bank');
+});
+
 t('Tempo: gleiche Zahl bestätigt, bpmset an Node, bpm von Node ohne Echo', function () {
     var m = load(fs.readFileSync(ROOT + '/ytsampler_main.js', 'utf8'));
     startDevice(m);

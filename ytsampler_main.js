@@ -153,6 +153,7 @@ function padRate(i) { return P.rate * pitchRate(i); }
 // Warp: Verhältnis Projekttempo / Quelltempo (0 = Warp aus oder Tempo unbekannt)
 function tempoTrusted() {
     if (!(st.srcBpm > 0)) return false;
+    if (B) return true;                                        // Bank ist kuratiert: auch erkanntes Tempo nutzen
     return !(st.srcAuto && st.bpmConf < TEMPO_MIN_CONF);        // unsicheres Tempo nicht automatisch nutzen
 }
 function warpRatio() {

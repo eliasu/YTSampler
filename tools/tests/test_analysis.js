@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { tempHome, loadNode, t, run } = require('./harness');
-const { SR, beatWav, writeWav } = require('./wav');
+const { SR, beatWav, writeWav, signalWav } = require('./wav');
 
 const V = 'BBBBBBBBBBB';
 const SEC = 90, SIL = [20, 45];   // 120 BPM, Takt = 2 s, Stille 20–45 s
@@ -60,7 +60,9 @@ t('Analyse fehlt ohne WAV: Status, keine Analyse-Nachrichten', async () => {
   fs.unlinkSync(wav);
   max.out.length = 0;
   await node.ensureAnalysis(V, 'Titel', true);
-  assert.deepStrictEqual(max.out, [['status', 'Analyse fehlt – Bank im Editor neu schneiden']]);
+  // ohne yt-dlp im Temp-HOME meldet der Start das per status: hier egal
+  const out = max.out.filter((m) => !(m[0] === 'status' && /yt-dlp/.test(m[1])));
+  assert.deepStrictEqual(out, [['status', 'Analyse fehlt – Bank im Editor neu schneiden']]);
   assert.strictEqual(node.analysis, null);
   done();
 });
@@ -92,6 +94,53 @@ t('alte .chroma-Version 3 bleibt lesbar', () => {
   assert.deepStrictEqual([...a.bass], [2, 2, 2, 2, 2]);
   assert.strictEqual(a.frames.length, 42);
   assert.strictEqual(a.frames[41], 41);
+  done();
+});
+
+// Tempo-Konfidenz: klarer Puls deutlich über 0,5, ohne Puls nahe 0 (TEMPO_MIN_CONF = 0,3)
+t('Tempo-Konfidenz: Beat hoch, Swing/dichter Mix über 0,5, Flächen, Rauschen, Gerede niedrig', () => {
+  const { node, done } = setup();
+  const dir = path.join(node.CACHE, 'sig');
+  const an = (name, ...args) => { const f = path.join(dir, `${name}.wav`); signalWav(f, name, 30, ...args); return node.computeAnalysis(f); };
+  const b = node.getAnalysis(V, false);
+  assert.ok(b.bpmConf > 0.8, `Beat ${b.bpmConf}`);
+  const sw = an('swing', 124), bu = an('busy', 126), dr = an('drums');
+  assert.ok(sw.bpmConf > 0.6 && Math.abs(sw.bpm - 124) <= 0.3, `Swing ${sw.bpm} ${sw.bpmConf}`);
+  assert.ok(bu.bpmConf > 0.5 && Math.abs(bu.bpm - 126) <= 0.3, `dichter Mix ${bu.bpm} ${bu.bpmConf}`);
+  assert.ok(dr.bpmConf > 0.8 && Math.abs(dr.bpm - 120) <= 0.3, `Drums ${dr.bpm} ${dr.bpmConf}`);
+  for (const n of ['pad', 'noise', 'random']) { const a = an(n); assert.ok(a.bpmConf < 0.1, `${n} ${a.bpmConf}`); }
+  done();
+});
+
+t('Tempo aus der Einsatzkurve neu beim Lesen: alte Konfidenz im Kopf zählt nicht', () => {
+  const { node, done } = setup();
+  const a = node.getAnalysis(V, false);
+  const f = path.join(node.SNIP_DIR, `${V}.chroma`);
+  node.saveAnalysis(f, { ...a, bpm: 126, bpmConf: 0.29 });   // wie mit der Formel bis 2.0.1 gespeichert
+  const r = node.readAnalysis(f);
+  assert.strictEqual(r.bpm, a.bpm);
+  assert.strictEqual(r.bpmConf, a.bpmConf);
+  assert.ok(Math.abs(r.bpm - 120) <= 0.1, `bpm ${r.bpm}`);
+  done();
+});
+
+// Tonart-Konfidenz (padinfo): tonal über 0,5, Drums und Rauschen darunter; dichter Mix mit Flatness ~0,46 bleibt tonal
+t('Tonart-Konfidenz: Akkorde über 0,5 mit richtiger Tonart, Drums/Rauschen nahe 0', async () => {
+  const { node, max, done } = setup();
+  const info = async (id, name, ...args) => {
+    if (name) signalWav(path.join(node.CACHE, `${id}.wav`), name, 30, ...args);
+    await node.ensureAnalysis(id, 'T', false);
+    max.out.length = 0;
+    max.handlers.analyzeall(2000, 3000, 12000, id === V ? 60000 : 21000);   // V ist von 20–45 s still
+    return max.out.filter((m) => m[0] === 'padinfo').map((m) => ({ conf: m[2], tonic: m[3], minor: m[4] }));
+  };
+  for (const p of await info(V)) assert.ok(p.conf > 0.5 && p.tonic === 9 && p.minor === 1, `a-Moll ${JSON.stringify(p)}`);
+  for (const p of await info('PPPPPPPPPPP', 'pad')) assert.ok(p.conf > 0.5, `Flächen ${p.conf}`);
+  for (const p of await info('MMMMMMMMMMM', 'busy')) assert.ok(p.conf > 0.5 && p.tonic === 7 && p.minor === 0, `G-Dur im Mix ${JSON.stringify(p)}`);
+  // Snare und Hi-Hats. ponytail: Eine Kick mit Tonhöhe ist für Flatness + Chroma tonal (Flatness 0,3–0,6 wie Musik),
+  // Drum-Pads mit lauter Kick landen deshalb hoch, wie schon vor dieser Änderung. Trennen ginge nur mit neuem Analyseformat.
+  for (const p of await info('DDDDDDDDDDD', 'drums', 0)) assert.ok(p.conf < 0.2, `Drums ${p.conf}`);
+  for (const p of await info('NNNNNNNNNNN', 'noise')) assert.ok(p.conf < 0.2, `Rauschen ${p.conf}`);
   done();
 });
 

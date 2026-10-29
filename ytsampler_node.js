@@ -367,6 +367,15 @@ function estimateTempo(y, srd) {
   // für das Beat-Tracking aufheben – env[i] gehört zu flux[i - w], also zeitlich zurückschieben
   const onset = new Float32Array(nf);
   for (let i = w; i < nf; i++) onset[i - w] = env[i];
+  return { ...tempoFromOnset(onset, fps), fps, onset, bass: bassFlux };
+}
+
+// Tempo und Konfidenz allein aus der Einsatzkurve. Läuft auch beim Lesen gespeicherter Analysen,
+// so gilt eine geänderte Formel ohne neues Analyseformat und ohne ganze WAV.
+function tempoFromOnset(onset, fps) {
+  const nf = onset.length;
+  if (!(fps > 0) || nf < fps * 4) return { bpm: 0, conf: 0 };
+  const env = Float64Array.from(onset);
   let mean = 0;
   for (let i = 0; i < nf; i++) mean += env[i];
   mean /= nf;
@@ -379,32 +388,35 @@ function estimateTempo(y, srd) {
     for (let i = 0; i + L < nf; i++) s += env[i] * env[i + L];
     ac[L] = s / (nf - L);
   }
-  if (ac[0] <= 0) return { bpm: 0, conf: 0, fps, onset, bass: bassFlux };
+  if (ac[0] <= 0) return { bpm: 0, conf: 0 };
   const prior = (bpm) => Math.exp(-0.5 * Math.pow(Math.log2(bpm / 120) / 0.6, 2));
-  let best = -1, bestL = 0, sumS = 0, cntS = 0;
-  const score = new Float64Array(maxL + 2);
+  let best = -Infinity, bestL = 0;
   for (let L = minL; L <= maxL; L++) {
     const v = (ac[L] + 0.5 * ac[2 * L]) * prior(60 * fps / L);
-    score[L] = v; sumS += v; cntS++;
     if (v > best) { best = v; bestL = L; }
   }
-  // Parabel-Interpolation für Nachkommastellen
-  let lag = bestL;
-  if (bestL > minL && bestL < maxL) {
-    const a = ac[bestL - 1], b = ac[bestL], c = ac[bestL + 1];
-    const den = a - 2 * b + c;
-    if (den < 0) lag = bestL + 0.5 * (a - c) / den;
-  }
-  const bpm = 60 * fps / lag;
-  // Konfidenz: Wie tief sind die Täler zwischen den Schlägen? (Flächen/Rauschen: kaum Kontrast)
-  const g = (L) => ac[L] + 0.5 * ac[Math.min(ac.length - 1, 2 * L)];
-  let trough = Infinity;
-  for (let L = Math.floor(bestL * 0.55); L <= Math.ceil(bestL * 0.95); L++) trough = Math.min(trough, g(L));
-  const periodic = Math.max(0, Math.min(1, (g(bestL) - trough) / ac[0] * 1.5));
-  // Wie stark setzt überhaupt etwas ein? (Streuung der Einsatzkurve; Flächen/Rauschen ~3–5, Beats > 50)
-  const rhythmic = Math.max(0, Math.min(1, (Math.sqrt(ac[0]) - 8) / 30));
-  const conf = periodic * rhythmic;
-  return { bpm: Math.round(bpm * 10) / 10, conf: Math.round(conf * 100) / 100, fps, onset, bass: bassFlux };
+  // Ein Frame Raster sind bei 120 BPM ~3 BPM. Fein nachsuchen: Autokorrelation (linear interpoliert)
+  // über 16 Schläge, erst grob ±3 %, dann ±0,3 BPM. Kleine Fehler würden sich über 16 Schläge aufsummieren.
+  const acf = (L) => {
+    const Li = Math.floor(L), fr = L - Li;
+    let s = 0;
+    for (let i = 0; i + Li + 1 < nf; i++) s += env[i] * (env[i + Li] * (1 - fr) + env[i + Li + 1] * fr);
+    return s / (nf - L);
+  };
+  const K = 16;
+  const comb = (bpm) => { const P = 60 * fps / bpm; let s = 0; for (let k = 1; k <= K; k++) s += acf(k * P); return s / K / ac[0]; };
+  const b0 = 60 * fps / bestL;
+  let bpm = b0, top = -Infinity;
+  const scan = (lo, hi, step) => { for (let b = lo; b <= hi + 1e-9; b += step) { const c = comb(b); if (c > top) { top = c; bpm = b; } } };
+  scan(b0 * 0.97, b0 * 1.03, 0.25);
+  const mid = bpm;
+  scan(mid - 0.3, mid + 0.3, 0.02);
+  // Konfidenz: Wie ähnlich ist die Einsatzkurve sich selbst, 1…16 Schläge später? Unabhängig von
+  // Lautstärke und Mix-Dichte. Klarer Beat ~0,5–0,9, Rauschen/Gerede ~0,01, Flächen ~0,1.
+  const periodic = Math.max(0, Math.min(1, (top - 0.05) / 0.45));
+  // Fast gar keine Einsätze (Flächen, Stille; Streuung < 2) zählen nicht, auch wenn sie periodisch wirken
+  const strong = Math.max(0, Math.min(1, (Math.sqrt(ac[0]) - 2) / 4));
+  return { bpm: Math.round(bpm * 10) / 10, conf: Math.round(periodic * strong * 100) / 100 };
 }
 
 // =====================================================================
@@ -568,6 +580,7 @@ function saveAnalysis(file, a) {
 // ohne ganze WAV nicht neu rechnen. Neue Version: Felder hinten anhängen, Leser für die alten behalten.
 // Versionen 1 und 2 lagen nur im Cache (neben der WAV) und werden dort neu gerechnet.
 const AN_READABLE = [3];
+const tempoMemo = new Map();   // Datei -> {key: Größe+mtime, t: {bpm, conf}}
 
 function readAnalysis(file) {
   try {
@@ -576,8 +589,16 @@ function readAnalysis(file) {
     if (!AN_READABLE.includes(arr[0])) return null;
     const nf = arr[3], no = arr[7], H = 8;
     if (arr.length !== H + 2 * no + nf * AN.STRIDE) return null;   // Version 3: nichts angehängt
-    return { srd: arr[1], tuning: arr[2], nf, bpm: Math.round(arr[4] * 10) / 10, bpmConf: Math.round(arr[5] * 100) / 100,
-             fps: arr[6], onset: arr.subarray(H, H + no), bass: arr.subarray(H + no, H + 2 * no),
+    const onset = arr.subarray(H, H + no);
+    // bpm/bpmConf im Kopf stammen ggf. von einer älteren Formel: aus der Einsatzkurve neu (Spec 2.4)
+    let t = { bpm: Math.round(arr[4] * 10) / 10, conf: Math.round(arr[5] * 100) / 100 };
+    if (no >= arr[6] * 4) {   // wie in tempoFromOnset: unter 4 s bleibt der Kopf
+      const st = fs.statSync(file), key = `${st.size}:${st.mtimeMs}`, m = tempoMemo.get(file);   // ~100 ms, daher gemerkt
+      if (m && m.key === key) t = m.t;
+      else { t = tempoFromOnset(onset, arr[6]); tempoMemo.set(file, { key, t }); }
+    }
+    return { srd: arr[1], tuning: arr[2], nf, bpm: t.bpm, bpmConf: t.conf,
+             fps: arr[6], onset, bass: arr.subarray(H + no, H + 2 * no),
              frames: arr.subarray(H + 2 * no, H + 2 * no + nf * AN.STRIDE) };
   } catch (e) { return null; }
 }
@@ -655,7 +676,8 @@ function analyzeWindow(startMs, spanMs) {
   for (let f = f0; f <= f1; f++) {
     const b = f * AN.STRIDE;
     const e = a.frames[b + 13], flat = a.frames[b + 12];
-    const wt = Math.min(1, Math.max(0, (0.5 - flat) / 0.3)); // Flatness 0.2 -> voll tonal, 0.5 -> Rauschen
+    // Flatness 0,5 -> voll tonal, 0,8 -> Rauschen. Gemischte Musik liegt bei 0,43–0,69, Rauschen/Hi-Hats ~0,84.
+    const wt = Math.min(1, Math.max(0, (0.8 - flat) / 0.3));
     eTot += e; eTon += e * wt;
     for (let pc = 0; pc < 12; pc++) c[pc] += a.frames[b + pc] * wt;
   }
@@ -2038,7 +2060,7 @@ Max.outlet('needsession');
 // Für tools/tests/ (unter Max ohne Wirkung)
 module.exports = {
   DATA, LOCAL, CACHE, SESSIONS, LIB_FILE, LIB_LOCK, BACKUP_DIR, ERR, LIB, libErr, libParse, libRead, libChange, libBackup, libEvents, get libNow() { return libNow; },
-  AN, SNIP_DIR, SNIP_MS, computeAnalysis, saveAnalysis, readAnalysis, getAnalysis, ensureAnalysis, trackBeats, silentRanges,
+  AN, SNIP_DIR, SNIP_MS, computeAnalysis, tempoFromOnset, saveAnalysis, readAnalysis, getAnalysis, ensureAnalysis, trackBeats, silentRanges,
   hasWav, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, cacheSize, videoFail,
   beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, newBank, loadVideo, get analysis() { return analysis; },
   runCmd, peaks, get webPort() { return webPort; }, get activeId() { return activeId; },
