@@ -47,7 +47,7 @@ const CACHE = path.join(LOCAL, 'cache');
 const MAX_SECONDS = 600;  // URL-Videos über 10 min: nur die ersten 10 Minuten laden (RAM!)
 const SEARCH_FETCH = 30;  // so viele Treffer holen …
 const SEARCH_SHOW = 15;   // … und davon höchstens so viele anzeigen
-let maxLenSec = 7 * 60;   // Längenfilter der Suche, kommt vom Device
+let maxLenSec = 7 * 60;   // Längenfilter der Teletext-Suche (fest, der Regler „Max Length“ ist mit 2.0 weggefallen)
 
 const SESSIONS = path.join(DATA, 'sessions');
 fs.mkdirSync(CACHE, { recursive: true });
@@ -709,7 +709,7 @@ function showResults() {
   ui.sel = Math.min(ui.sel, Math.max(0, lastResults.length - 1));
   const hidden = allResults.length - lastResults.length;
   const lim = `${Math.round(maxLenSec / 60)} min`;
-  if (!lastResults.length) status(`Keine Treffer unter ${lim} – Limit erhöhen oder anders suchen`);
+  if (!lastResults.length) status(`Keine Treffer unter ${lim} – anders suchen`);
   else status(`${lastResults.length} Treffer ≤ ${lim}` + (hidden > 0 ? ` (${hidden} ausgeblendet)` : ''));
 }
 
@@ -798,24 +798,10 @@ async function loadVideo(input) {
   }
 }
 
-Max.addHandler('search', (...words) => search(words.join(' ')));
-Max.addHandler('text', (...words) => search(words.join(' '))); // falls textedit "text" mitsendet
-Max.addHandler('pick', (idx) => {
-  const r = lastResults[Math.floor(idx) - 1];   // Index 0 = Kopfzeile
-  if (r) loadVideo(r.id);
-  else if (lastResults.length) status('Erst einen Treffer im Menü auswählen');
-});
 Max.addHandler('load', (...parts) => loadVideo(parts.join('')));
-Max.addHandler('maxlen', (min) => {
-  const sec = Math.max(1, Math.round(min)) * 60;
-  if (sec === maxLenSec) return;
-  maxLenSec = sec;
-  if (allResults.length) showResults();   // letzte Suche sofort neu filtern
-});
 Max.addHandler('analyze', (i, start, span) => sendPadInfo(Math.floor(i), start, span));
 Max.addHandler('beattrack', (bpm) => sendBeats(bpm));
 Max.addHandler('analyzeall', (span, ...starts) => starts.forEach((st, i) => sendPadInfo(i, st, span)));
-Max.addHandler('opencache', () => spawn('open', [CACHE]));
 
 // =====================================================================
 // Session-Speicher: Zustand pro Device als JSON-Datei.

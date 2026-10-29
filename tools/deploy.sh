@@ -9,6 +9,6 @@ cd "$(dirname "$0")/.."
 # nur, was das Device braucht; alles andere im Ziel wird ersetzt bzw. entfernt
 mkdir -p "$DEST"
 rsync -a --delete --exclude .DS_Store \
-  *.amxd *.maxpat *.js teletext.html "Teletext öffnen.command" README.md VERSION "$DEST/"
+  *.amxd *.maxpat *.js teletext.html editor.html "Teletext öffnen.command" README.md VERSION "$DEST/"
 
 echo "→ $DEST"

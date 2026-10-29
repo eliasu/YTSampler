@@ -196,7 +196,6 @@
 
     // aktuelles Video
     put(5, 1, 'AKTUELL', 'C');
-    if (S.fav) right(5, 38, 'FAV ' + S.fav, 'M');
     if (S.title) wrap(S.title, 38, 2).forEach((l, i) => put(6 + i, 1, l, 'W'));
     else put(6, 1, '- noch nichts geladen -', 'B');
 
