@@ -1,4 +1,4 @@
-// HTTP, /cmd, SSE, Peaks, Device-Nachrichten (Spec 3.2–3.4, 6.1, 6.2, 6.5): node tools/tests/test_http.js
+// HTTP, /cmd, SSE, Peaks, Device-Nachrichten (Spec 3.2–3.4, 6.1, 6.2, 6.5; Spec 3.0 3.2–3.4, 4.5): node tools/tests/test_http.js
 // Server auf freiem Port (YTS_PORT=0), Temp-HOME, Attrappen für max-api und yt-dlp.
 const assert = require('assert');
 const cp = require('child_process');
@@ -141,14 +141,18 @@ t('/peaks: 400 bei falscher ID, 404 ohne WAV, sonst Kopf + Min/Max je 256 Frames
   done();
 });
 
-t('/editor liefert editor.html und spiegelt sie nach D/web', async () => {
+t('/editor liefert editor.html und spiegelt sie nach D/web; / → 302, Teletext-Routen weg', async () => {
   const { node, port, done } = await setup();
   const r = await req(port, { method: 'GET', url: '/editor' });
   assert.strictEqual(r.status, 200);
   assert.match(r.headers['content-type'], /^text\/html/);
   assert.ok(r.buf.toString().includes('/editor/events'));
   assert.ok(fs.existsSync(path.join(node.DATA, 'web', 'editor.html')));
-  assert.strictEqual((await req(port, { method: 'GET', url: '/' })).status, 200, 'Teletext bleibt');
+  const root = await req(port, { method: 'GET', url: '/' });
+  assert.deepStrictEqual([root.status, root.headers.location], [302, '/editor']);
+  for (const url of ['/events', '/key', '/state', '/index.html']) assert.strictEqual((await req(port, { method: 'GET', url })).status, 404, url);
+  assert.strictEqual((await req(port, { url: '/key', body: { k: 'enter' } })).status, 404, 'POST /key');
+  assert.ok(!fs.existsSync(path.join(node.DATA, 'web', 'teletext.html')), 'keine Teletext-Kopie mehr');
   done();
 });
 
@@ -163,12 +167,13 @@ t('SSE: retry, hello, lib, device, cache beim Verbinden; beats erst mit aktiver 
   const lib = a.last('lib');
   assert.strictEqual(lib.state, 'ok');
   assert.strictEqual(lib.by, 'test');
-  assert.deepStrictEqual(lib.banks.map((b) => [b.id, b.name, b.video, b.snip, b.wav]),
+  // Bank 1 und 3 schneidet das Entprellen 500 ms nach create: Auf langsamen Rechnern ist das vor dem Verbinden schon passiert
+  assert.deepStrictEqual(lib.banks.map((b) => [b.id, b.name, b.video, b.snip === 'ok' && b.id !== ids[1] ? 'stale' : b.snip, b.wav]),
     [[ids[0], 'Eins', V1, 'stale', true], [ids[1], 'Zwei', V2, 'ok', false], [ids[2], 'Drei', V1, 'stale', true]]);
   assert.deepStrictEqual(lib.banks[0].starts, STARTS);
   assert.deepStrictEqual(lib.videos, { [V1]: { title: 'Titel ' + V1 }, [V2]: { title: 'Titel ' + V2 } });
   assert.deepStrictEqual(Object.keys(lib.cache), ['bytes', 'warn']);
-  assert.deepStrictEqual(a.last('device'), { bankId: 0, video: '-', sel: 0, mode: 0, rev: 0, starts: [], spans: [], nr: 0, teletext: null });
+  assert.deepStrictEqual(a.last('device'), { bankId: 0, nr: 0, video: '-', sel: 0, starts: [], spans: [], params: null });
   assert.strictEqual(a.last('cache').warn, false);
 
   assert.deepStrictEqual(await cmd({ client: 'c1', cmd: 'select', id: ids[0] }), { ok: true });
@@ -196,7 +201,7 @@ t('select: bankname, bank mit Starts, Längen, Songdauer, Video, Pfad; danach di
   assert.strictEqual(b.lens[15], 5000);
   assert.ok(fs.existsSync(b.path));
   await until(() => on('analysisready').length, 'analysisready');
-  assert.deepStrictEqual(max.out.filter((m) => ['tuning', 'tempo', 'silence', 'analysisready'].includes(m[0])).map((m) => m[0]), ['tuning', 'tempo', 'silence', 'analysisready']);
+  assert.deepStrictEqual(max.out.filter((m) => ['tuning', 'tempo', 'silence', 'analysisready'].includes(m[0])).map((m) => m[0]), ['tuning', 'tempo', 'analysisready']);
   assert.ok(fs.existsSync(path.join(node.SNIP_DIR, `${V1}.chroma`)), 'Analyse liegt in D');
   assert.strictEqual(node.activeId, ids[2]);
 
@@ -219,7 +224,7 @@ t('select: bankname, bank mit Starts, Längen, Songdauer, Video, Pfad; danach di
   done();
 });
 
-t('Device: banksel, bankpeek, bankopen/bankgone, banksel über der letzten Bank', async () => {
+t('Device: banksel, bankpeek, bankopen/bankgone, banksel über der letzten Bank, bankload klammert', async () => {
   const { node, max, ids, on, done } = await setup();
   const h = max.handlers;
   h.bankpeek(2);
@@ -236,6 +241,32 @@ t('Device: banksel, bankpeek, bankopen/bankgone, banksel über der letzten Bank'
   max.out = [];
   h.bankopen(ids[1]);
   assert.strictEqual(bankArgs(on('bank')[0]).nr, 2);
+  // bankload: wie banksel, hinter der letzten Bank die letzte
+  for (const [nr, want] of [[2, 2], [3, 3], [4, 3], [128, 3], [0, 1]]) {
+    max.out = [];
+    h.bankload(nr);
+    assert.deepStrictEqual(on('bank').map((m) => bankArgs(m).nr), [want], `bankload ${nr}`);
+  }
+  // ohne Snippets und ohne Track: bankfail wie bei banksel
+  fs.unlinkSync(path.join(node.SNIP_DIR, `${ids[1]}.json`));
+  max.out = [];
+  h.bankload(2);
+  assert.deepStrictEqual(on('bankfail').map((m) => m[1]), [ids[1]]);
+  assert.deepStrictEqual(on('bank'), []);
+  done();
+});
+
+t('bankload: leere oder kaputte Bibliothek → nichts', async () => {
+  const { node, max, ids, done } = await setup();
+  for (const id of ids) node.libChange('delete', { id }, 'test');
+  max.out = [];
+  max.handlers.bankload(1);
+  assert.deepStrictEqual(max.out, [], 'leer');
+  fs.writeFileSync(node.LIB_FILE, '{kaputt');
+  await until(() => node.libNow.state === 'kaputt', 'kaputt');
+  max.out = [];
+  max.handlers.bankload(1);
+  assert.deepStrictEqual(max.out, [], 'kaputt');
   done();
 });
 
@@ -338,7 +369,7 @@ t('setstart, setstarts, swap, roll: neu schneiden, aktive Bank lädt danach; ohn
   done();
 });
 
-t('tempo, tempook, bpmset: bpm an [js] nur für die aktive Bank, by device, notempo', async () => {
+t('tempo, tempook: bpm an [js] nur für die aktive Bank, notempo; bpmset gibt es nicht mehr', async () => {
   const { node, max, ids, on, cmd, events, done } = await setup();
   const a = events();
   await cmd({ cmd: 'select', id: ids[0] });
@@ -359,33 +390,33 @@ t('tempo, tempook, bpmset: bpm an [js] nur für die aktive Bank, by device, note
   fs.unlinkSync(path.join(node.CACHE, `${V2}.chroma`));
   assert.deepStrictEqual(await cmd({ cmd: 'tempook', video: V2 }), { ok: false, code: 'notempo', text: 'Kein Tempo erkannt' });
 
-  max.out = [];
-  max.handlers.bpmset(V1, 101.26);
-  assert.strictEqual(node.libNow.lib.videos[V1].bpm, 101.3);
-  await a.wait((ev, d) => ev === 'lib' && d.by === 'device' && d.videos[V1].bpm === 101.3);
-  assert.deepStrictEqual(on('bpm'), [], 'kein bpm zurück');
-  const rev = node.libNow.lib.rev;
-  max.handlers.bpmset(V3, 100);
-  assert.strictEqual(node.libNow.lib.rev, rev, 'unbekanntes Video: nichts');
+  for (const h of ['bpmset', 'load', 'key', 'analyze']) assert.ok(!(h in max.handlers), h);
   done();
 });
 
-t('hit/up → padhit/padup; bankstate → device; playing/playstop → play/stop; trackname → hello', async () => {
+t('hit/up → padhit/padup; bankstate mit Reglern → device.params; playing/playstop → play/stop; trackname → hello', async () => {
   const { max, ids, on, cmd, events, done } = await setup();
   const a = events();
   await a.wait((ev) => ev === 'cache');
   await cmd({ cmd: 'hit', pad: 4 });
   await cmd({ cmd: 'up', pad: 4 });
-  assert.deepStrictEqual(max.out, [['padhit', 4], ['padup', 4]]);
+  assert.deepStrictEqual(max.out.filter((m) => m[0] !== 'status'), [['padhit', 4], ['padup', 4]], 'status vom Startcheck kann dazwischen kommen');
   const w = Array.from({ length: 16 }, (_, i) => 1000 + i);
-  max.handlers.bankstate(ids[2], V1, 5, 1, 1, ...STARTS, ...w);
+  // <div> <rate> <tune> <warp> <quant> <vol> <voices> <base>
+  const P = [5, 1.25, 1, 0, 1, -3.5, 6, 36];
+  max.handlers.bankstate(ids[2], V1, 5, 1, 1, ...STARTS, ...w, ...P);
   await a.wait((ev, d) => ev === 'device' && d.bankId === ids[2]);
-  assert.deepStrictEqual(a.last('device'), { bankId: ids[2], video: V1, sel: 5, mode: 1, rev: 1, starts: STARTS, spans: w, nr: 3, teletext: null });
-  await a.wait((ev, d) => ev === 'beats' && d.video === V1, 'beats der aktiven Bank');
+  const d = a.last('device');
+  assert.deepStrictEqual(d, { bankId: ids[2], nr: 3, video: V1, sel: 5, starts: STARTS, spans: w,
+    params: { div: 5, rate: 1.25, mode: 1, rev: 1, tune: 1, warp: 0, quant: 1, vol: -3.5, voices: 6, base: 36 } });
+  assert.ok(!('mode' in d) && !('rev' in d) && !('teletext' in d));
+  await a.wait((ev, d2) => ev === 'beats' && d2.video === V1, 'beats der aktiven Bank');
   const n = a.of('device').length;
-  max.handlers.bankstate(ids[2], V1, 5, 1, 1, ...STARTS, ...w);
+  max.handlers.bankstate(ids[2], V1, 5, 1, 1, ...STARTS, ...w, ...P);
   await sleep(80);
   assert.strictEqual(a.of('device').length, n, 'Gleiches nicht noch einmal');
+  max.handlers.bankstate(ids[2], V1, 5, 0, 1, ...STARTS, ...w, 5, 1.25, 1, 1, 1, -3.5, 6, 36);
+  await a.wait((ev, d2) => ev === 'device' && d2.params && d2.params.warp === 1 && d2.params.mode === 0, 'Regleränderung');
   max.handlers.playing(5, 2000, 3500, 1500);
   max.handlers.playstop(5);
   await a.wait((ev) => ev === 'stop');
@@ -472,11 +503,30 @@ t('kaputte Bibliothek: schreibend libbroken, hit/up gehen, [js] libstate kaputt;
   done();
 });
 
-t('Teletext-Download gescheitert: loadfail an [js] statt status', async () => {
-  const { max, on, done } = await setup();
-  await max.handlers.load('FAILxxxxxxx');
-  assert.deepStrictEqual(on('loadfail'), [['loadfail', 'FAILxxxxxxx', 'ERROR: Video unavailable']]);
-  assert.ok(!on('status').some((m) => /Fehler/.test(m[1])));
+t('/cmd param: gültig → param an [js] und {}, ungültig → badreq, auch bei kaputter Bibliothek', async () => {
+  const { node, max, on, cmd, done } = await setup();
+  const good = [['div', 0], ['div', 10], ['rate', 0.25], ['rate', 1.333], ['rate', 2], ['mode', 1], ['rev', 0], ['tune', 1], ['warp', 1],
+    ['quant', 0], ['vol', -70], ['vol', -3.5], ['vol', 6], ['voices', 0], ['voices', 6], ['base', 0], ['base', 127]];
+  for (const [name, value] of good) {
+    max.out = [];
+    assert.deepStrictEqual(await cmd({ client: 'c1', cmd: 'param', name, value }), { ok: true }, `${name} ${value}`);
+    assert.deepStrictEqual(on('param'), [['param', name, value]]);
+  }
+  const bad = [['div', 11], ['div', 2.5], ['div', -1], ['rate', 0.2], ['rate', 2.01], ['mode', 2], ['rev', 0.5], ['tune', -1], ['warp', '1'],
+    ['quant', true], ['vol', -71], ['vol', 6.5], ['voices', 7], ['voices', 1.5], ['base', 128], ['base', 36.5], ['bank', 1], ['toString', 0],
+    ['div', null], ['rate', NaN], [undefined, 1]];
+  for (const [name, value] of bad) {
+    max.out = [];
+    const r = await cmd({ cmd: 'param', name, value });
+    assert.strictEqual(r.code, 'badreq', `${name} ${value}`);
+    assert.deepStrictEqual(on('param'), [], `${name} ${value}: nichts an [js]`);
+  }
+  fs.writeFileSync(node.LIB_FILE, '{kaputt');
+  await until(() => node.libNow.state === 'kaputt', 'kaputt');
+  max.out = [];
+  assert.deepStrictEqual(await cmd({ cmd: 'param', name: 'warp', value: 1 }), { ok: true }, 'kaputt erlaubt');
+  assert.deepStrictEqual(on('param'), [['param', 'warp', 1]]);
+  assert.strictEqual(fs.readFileSync(node.LIB_FILE, 'utf8'), '{kaputt', 'schreibt nichts');
   done();
 });
 

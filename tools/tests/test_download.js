@@ -1,4 +1,4 @@
-// Downloads (Spec 3.1): zwei Wege, Abbruch, Reihenfolge, Fehlschläge, newbank. node tools/tests/test_download.js
+// Downloads (Spec 3.1, nur noch der Editor-Weg): Abbruch, Reihenfolge, Fehlschläge, newbank. node tools/tests/test_download.js
 // yt-dlp ist eine Attrappe (fake_ytdlp.js), nie das echte.
 const assert = require('assert');
 const cp = require('child_process');
@@ -24,7 +24,7 @@ function setup(delay = 120) {
   for (const ev of ['job', 'msg', 'cache', 'status']) node.libEvents.on(ev, (d) => events.push([ev, d]));
   const log = () => fs.readFileSync(process.env.FAKE_LOG, 'utf8').trim().split('\n').filter(Boolean);
   const until = async (fn, ms = 8000) => { const t0 = Date.now(); while (!fn()) { if (Date.now() - t0 > ms) throw new Error('Zeit um, Protokoll: ' + log().join(', ')); await sleep(20); } };
-  const leftovers = () => fs.readdirSync(node.CACHE).filter((n) => n.includes('.dl-'));
+  const leftovers = () => fs.readdirSync(node.CACHE).filter((n) => n.includes('.dl.'));
   return { node, max, log, until, events, leftovers, done: () => fs.rmSync(home, { recursive: true, force: true }) };
 }
 
@@ -84,24 +84,10 @@ t('Fehlschlag: loadfail mit Titel und Grund, fail gesetzt, fetchall überspringt
   done();
 });
 
-t('Teletext und Editor brechen sich nicht ab; Teletext: neuester Wunsch gewinnt', async () => {
-  const { node, max, log, until, done } = setup();
-  const A = ID('a'), B = ID('b'), C = ID('c'), D = ID('d');
-  node.loadVideo(A);
-  await until(() => log().includes('start ' + A));
-  const pb = node.fetchVideo(B, 'fetch');
-  await pb;
-  await until(() => max.out.some((m) => m[0] === 'loaded' && m[3] === A));
-  assert.ok(!log().some((l) => l.startsWith('kill')));
-  max.out.length = 0;
-  node.loadVideo(C);
-  await until(() => log().includes('start ' + C));
-  node.loadVideo(D);
-  await until(() => max.out.some((m) => m[0] === 'analysisready'));
-  assert.ok(log().includes('kill ' + C));
-  assert.deepStrictEqual(max.out.filter((m) => m[0] === 'loaded').map((m) => m[3]), [D]);
-  assert.ok(!fs.existsSync(path.join(node.CACHE, `${C}.wav`)));
-  assert.ok(!max.out.some((m) => m[0] === 'status' && /Fehler/.test(m[1])), 'kein Fehler für den abgebrochenen');
+t('Teletext-Weg ist weg: kein loadVideo, kein load-Handler', () => {
+  const { node, max, done } = setup();
+  assert.ok(!('loadVideo' in node));
+  for (const h of ['load', 'key']) assert.ok(!(h in max.handlers), h);
   done();
 });
 

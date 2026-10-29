@@ -20,9 +20,9 @@ function setup() {
 // Abstand zum nächsten Rasterpunkt (Beats liegen LEAD ms vor dem Einsatz)
 const near = (t, grid) => { const r = ((t + LEAD) % grid + grid) % grid; return Math.min(r, grid - r); };
 // Was das Device nach ensureAnalysis und beattrack bekommt
-async function deviceOut(node, max, bank) {
+async function deviceOut(node, max) {
   max.out.length = 0;
-  await node.ensureAnalysis(V, 'Titel', bank);
+  await node.ensureAnalysis(V, 'Titel');
   max.handlers.beattrack(120);
   return max.out.filter((m) => m[0] !== 'status');
 }
@@ -41,15 +41,15 @@ t('Tempo, Beats und „1“ aus erzeugter WAV, Beats gültig', () => {
   done();
 });
 
-t('Ergebnis aus dem Bank-Ordner gleich wie aus cache/, ohne ganze WAV', async () => {
+t('Ergebnis aus dem Bank-Ordner gleich wie aus der WAV, ohne ganze WAV; kein silence', async () => {
   const { node, max, wav, done } = setup();
-  const fromCache = await deviceOut(node, max, false);
-  assert.deepStrictEqual(fromCache.map((m) => m[0]), ['tuning', 'tempo', 'silence', 'analysisready', 'beatsclear', 'beatsadd', 'beatsdone']);
+  const fromCache = await deviceOut(node, max);
+  assert.deepStrictEqual(fromCache.map((m) => m[0]), ['tuning', 'tempo', 'analysisready', 'beatsclear', 'beatsadd', 'beatsdone']);
   const { id } = node.libChange('create', { video: V, title: 'T', starts: Array.from({ length: 16 }, (_, i) => i * 1000) }, 't');
   node.cutSnippets(node.libNow.lib.banks.find((x) => x.id === id));
   fs.unlinkSync(wav);
   fs.unlinkSync(path.join(node.CACHE, `${V}.chroma`));
-  const fromBank = await deviceOut(node, max, true);
+  const fromBank = await deviceOut(node, max);
   assert.deepStrictEqual(fromBank, fromCache);
   assert.strictEqual(node.analysis.id, V);
   done();
@@ -59,7 +59,7 @@ t('Analyse fehlt ohne WAV: Status, keine Analyse-Nachrichten', async () => {
   const { node, max, wav, done } = setup();
   fs.unlinkSync(wav);
   max.out.length = 0;
-  await node.ensureAnalysis(V, 'Titel', true);
+  await node.ensureAnalysis(V, 'Titel');
   // ohne yt-dlp im Temp-HOME meldet der Start das per status: hier egal
   const out = max.out.filter((m) => !(m[0] === 'status' && /yt-dlp/.test(m[1])));
   assert.deepStrictEqual(out, [['status', 'Analyse fehlt – Bank im Editor neu schneiden']]);
@@ -69,7 +69,7 @@ t('Analyse fehlt ohne WAV: Status, keine Analyse-Nachrichten', async () => {
 
 t('Analyse fehlt in D, WAV da: neu rechnen und ablegen', async () => {
   const { node, max, done } = setup();
-  await node.ensureAnalysis(V, 'Titel', true);
+  await node.ensureAnalysis(V, 'Titel');
   assert.ok(fs.existsSync(path.join(node.SNIP_DIR, `${V}.chroma`)));
   assert.ok(max.out.some((m) => m[0] === 'analysisready'));
   done();
@@ -129,7 +129,7 @@ t('Tonart-Konfidenz: Akkorde über 0,5 mit richtiger Tonart, Drums/Rauschen nahe
   const { node, max, done } = setup();
   const info = async (id, name, ...args) => {
     if (name) signalWav(path.join(node.CACHE, `${id}.wav`), name, 30, ...args);
-    await node.ensureAnalysis(id, 'T', false);
+    await node.ensureAnalysis(id, 'T');
     max.out.length = 0;
     max.handlers.analyzeall(2000, 3000, 12000, id === V ? 60000 : 21000);   // V ist von 20–45 s still
     return max.out.filter((m) => m[0] === 'padinfo').map((m) => ({ conf: m[2], tonic: m[3], minor: m[4] }));

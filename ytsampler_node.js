@@ -1,6 +1,6 @@
 // YT Sampler – Node for Max Teil
-// Bibliothek, Snippets, Analyse, Downloads, Session-Dateien, Webserver für Teletext und Editor.
-// Protokolle zu [js] und Editor: .scratch/bank-editor/spec.md Abschnitt 3 und 6.
+// Bibliothek, Snippets, Analyse, Downloads, Session-Dateien, Webserver für den Editor.
+// Protokolle zu [js] und Editor: .scratch/bank-editor/spec.md Abschnitt 3 und 6, Änderungen für 3.0 in .scratch/device-3/spec.md.
 
 const Max = require('max-api');
 const { spawn } = require('child_process');
@@ -45,45 +45,16 @@ const DATA_SETUP = dataDir();
 const DATA = DATA_SETUP.dir;
 const CACHE = path.join(LOCAL, 'cache');
 const MAX_SECONDS = 600;  // URL-Videos über 10 min: nur die ersten 10 Minuten laden (RAM!)
-const SEARCH_FETCH = 30;  // so viele Treffer holen …
-const SEARCH_SHOW = 15;   // … und davon höchstens so viele anzeigen
-let maxLenSec = 7 * 60;   // Längenfilter der Teletext-Suche (fest, der Regler „Max Length“ ist mit 2.0 weggefallen)
+const SEARCH_FETCH = 30;  // so viele Treffer holen
 
 const SESSIONS = path.join(DATA, 'sessions');
 fs.mkdirSync(CACHE, { recursive: true });
 fs.mkdirSync(SESSIONS, { recursive: true });
 
-let allResults = [];   // ungefilterte Treffer der letzten Suche
-let lastResults = [];  // angezeigte Treffer (Index = Menüeintrag)
-let lastQuery = '';
-
-const status = (t) => { Max.outlet('status', t); ui.message = String(t); pushUi(); };
-
-// Zustand für die Teletext-Seite (wird bei jeder Änderung an alle Browser geschickt)
-const ui = {
-  query: '',        // aktuelle Eingabe
-  searched: '',     // zuletzt gesuchter Begriff
-  searching: false,
-  sel: 0,           // markierter Treffer
-  loading: false,
-  phase: '',        // INFO | DOWNLOAD | KONVERT | ANALYSE
-  progress: 0,
-  title: '',
-  message: '',
-  learn: null,      // Schritt im IR-Merkmodus oder null
-  tvOff: false,     // Fernseher per An/Aus-Taste "abgeschaltet"
-};
-let pushUi = () => {};  // wird unten vom Webserver gesetzt
+const status = (t) => { Max.outlet('status', t); };
 
 // Zeichen entfernen, die in Max-Nachrichten Ärger machen
 const clean = (s) => String(s || '').replace(/[,;{}\\\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-
-function fmtDur(sec) {
-  sec = Math.round(sec || 0);
-  if (!sec) return '–';
-  const m = Math.floor(sec / 60), s = sec % 60;
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
 
 function errMsg(e) {
   if (e && e.code === 'ENOENT') return 'yt-dlp nicht gefunden → Terminal: brew install yt-dlp ffmpeg deno';
@@ -627,16 +598,16 @@ function newerAnalysis(file) {
   try { const b = Buffer.alloc(4); const fd = fs.openSync(file, 'r'); fs.readSync(fd, b, 0, 4, 0); fs.closeSync(fd); return b.readFloatLE(0) > AN.VERSION; } catch (e) { return false; }
 }
 
-// Analyse ans Device: tuning, tempo, silence, analysisready. bank: aus D/snippets (Spec 2.4), sonst aus L/cache.
-async function ensureAnalysis(id, title, bank) {
+// Analyse ans Device: tuning, tempo, analysisready. Aus D/snippets (Spec 2.4), sonst Cache bzw. ganze WAV.
+async function ensureAnalysis(id, title) {
   analysis = null;
-  await new Promise((r) => setImmediate(r)); // "loaded" bzw. "bank" zuerst rausschicken
-  let a = bank ? readAnalysis(chromaBank(id)) : readAnalysis(chromaCache(id));
+  await new Promise((r) => setImmediate(r)); // "bank" zuerst rausschicken
+  let a = readAnalysis(chromaBank(id));
   if (!a && hasWav(id)) {
     status('Analysiere Tonart …');
     await new Promise((r) => setTimeout(r, 20));
     const t0 = Date.now();
-    a = getAnalysis(id, bank);
+    a = getAnalysis(id, true);
     Max.post(`YT Sampler: Analyse in ${Date.now() - t0} ms`);
   }
   if (!a) { status('Analyse fehlt – Bank im Editor neu schneiden'); return; }
@@ -644,7 +615,6 @@ async function ensureAnalysis(id, title, bank) {
   const cents = Math.round(a.tuning * 100);
   Max.outlet('tuning', cents);
   Max.outlet('tempo', a.bpm, a.bpmConf);
-  Max.outlet('silence', ...silentRanges(a));
   Max.outlet('analysisready');
   const tempoTxt = a.bpm ? ` · ${a.bpm} BPM${a.bpmConf < 0.3 ? ' (unsicher)' : ''}` : '';
   status(`Bereit: ${title}${tempoTxt} · Stimmung ${cents >= 0 ? '+' : ''}${cents} ct`);
@@ -703,44 +673,12 @@ function sendPadInfo(i, startMs, spanMs) {
   Max.outlet('padinfo', i, +r.conf.toFixed(3), r.tonic, r.minor, ...r.c.map((v) => +v.toFixed(4)));
 }
 
-async function search(query) {
-  const q = String(query || '').trim();
-  if (!q) return;
-  status(`Suche: ${clean(q)} …`);
-  ui.query = q; ui.searching = true; pushUi();
-  try {
-    const out = await run('yt-dlp', ['--flat-playlist', '--dump-single-json', '--no-warnings', `ytsearch${SEARCH_FETCH}:${q}`]);
-    const data = JSON.parse(out);
-    allResults = (data.entries || [])
-      .filter((e) => e && e.id)
-      .map((e) => ({ id: e.id, title: clean(e.title || e.id), duration: e.duration || 0 }));
-    lastQuery = q;
-    ui.searched = q; ui.sel = 0; ui.searching = false;
-    showResults();
-  } catch (e) {
-    ui.searching = false;
-    status(errMsg(e));
-  }
-}
-
-// Treffer nach Länge filtern und ins Menü schreiben
-function showResults() {
-  lastResults = allResults
-    .filter((r) => r.duration > 0 && r.duration <= maxLenSec)   // ohne Länge = Livestream o. Ä.
-    .slice(0, SEARCH_SHOW);
-  ui.sel = Math.min(ui.sel, Math.max(0, lastResults.length - 1));
-  const hidden = allResults.length - lastResults.length;
-  const lim = `${Math.round(maxLenSec / 60)} min`;
-  if (!lastResults.length) status(`Keine Treffer unter ${lim} – anders suchen`);
-  else status(`${lastResults.length} Treffer ≤ ${lim}` + (hidden > 0 ? ` (${hidden} ausgeblendet)` : ''));
-}
-
-// Ganzen Track in den Cache laden. Zwei Wege (Spec 3.1): way "dev" (Teletext) und "ed" (Editor), je ein yt-dlp.
-// Geladen wird unter <id>.dl-<way>.* und erst am Ende auf <id>.wav umbenannt: Ein abgebrochener
+// Ganzen Track in den Cache laden (nur noch für den Editor, ein yt-dlp nach dem anderen).
+// Geladen wird unter <id>.dl.* und erst am Ende auf <id>.wav umbenannt: Ein abgebrochener
 // Download hinterlässt keine halbe WAV. onPhase(phase, prozent): info | long | download | convert
-async function download(id, way, job, onPhase) {
+async function download(id, job, onPhase) {
   const url = `https://www.youtube.com/watch?v=${id}`;
-  const tmp = path.join(CACHE, `${id}.dl-${way}`);
+  const tmp = path.join(CACHE, `${id}.dl`);
   try {
     onPhase('info', 0);
     const j = JSON.parse(await run('yt-dlp', ['-J', '--no-playlist', '--no-warnings', url], null, job));
@@ -770,58 +708,11 @@ async function download(id, way, job, onPhase) {
     fs.writeFileSync(path.join(CACHE, `${id}.json`), JSON.stringify(info));
     return info;
   } finally {
-    // Reste (.webm, .part, …) dieses Wegs wegräumen
-    for (const n of fs.readdirSync(CACHE)) if (n.startsWith(`${id}.dl-${way}.`)) { try { fs.unlinkSync(path.join(CACHE, n)); } catch (e) { /* weg */ } }
+    // Reste (.webm, .part, …) wegräumen
+    for (const n of fs.readdirSync(CACHE)) if (n.startsWith(`${id}.dl.`)) { try { fs.unlinkSync(path.join(CACHE, n)); } catch (e) { /* weg */ } }
   }
 }
 
-// Teletext: ins Device laden. Ein neuer Wunsch bricht den laufenden ab (statt "busy").
-let devJob = null;
-async function loadVideo(input) {
-  const id = extractId(input);
-  if (!id) { status('Keine gültige YouTube-URL oder ID'); return; }
-  if (devJob) abort(devJob);
-  const job = devJob = { aborted: false, child: null };
-  ui.loading = true; ui.phase = 'INFO'; ui.progress = 0; pushUi();
-  try {
-    let info = readJson(path.join(CACHE, `${id}.json`));
-    if (!hasWav(id) || !info) {
-      info = await download(id, 'dev', job, (ph, p) => {
-        if (job.aborted) return;
-        if (ph === 'info') status('Hole Video-Infos …');
-        else if (ph === 'long') status(`Langes Video – nehme die ersten ${MAX_SECONDS / 60} Minuten`);
-        else if (ph === 'download') { ui.phase = 'DOWNLOAD'; ui.progress = p; status(`Lade … ${p.toFixed(0)} %`); }
-        else if (ph === 'convert') { ui.phase = 'KONVERT'; status('Konvertiere …'); }
-      });
-      libEvents.emit('cache', cacheSize());
-    }
-    if (job.aborted) return;
-    const ms = wavDurationMs(cacheWav(id));
-    analysis = null;
-    Max.outlet('loaded', cacheWav(id), ms, id, info.title);
-    ui.title = info.title; ui.phase = 'ANALYSE';
-    status(`Bereit: ${info.title}`);
-    try {
-      await ensureAnalysis(id, info.title, false);
-    } catch (e) {
-      status('Tonart-Analyse fehlgeschlagen: ' + clean(e.message).slice(0, 80));
-    }
-  } catch (e) {
-    if (!job.aborted) {
-      const m = errMsg(e);
-      ui.message = m;
-      Max.outlet('loadfail', id, m.replace(/^Fehler: /, ''));
-    }
-  } finally {
-    if (devJob === job) {
-      devJob = null;
-      ui.loading = false; ui.phase = ''; pushUi();
-    }
-  }
-}
-
-Max.addHandler('load', (...parts) => loadVideo(parts.join('')));
-Max.addHandler('analyze', (i, start, span) => sendPadInfo(Math.floor(i), start, span));
 Max.addHandler('beattrack', (bpm) => sendBeats(bpm));
 Max.addHandler('analyzeall', (span, ...starts) => starts.forEach((st, i) => sendPadInfo(i, st, span)));
 
@@ -1111,7 +1002,7 @@ const LIB = {
     const s = lib.banks[i].starts;
     [s[a], s[b]] = [s[b], s[a]];
   },
-  // tempo, tempook und bpmset vom Device: bestätigtes Tempo des Videos
+  // tempo und tempook aus dem Editor: bestätigtes Tempo des Videos
   tempo(lib, { video, bpm }) {
     const v = roundBpm(bpm);
     need(typeof video === 'string' && has(lib.videos, video));
@@ -1416,7 +1307,7 @@ function rollBank(v) {
 // Downloads im Editor-Weg (Spec 3.1). kind: select | fetch | newbank | fetchall.
 // Reihenfolge select/fetch vor newbank vor fetchall. Ein neues select/fetch bricht den laufenden Download
 // ab, ebenso jeder Wunsch höherer Stufe; der abgebrochene wartet dann wieder. Unter select/fetch gewinnt
-// der neueste, newbank und fetchall laufen der Reihe nach (Bänke entstehen in der gewünschten Folge). Der Teletext-Weg (loadVideo) ist getrennt, keiner bricht den anderen ab.
+// der neueste, newbank und fetchall laufen der Reihe nach (Bänke entstehen in der gewünschten Folge).
 // Fehlschlag setzt videoFail, fetchall überspringt solche Videos.
 // Achtung Aufrufer: fetchVideo-Promise immer mit catch, sonst beendet ein Fehlschlag den Node-Prozess.
 // =====================================================================
@@ -1447,7 +1338,7 @@ async function edRun(e) {
   const job = (phase, progress) => libEvents.emit('job', { kind, video: e.video, phase, progress, left: edQueue.length });
   if (has(videoFail, e.video)) { delete videoFail[e.video]; libEvents.emit('status'); }
   try {
-    const info = await download(e.video, 'ed', e, (ph, p) => { if (!e.aborted) job(ph, p); });
+    const info = await download(e.video, e, (ph, p) => { if (!e.aborted) job(ph, p); });
     edJob = null;
     if (kind === 'fetch') job('done', 100);   // newbank meldet selbst weiter
     libEvents.emit('cache', cacheSize());
@@ -1505,7 +1396,7 @@ async function newBank(video, by) {
 // =====================================================================
 const VIDEO_RE = /^[\w-]{11}$/;
 const CMD_MAX = 65536;
-let dev = { bankId: 0, video: '-', sel: 0, mode: 0, rev: 0, starts: [], spans: [] };   // letzter bankstate
+let dev = { bankId: 0, video: '-', sel: 0, starts: [], spans: [], params: null };   // letzter bankstate
 let activeId = 0;
 let track = '';            // Spurname für hello
 let libBy = 'extern';      // by der letzten Bibliotheksänderung (SSE lib)
@@ -1529,7 +1420,7 @@ function sendBank(b) {
   activeSnip = readText(snipJson(b.id));
   Max.outlet('bankname', b.id, clean(b.name));
   Max.outlet('bank', b.id, bankNr(b.id), (v && v.bpm) || 0, ...s.starts, ...s.lens, s.dur, s.video, s.path);
-  ensureAnalysis(s.video, clean(b.name), true).catch((e) => status('Tonart-Analyse fehlgeschlagen: ' + clean(e.message).slice(0, 80)));
+  ensureAnalysis(s.video, clean(b.name)).catch((e) => status('Tonart-Analyse fehlgeschlagen: ' + clean(e.message).slice(0, 80)));
   edDirty('beats');
 }
 const trySend = (b) => { try { sendBank(b); } catch (e) { Max.post(`YT Sampler: Bank ${b.id} nicht geladen: ${e.message}`); } };
@@ -1552,9 +1443,12 @@ libEvents.on('cache', () => edDirty('cache'));
 libEvents.on('job', (j) => edEmit('job', j));
 libEvents.on('msg', (m) => edEmit('msg', m));
 
-// ---------- [js] -> Node (6.2) ----------
+// ---------- [js] -> Node (6.2, Spec 3.0 3.2) ----------
+// bankstate <bankId> <video|-> <sel> <mode> <rev> <s×16> <w×16> <div> <rate> <tune> <warp> <quant> <vol> <voices> <base>
 Max.addHandler('bankstate', (id, video, sel, mode, rev, ...sw) => {
-  dev = { bankId: Math.floor(id) || 0, video: String(video), sel, mode, rev, starts: sw.slice(0, 16), spans: sw.slice(16, 32) };
+  const p = sw.slice(32, 40);
+  const params = p.length === 8 ? { div: p[0], rate: p[1], mode, rev, tune: p[2], warp: p[3], quant: p[4], vol: p[5], voices: p[6], base: p[7] } : null;
+  dev = { bankId: Math.floor(id) || 0, video: String(video), sel, starts: sw.slice(0, 16), spans: sw.slice(16, 32), params };
   activeId = dev.bankId;
   edDirty('device'); edDirty('beats');
 });
@@ -1566,15 +1460,16 @@ Max.addHandler('banksel', (nr) => {
   const b = libNow.lib && libNow.lib.banks[Math.floor(nr) - 1];
   if (b) trySend(b);   // über der letzten Bank: nichts
 });
+// Device ohne Bank (Spec 3.0 4.5): wie banksel, aber hinter der letzten Bank die letzte. Leer/kaputt: nichts.
+Max.addHandler('bankload', (nr) => {
+  const L = libNow.lib ? libNow.lib.banks : [];
+  if (!L.length) return;
+  trySend(L[Math.min(Math.max(1, Math.floor(nr) || 1), L.length) - 1]);
+});
 Max.addHandler('bankopen', (id) => {
   if (!libNow.lib) return;   // kaputt: [js] fragt wieder, sobald libstate ok kommt
   const b = bankById(Math.floor(id));
   if (b) trySend(b); else Max.outlet('bankgone', Math.floor(id));
-});
-Max.addHandler('bpmset', (video, bpm) => {
-  const v = String(video);
-  if (!libNow.lib || !has(libNow.lib.videos, v)) return;
-  try { libChange('tempo', { video: v, bpm: +bpm }, 'device'); } catch (e) { Max.post(`YT Sampler: Tempo nicht gespeichert: ${e.message}`); }
 });
 Max.addHandler('playing', (pad, from, to, dur) => edEmit('play', { pad, from, to, dur }));
 Max.addHandler('playstop', (pad) => edEmit('stop', { pad }));
@@ -1612,6 +1507,12 @@ async function edSearch(q) {
     if (edSearchJob === job) edSearchJob = null;
   }
 }
+
+// Device-Regler (Spec 3.0 3.1): name -> [min, max, ganz]. Toggles 0/1.
+const PARAMS = {
+  div: [0, 10, true], rate: [0.25, 2, false], mode: [0, 1, true], rev: [0, 1, true], tune: [0, 1, true],
+  warp: [0, 1, true], quant: [0, 1, true], vol: [-70, 6, false], voices: [0, 6, true], base: [0, 127, true],
+};
 
 // (Felder, client) -> Antwortfelder, wirft libErr
 const CMD = {
@@ -1664,6 +1565,12 @@ const CMD = {
   },
   hit: (q) => { need(isPad(q.pad)); Max.outlet('padhit', q.pad); },
   up: (q) => { need(isPad(q.pad)); Max.outlet('padup', q.pad); },
+  param(q) {
+    const r = PARAMS[q.name];
+    need(typeof q.name === 'string' && has(PARAMS, q.name) && typeof q.value === 'number' && q.value >= r[0] && q.value <= r[1]
+      && (!r[2] || Number.isInteger(q.value)));
+    Max.outlet('param', q.name, q.value);
+  },
   search: (q) => edSearch(q.q),
   newbank(q, by) {
     need(isVideo(q.video));
@@ -1744,9 +1651,9 @@ const ED = {
     }
     return m;
   },
-  device: () => ({ ...dev, nr: bankNr(dev.bankId), teletext: ui.loading ? { phase: ui.phase, progress: Math.round(ui.progress) } : null }),
+  device: () => ({ bankId: dev.bankId, nr: bankNr(dev.bankId), video: dev.video, sel: dev.sel, starts: dev.starts, spans: dev.spans, params: dev.params }),
   cache: () => cacheSize(),
-  // Track der aktiven Bank, ohne Bank der des Device (Teletext)
+  // Track der aktiven Bank
   beats() {
     const b = bankById(activeId), v = b ? b.video : dev.video;
     if (!v || v === '-') return null;
@@ -1758,7 +1665,7 @@ const ED = {
 const sse = (res, ev, data) => res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`);
 function edEmit(ev, data) { for (const r of edClients) sse(r, ev, data); }
 
-// Zustands-Events gebündelt (30 ms wie pushUi), Inhalt erst beim Senden berechnet
+// Zustands-Events gebündelt (30 ms), Inhalt erst beim Senden berechnet
 function edDirty(ev) {
   if (!edClients.size) return;
   edPending.add(ev);
@@ -1821,16 +1728,13 @@ function peaksRoute(v, res) {
 }
 
 // =====================================================================
-// Teletext-Webseite: http://localhost:8765
-// Server-Sent Events schicken den Zustand live, POST /key nimmt Tasten an.
+// Webserver: Editor unter http://localhost:8765/editor
 // =====================================================================
 const WEB_PORT = process.env.YTS_PORT ? +process.env.YTS_PORT : 8765;   // YTS_PORT nur für Tests
-const PAGE_SIZE = 7;
 const WEB_DIR = path.join(DATA, 'web');
-const clients = new Set();
 let webPort = 0;
 
-// Seite (teletext.html, editor.html) neben dem Skript nach D/web spiegeln
+// editor.html neben dem Skript nach D/web spiegeln
 // (so findet der Server sie auch, wenn das Device eingefroren ist)
 function pagePath(name) {
   const local = path.join(__dirname, name);
@@ -1845,175 +1749,10 @@ function pagePath(name) {
   return copy;
 }
 
-function viewState() {
-  return {
-    query: ui.query, searched: ui.searched, searching: ui.searching,
-    sel: ui.sel, pageSize: PAGE_SIZE,
-    results: lastResults.map((r) => ({ t: r.title, d: fmtDur(r.duration) })),
-    hidden: Math.max(0, allResults.length - lastResults.length),
-    maxLen: Math.round(maxLenSec / 60),
-    loading: ui.loading, phase: ui.phase, progress: Math.round(ui.progress),
-    title: ui.title, message: ui.message,
-    learn: ui.learn === null ? null : { step: ui.learn + 1, of: IR_STEPS.length, label: IR_STEPS[ui.learn][1] },
-    tvOff: ui.tvOff,
-  };
-}
-
-let pushTimer = null;
-pushUi = () => {
-  if (pushTimer) return;
-  pushTimer = setTimeout(() => {
-    pushTimer = null;
-    const msg = `data: ${JSON.stringify(viewState())}\n\n`;
-    for (const res of clients) res.write(msg);
-    edDirty('device');   // device.teletext (Phase, Fortschritt)
-  }, 30);
-};
-
-// Tasten kommen von der Webseite (Tastatur, wenn das Fenster vorne ist)
-// oder als MIDI-Noten auf Kanal 16 (Schreibmaschine, funktioniert immer).
-function handleKey(k) {
-  const n = lastResults.length;
-  if (!String(k).startsWith('tap:')) tap.d = -1;     // andere Taste beendet das Mehrfachtippen
-  switch (k) {
-    case 'enter': {
-      const q = ui.query.trim();
-      if (q && q !== ui.searched) search(q);                        // neuer Begriff -> suchen
-      else if (n) loadVideo(lastResults[ui.sel].id);                 // sonst markierten Treffer laden
-      break;
-    }
-    case 'back': ui.query = ui.query.slice(0, -1); break;
-    case 'esc':
-      if (ui.learn !== null) { ui.learn = null; ui.message = 'Lernen abgebrochen'; }
-      else ui.query = '';
-      break;
-    case 'learn': ui.learn = 0; irNew = {}; break;
-    case 'power': ui.tvOff = !ui.tvOff; break;
-    case 'up': ui.sel = Math.max(0, ui.sel - 1); break;
-    case 'down': ui.sel = Math.min(Math.max(0, n - 1), ui.sel + 1); break;
-    case 'pgup': ui.sel = Math.max(0, (Math.floor(ui.sel / PAGE_SIZE) - 1) * PAGE_SIZE); break;
-    case 'pgdn': ui.sel = Math.min(Math.max(0, n - 1), (Math.floor(ui.sel / PAGE_SIZE) + 1) * PAGE_SIZE); break;
-    default:
-      if (typeof k === 'string' && k.startsWith('tap:')) multitap(+k.slice(4));
-      else if (typeof k === 'string' && k.startsWith('char:')) {
-        const ch = k.slice(5);
-        if (ch.length === 1 && ui.query.length < 36) ui.query += ch;
-      }
-  }
-  pushUi();
-}
-
-// MIDI-Schreibmaschine: Notennummer = Zeichencode
-const MIDI_KEYS = { 8: 'back', 13: 'enter', 27: 'esc', 17: 'up', 18: 'down', 19: 'pgup', 20: 'pgdn' };
-const MIDI_CHARS = { 1: 'ä', 2: 'ö', 3: 'ü', 4: 'ß', 5: 'Ä', 6: 'Ö', 7: 'Ü' };
-Max.addHandler('key', (code) => {
-  code = Math.floor(code);
-  if (MIDI_KEYS[code]) handleKey(MIDI_KEYS[code]);
-  else if (MIDI_CHARS[code]) handleKey('char:' + MIDI_CHARS[code]);
-  else if (code >= 32 && code <= 126) handleKey('char:' + String.fromCharCode(code));
-});
-
-// Ziffern der Fernbedienung wie beim Handy: mehrmals drücken = nächster Buchstabe
-const TAP = [' 0', 'abc1', 'def2', 'ghi3', 'jkl4', 'mno5', 'pqr6', 'stu7', 'vwx8', 'yz9'];
-const TAP_MS = 1200;   // so lange zählt erneutes Drücken als "nächster Buchstabe"
-let tap = { d: -1, i: 0, t: 0 };
-function multitap(d) {
-  const set = TAP[d], now = Date.now();
-  if (!set) return;
-  if (d === tap.d && now - tap.t < TAP_MS) {
-    tap.i = (tap.i + 1) % set.length;
-    ui.query = ui.query.slice(0, -1) + set[tap.i];
-  } else {
-    const n = ui.query.length;
-    ui.query += set[0];
-    if (ui.query.length > 36) ui.query = ui.query.slice(0, 36);
-    tap = { d: ui.query.length > n ? d : -1, i: 0, t: 0 };
-  }
-  tap.t = now;
-}
-
-// IR-Fernbedienung: der Pro Micro schickt rohe Codes als MIDI auf Kanal 15.
-// Die Teletext-Seite liest sie per Web MIDI (an Live vorbei) und schickt "ir:<code>:<wiederholung>".
-// Die Zuordnung lernt der Merkmodus (Cmd+Shift+M auf der Teletext-Seite).
-const IR_FILE = path.join(DATA, 'ir.json');
-const IR_STEPS = [
-  ['up', 'HOCH'], ['down', 'RUNTER'], ['pgup', 'LINKS'], ['pgdn', 'RECHTS'],
-  ['enter', 'OK'], ['back', 'LÖSCHEN'],
-  ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((d) => ['tap:' + d, String(d)]),
-  ['power', 'AN/AUS'],
-];
-const IR_REPEAT = new Set(['up', 'down', 'pgup', 'pgdn', 'back']);   // beim Halten wiederholen
-let irMap = {};
-try { irMap = JSON.parse(fs.readFileSync(IR_FILE, 'utf8')); } catch (e) { /* noch nichts gelernt */ }
-let irNew = {};
-
-// Sind mehrere Teletext-Fenster offen, schickt jedes denselben Code
-const IR_DEDUP_MS = 60;
-let irLast = { code: -1, rep: false, t: 0 };
-
-function irInput(code, rep) {
-  const now = Date.now();
-  if (code === irLast.code && rep === irLast.rep && now - irLast.t < IR_DEDUP_MS) return;
-  irLast = { code, rep, t: now };
-  if (ui.learn !== null) {
-    if (rep || code in irNew) return;                  // gehalten oder doppelt gedrückt
-    irNew[code] = IR_STEPS[ui.learn][0];
-    if (++ui.learn >= IR_STEPS.length) {
-      ui.learn = null;
-      irMap = irNew;
-      try {
-        fs.mkdirSync(path.dirname(IR_FILE), { recursive: true });
-        fs.writeFileSync(IR_FILE, JSON.stringify(irMap, null, 1));
-        ui.message = 'Fernbedienung gespeichert';
-      } catch (e) { ui.message = 'Fehler beim Speichern: ' + e.message; }
-    }
-    pushUi();
-    return;
-  }
-  const k = irMap[code];
-  if (!k || (rep && !IR_REPEAT.has(k))) return;
-  if (ui.tvOff && k !== 'power') return;               // Fernseher aus: nur An/Aus geht
-  handleKey(k);
-}
-
 function startWeb(port, tries) {
   const server = http.createServer((req, res) => {
     const url = req.url.split('?')[0];
-    if (url === '/events') {
-      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-      res.write('retry: 1500\n\n');
-      res.write(`data: ${JSON.stringify(viewState())}\n\n`);
-      clients.add(res);
-      req.on('close', () => clients.delete(res));
-      return;
-    }
-    if (url === '/key' && req.method === 'POST') {
-      let body = '';
-      req.on('data', (d) => { body += d; if (body.length > 1000) req.destroy(); });
-      req.on('end', () => {
-        try {
-          const k = String(JSON.parse(body).k || '');
-          const ir = /^ir:(\d+):([01])$/.exec(k);
-          if (ir) irInput(+ir[1], ir[2] === '1');
-          else handleKey(k);
-        } catch (e) { /* ignorieren */ }
-        res.writeHead(204); res.end();
-      });
-      return;
-    }
-    if (url === '/state') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(viewState()));
-      return;
-    }
-    if (url === '/' || url === '/index.html') {
-      fs.readFile(pagePath('teletext.html'), (err, data) => {
-        if (err) { res.writeHead(404); res.end('teletext.html nicht gefunden'); return; }
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
-        res.end(data);
-      });
-      return;
-    }
+    if (url === '/') { res.writeHead(302, { Location: '/editor' }); res.end(); return; }
     if (url === '/editor') {
       fs.readFile(pagePath('editor.html'), (err, data) => {
         if (err) { res.writeHead(404); res.end('editor.html nicht gefunden'); return; }
@@ -2034,10 +1773,10 @@ function startWeb(port, tries) {
   });
   server.listen(port, '127.0.0.1', () => {
     webPort = server.address().port;   // YTS_PORT=0: frei gewählt
-    Max.post(`YT Sampler: Teletext unter http://localhost:${port}`);
+    Max.post(`YT Sampler: Editor unter http://localhost:${webPort}/editor`);
   });
   // Verbindung offen halten
-  setInterval(() => { for (const r of [...clients, ...edClients]) r.write(': ping\n\n'); }, 15000).unref();
+  setInterval(() => { for (const r of edClients) r.write(': ping\n\n'); }, 15000).unref();
 }
 startWeb(WEB_PORT, 5);
 
@@ -2045,7 +1784,7 @@ try { libBackup(); } catch (e) { Max.post(`YT Sampler: Sicherung fehlgeschlagen:
 libWatch();
 try { snipCleanup(); } catch (e) { Max.post(`YT Sampler: Aufräumen fehlgeschlagen: ${e.message}`); }
 
-// Startcheck; Session und Längenfilter vom Device anfordern
+// Startcheck; Session vom Device anfordern
 if (DATA_SETUP.error) status(DATA_SETUP.error);
 Max.outlet('needsession');
 (async () => {
@@ -2062,6 +1801,6 @@ module.exports = {
   DATA, LOCAL, CACHE, SESSIONS, LIB_FILE, LIB_LOCK, BACKUP_DIR, ERR, LIB, libErr, libParse, libRead, libChange, libBackup, libEvents, get libNow() { return libNow; },
   AN, SNIP_DIR, SNIP_MS, computeAnalysis, tempoFromOnset, saveAnalysis, readAnalysis, getAnalysis, ensureAnalysis, trackBeats, silentRanges,
   hasWav, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, cacheSize, videoFail,
-  beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, newBank, loadVideo, get analysis() { return analysis; },
+  beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, newBank, get analysis() { return analysis; },
   runCmd, peaks, get webPort() { return webPort; }, get activeId() { return activeId; },
 };
