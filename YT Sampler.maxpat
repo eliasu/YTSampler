@@ -1684,6 +1684,84 @@
    },
    {
     "box": {
+     "maxclass": "live.text",
+     "numinlets": 1,
+     "numoutlets": 2,
+     "patching_rect": [
+      300.0,
+      240.0,
+      44.0,
+      18.0
+     ],
+     "outlettype": [
+      "",
+      ""
+     ],
+     "text": "Editor",
+     "presentation": 1,
+     "presentation_rect": [
+      122.0,
+      70.0,
+      43.0,
+      18.0
+     ],
+     "mode": 0,
+     "texton": "Editor",
+     "saved_attribute_attributes": {
+      "valueof": {
+       "parameter_longname": "Open Editor",
+       "parameter_shortname": "Editor",
+       "parameter_type": 2,
+       "parameter_enum": [
+        "off",
+        "on"
+       ],
+       "parameter_mmax": 1
+      }
+     },
+     "parameter_enable": 1,
+     "varname": "Open Editor",
+     "id": "obj-198"
+    }
+   },
+   {
+    "box": {
+     "maxclass": "newobj",
+     "numinlets": 1,
+     "numoutlets": 1,
+     "patching_rect": [
+      300.0,
+      270.0,
+      40.0,
+      22.0
+     ],
+     "text": "t b",
+     "outlettype": [
+      "bang"
+     ],
+     "id": "obj-199"
+    }
+   },
+   {
+    "box": {
+     "maxclass": "message",
+     "numinlets": 2,
+     "numoutlets": 1,
+     "patching_rect": [
+      300.0,
+      300.0,
+      80.0,
+      22.0
+     ],
+     "outlettype": [
+      ""
+     ],
+     "text": "openeditor",
+     "id": "obj-200"
+    }
+   },
+   {
+    "box": {
      "id": "obj-180",
      "maxclass": "jsui",
      "numinlets": 1,
@@ -2661,6 +2739,42 @@
     "patchline": {
      "source": [
       "obj-197",
+      0
+     ],
+     "destination": [
+      "obj-1",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-198",
+      0
+     ],
+     "destination": [
+      "obj-199",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-199",
+      0
+     ],
+     "destination": [
+      "obj-200",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-200",
       0
      ],
      "destination": [

@@ -1460,6 +1460,12 @@ Max.addHandler('banksel', (nr) => {
   const b = libNow.lib && libNow.lib.banks[Math.floor(nr) - 1];
   if (b) trySend(b);   // über der letzten Bank: nichts
 });
+// Button „Editor“ im Device: Editor dieses Devices im Standardbrowser öffnen
+Max.addHandler('openeditor', () => {
+  if (!webPort) { status('Editor-Server läuft nicht'); return; }
+  const p = spawn('open', [`http://localhost:${webPort}/editor`], { env: ENV });
+  p.on('error', () => status('Browser lässt sich nicht öffnen'));
+});
 // Device ohne Bank (Spec 3.0 4.5): wie banksel, aber hinter der letzten Bank die letzte. Leer/kaputt: nichts.
 Max.addHandler('bankload', (nr) => {
   const L = libNow.lib ? libNow.lib.banks : [];

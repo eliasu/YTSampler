@@ -63,7 +63,7 @@ Pro Bank liegen die 16 Pads als **Snippets** à 16 s in einer eigenen Datei. Auf
 
 ### Bank-Editor (Browser)
 
-Solange das Device läuft: **http://localhost:8765/editor** im Browser öffnen (http://localhost:8765 leitet dorthin weiter). Der Editor steuert immer das erste YT-Sampler-Device (oben rechts steht „steuert: <Spurname>“) und zeigt dieselbe Bank wie das Device.
+Solange das Device läuft: Button **Editor** im Device drücken, oder **http://localhost:8765/editor** im Browser öffnen (http://localhost:8765 leitet dorthin weiter). Der Editor steuert immer das erste YT-Sampler-Device (oben rechts steht „steuert: <Spurname>“) und zeigt dieselbe Bank wie das Device.
 
 | Aktion | Wie |
 |---|---|

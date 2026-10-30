@@ -658,6 +658,8 @@ function banknum(v) {
     if (!ready()) return;
     peekTo(clamp(Math.floor(v), 1, 128));
 }
+// Button „Editor“: Node öffnet den Editor im Standardbrowser (auf seinem eigenen Port)
+function openeditor() { if (!ready()) return; outlet(1, "openeditor"); }
 function bankprev() { bankstep(-1); }
 function banknext() { bankstep(1); }
 function bankstep(d) {

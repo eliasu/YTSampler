@@ -99,9 +99,9 @@ pat.boxes.forEach(function (b) {
     var v = b.box.saved_attribute_attributes && b.box.saved_attribute_attributes.valueof;
     if (v && v.parameter_longname) { need(!names[v.parameter_longname], 'Parametername doppelt: ' + v.parameter_longname); names[v.parameter_longname] = b.box; }
 });
-// Spec 3.0, 2.4: genau diese 14 Parameter, die 8 weggefallenen nicht mehr
+// Spec 3.0, 2.4: genau diese 14 Parameter + Button „Editor“, die 8 weggefallenen nicht mehr
 var PARAMS = ['Bank', 'Bank Prev', 'Bank Next', 'Division', 'Base Note', 'Voices', 'Rate', 'Mode', 'Reverse', 'Tune', 'Warp',
-              'Input Quantize', 'Volume', 'Session'];
+              'Input Quantize', 'Volume', 'Session', 'Open Editor'];
 PARAMS.forEach(function (n) { need(names[n], 'Parameter fehlt: ' + n); });
 Object.keys(names).forEach(function (n) { need(PARAMS.indexOf(n) >= 0, 'unerwarteter Parameter: ' + n); });
 ['Tonal', 'Attack', 'Release', 'Source BPM', 'BPM Half', 'BPM Double', 'Grid', 'Snap'].forEach(function (n) {
