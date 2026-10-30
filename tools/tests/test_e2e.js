@@ -83,7 +83,7 @@ t('Aufbau: Node, [js] und Editor verbunden', async () => {
 
 t('Bank-Regler am Device: banksel -> bank mit Längen, Pfad, Songdauer -> Editor folgt', async () => {
   await sleep(350);                                 // ready() nach init
-  max.out = [];
+  max.out = []; dev.out = [];                       // Bank 1 vom Aufbau nicht mitzählen
   dev.ctx.banknum(3);
   await until(() => bankMsgs().length, 'bank');
   const m = bankMsgs()[0];
@@ -94,7 +94,7 @@ t('Bank-Regler am Device: banksel -> bank mit Längen, Pfad, Songdauer -> Editor
   await until(() => dev.on(4, 'replace').length, 'replace an buffer~');
   assert.deepStrictEqual(dev.on(4, 'replace').pop(), [4, 'replace', path.join(node.SNIP_DIR, `${ids[2]}.wav`)]);
   assert.strictEqual(dev.ctx.st.bankId, ids[2]);
-  await b.waitFor(`S.dev.bankId === ${ids[2]} && S.dev.nr === 3 && document.querySelector('#banklist li.on').dataset.id === '${ids[2]}'`);
+  await b.waitFor(`S.dev.bankId === ${ids[2]} && S.dev.nr === 3 && document.querySelector('#banklist li.on')?.dataset.id === '${ids[2]}'`);
   assert.deepStrictEqual(await b.eval('S.dev.starts'), STARTS);
   await b.waitFor(`S.beats && S.beats.video === '${V1}' && S.beats.beats.length > 40`);
   assert.deepStrictEqual(dev.on(2, 'shownr').pop(), [2, 'shownr', '3']);
@@ -135,7 +135,7 @@ t('Aktive Bank im Editor löschen: Nachrücker (die davor, weil letzte) lädt im
   await until(() => dev.ctx.st.bankId === ids[1], '[js] hat die neue Bank');
   // mittlere aktive Bank löschen: Nachrücker auf demselben Platz
   await b.eval(`document.querySelector('#banklist li[data-id="${ids[0]}"]').click()`);
-  await b.waitFor(`document.querySelector('#banklist li.on').dataset.id === '${ids[0]}'`);
+  await b.waitFor(`document.querySelector('#banklist li.on')?.dataset.id === '${ids[0]}'`);
   await b.eval(`document.querySelector('#banklist li.on .del').click()`);
   await b.waitFor(`S.dev.bankId === ${ids[1]} && S.lib.banks.length === 1`);
   assert.deepStrictEqual(b.errors, []);
