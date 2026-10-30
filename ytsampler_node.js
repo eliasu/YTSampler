@@ -45,7 +45,7 @@ const DATA_SETUP = dataDir();
 const DATA = DATA_SETUP.dir;
 const CACHE = path.join(LOCAL, 'cache');
 const MAX_SECONDS = 600;  // URL-Videos über 10 min: nur die ersten 10 Minuten laden (RAM!)
-const SEARCH_FETCH = 30;  // so viele Treffer holen
+const SEARCH_FETCH = 15;  // so viele Treffer holen
 
 const SESSIONS = path.join(DATA, 'sessions');
 fs.mkdirSync(CACHE, { recursive: true });
