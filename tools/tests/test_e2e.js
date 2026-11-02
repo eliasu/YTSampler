@@ -37,6 +37,7 @@ function device(max) {
       const a = [].concat(...rest);
       d.out.push([n, ...a]);
       if (n === 1 && max.handlers[a[0]]) setImmediate(() => max.handlers[a[0]](...a.slice(1)));
+      if (n === 4 && a[0] === 'replace') setImmediate(() => ctx.bufloaded());   // buffer~ fertig -> Nachrichtenbox bufloaded
     },
     arrayfromargs: (a) => Array.prototype.slice.call(a),
     post: () => {},
@@ -62,7 +63,8 @@ const bankMsgs = () => max.out.filter((m) => m[0] === 'bank');
 t('Aufbau: Node, [js] und Editor verbunden', async () => {
   home = tempHome(false);
   ({ node, max } = loadNode(home));
-  for (const v of [V1, V2]) beatWav(path.join(node.CACHE, `${v}.wav`), DUR / 1000, 120);
+  beatWav(path.join(node.CACHE, `${V1}.wav`), DUR / 1000, 120);
+  beatWav(path.join(node.CACHE, `${V2}.wav`), DUR / 1000, 100);   // zweites Tempo für die Mix-Bank
   const mk = (video, name) => node.libChange('create', { video, title: 'Titel ' + video, name, starts: STARTS }, 'test').id;
   ids = [mk(V1, 'Eins'), mk(V2, 'Zwei'), mk(V1, 'Drei')];
   await until(() => node.webPort > 0, 'Server');
@@ -81,20 +83,29 @@ t('Aufbau: Node, [js] und Editor verbunden', async () => {
   await b.waitFor(`S.hello && S.hello.track === '2-YT Sampler'`);
 });
 
-t('Bank-Regler am Device: banksel -> bank mit Längen, Pfad, Songdauer -> Editor folgt', async () => {
+t('Bank-Regler am Device: banksel -> bank mit Starts, Längen, Pfad -> padana pro Pad -> Editor folgt', async () => {
   await sleep(350);                                 // ready() nach init
   max.out = []; dev.out = [];                       // Bank 1 vom Aufbau nicht mitzählen
   dev.ctx.banknum(3);
   await until(() => bankMsgs().length, 'bank');
   const m = bankMsgs()[0];
-  assert.deepStrictEqual(m.slice(1, 4), [ids[2], 3, 0]);
-  assert.deepStrictEqual(m.slice(4, 20), STARTS);
-  assert.deepStrictEqual(m.slice(20, 36), STARTS.map((s) => Math.min(16000, DUR - s)));
-  assert.deepStrictEqual(m.slice(36), [DUR, V1, path.join(node.SNIP_DIR, `${ids[2]}.wav`)]);
+  assert.deepStrictEqual(m.slice(1, 3), [ids[2], 3]);
+  assert.deepStrictEqual(m.slice(3, 19), STARTS);
+  assert.deepStrictEqual(m.slice(19, 35), STARTS.map((s) => Math.min(16000, DUR - s)));
+  assert.deepStrictEqual(m.slice(35), [path.join(node.SNIP_DIR, `${ids[2]}.wav`)]);
+  // Analyse pro Pad: 16 × padana mit demselben Tempo, dann analysisready
+  await until(() => max.out.some((o) => o[0] === 'analysisready'), 'analysisready');
+  const pa = max.out.filter((o) => o[0] === 'padana');
+  assert.deepStrictEqual(pa.map((o) => o[1]), STARTS.map((_, i) => i));
+  assert.ok(max.out.findIndex((o) => o[0] === 'analysisready') > max.out.lastIndexOf(pa[15]));
+  pa.forEach((o) => assert.ok(Math.abs(o[2] - 120) < 1.5 && o.length > 9, 'padana ' + o.slice(1, 5)));
+  await until(() => dev.ctx.PA[15] && dev.ctx.PA[15].bpm > 0, 'PA im [js]');
+  assert.ok(dev.ctx.beatsOK(0) && dev.ctx.beatsOK(15));
+  assert.ok(dev.on(1, 'bankstate').length && dev.on(1, 'bankstate').every((o) => o[2] === ids[2] && typeof o[3] === 'number'), 'bankstate ohne Video');
   await until(() => dev.on(4, 'replace').length, 'replace an buffer~');
   assert.deepStrictEqual(dev.on(4, 'replace').pop(), [4, 'replace', path.join(node.SNIP_DIR, `${ids[2]}.wav`)]);
   assert.strictEqual(dev.ctx.st.bankId, ids[2]);
-  await b.waitFor(`S.dev.bankId === ${ids[2]} && S.dev.nr === 3 && document.querySelector('#banklist li.on')?.dataset.id === '${ids[2]}'`);
+  await b.waitFor(`S.dev.bankId === ${ids[2]} && S.dev.nr === 3 && S.dev.video === '${V1}' && document.querySelector('#banklist li.on')?.dataset.id === '${ids[2]}'`);
   assert.deepStrictEqual(await b.eval('S.dev.starts'), STARTS);
   await b.waitFor(`S.beats && S.beats.video === '${V1}' && S.beats.beats.length > 40`);
   assert.deepStrictEqual(dev.on(2, 'shownr').pop(), [2, 'shownr', '3']);
@@ -138,6 +149,47 @@ t('Aktive Bank im Editor löschen: Nachrücker (die davor, weil letzte) lädt im
   await b.waitFor(`document.querySelector('#banklist li.on')?.dataset.id === '${ids[0]}'`);
   await b.eval(`document.querySelector('#banklist li.on .del').click()`);
   await b.waitFor(`S.dev.bankId === ${ids[1]} && S.lib.banks.length === 1`);
+  assert.deepStrictEqual(b.errors, []);
+});
+
+t('Mix-Bank Ende zu Ende: newmix, setpad aus zwei Track-Bänken, ein Platz geleert -> Längen, padana, padempty, Warp pro Pad', async () => {
+  const eins = node.libChange('create', { video: V1, title: 'Titel ' + V1, name: 'Eins neu', starts: STARTS }, 'test').id;
+  await b.waitFor(`S.lib.banks.length === 2 && S.lib.banks.every((x) => !x.mix && x.pads.length === 16)`);
+  const r = await b.eval(`cmd('newmix')`);
+  assert.ok(r.ok && Number.isInteger(r.id), JSON.stringify(r));
+  await until(() => dev.ctx.st.bankId === r.id, '[js] hat die Mix-Bank');
+  assert.deepStrictEqual(dev.on(2, 'padempty').pop(), [2, 'padempty', ...Array(16).fill(1)]);
+  await b.waitFor(`S.dev.bankId === ${r.id} && S.dev.video === '-' && S.lib.banks.find((x) => x.id === ${r.id}).mix`);
+  const set = async (f) => { const x = await b.eval(`cmd('setpad', ${JSON.stringify({ id: r.id, ...f })})`); assert.ok(x.ok, JSON.stringify([f, x])); };
+  await set({ pad: 0, video: V1, start: STARTS[3], info: { title: 'überflüssig' } });   // Video bekannt: info wird ignoriert
+  await set({ pad: 1, video: V2, start: STARTS[15] });
+  await set({ pad: 2, video: V1, start: STARTS[5] });
+  max.out = []; dev.out = [];
+  await set({ pad: 2, video: null });                                                       // Icon „leeren“
+  const lens = [16000, 5000, ...Array(14).fill(0)];
+  await until(() => bankMsgs().some((m) => m[1] === r.id && m.slice(19, 35).join() === lens.join()), 'bank mit Mix-Längen');
+  await until(() => max.out.some((o) => o[0] === 'analysisready'), 'analysisready');
+  const m = bankMsgs().pop();
+  assert.deepStrictEqual(m.slice(3, 19), [STARTS[3], STARTS[15], ...Array(14).fill(0)]);
+  const pa = max.out.filter((o) => o[0] === 'padana');
+  assert.deepStrictEqual(pa.map((o) => o[1]), [0, 1]);                                   // nur belegte Pads
+  assert.ok(Math.abs(pa[0][2] - 120) < 1.5 && Math.abs(pa[1][2] - 100) < 1.5, pa.map((o) => o[2]).join());
+  await until(() => dev.ctx.PA[1] && dev.ctx.PA[1].bpm > 0, 'PA im [js]');
+  assert.deepStrictEqual(dev.on(2, 'padempty').pop(), [2, 'padempty', 0, 0, ...Array(14).fill(1)]);
+  assert.strictEqual(node.libNow.lib.banks.find((x) => x.id === r.id).pads[2], null);
+  // Anschlag auf beiden Videos mit Warp (Live 120 BPM): Tempo 1 bzw. 1,2, Position im eigenen Fach
+  assert.strictEqual(dev.ctx.P.warp, 1);
+  dev.out = [];
+  dev.ctx.padhit(0); dev.ctx.padhit(1); dev.ctx.padhit(2);
+  const w = dev.on(3, 'wplay');
+  assert.strictEqual(w.length, 2, 'leerer Platz spielt nicht ' + JSON.stringify([dev.ctx.bankBusy, dev.ctx.muted, dev.ctx.durMs, dev.out.slice(0, 8)]));
+  assert.ok(Math.abs(w[0][2]) < 1 && Math.abs(w[0][3] - 1) < 0.03, 'Pad 1: ' + w[0]);
+  assert.ok(Math.abs(w[1][2] - 16000) < 1 && Math.abs(w[1][3] - 1.2) < 0.03, 'Pad 2: ' + w[1]);
+  assert.match(dev.on(2, 'selinfo').pop().slice(2).join(' '), /leer/);
+  await b.waitFor(`S.dev.sel === 2 && S.dev.video === '-'`);
+  dev.ctx.padhit(1);
+  await b.waitFor(`S.dev.sel === 1 && S.dev.video === '${V2}'`);
+  assert.ok(eins > 0);
   assert.deepStrictEqual(b.errors, []);
 });
 

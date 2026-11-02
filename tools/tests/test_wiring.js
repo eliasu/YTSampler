@@ -141,6 +141,17 @@ need(/Max\.outlet\('param'/.test(node), 'Node schickt kein param an [js]');
 ['load', 'key', 'analyze', 'bpmset'].forEach(function (h) {
     need(!nodeHandlers[h] && !(sent[1] && sent[1][h]), 'gestrichene Nachricht [js] → Node: ' + h);
 });
+// Mix-Bänke (Mix-Spec 3.3, 4.2): padana Node → [js], padempty [js] → Pad-jsui, Analyse nicht mehr angefordert
+need(/Max\.outlet\('padana'/.test(node) && jsFns.padana, 'padana: Node schickt es nicht oder [js] hat keine Funktion');
+need(sent[2] && sent[2].padempty && padFns.padempty && routeSels.indexOf('padempty') < 0, 'padempty: nicht von [js] ans Pad-jsui');
+['tempo', 'tuning', 'beatsclear', 'beatsadd', 'beatsdone', 'requestBeats', 'requestAll', 'analysisSpan']
+    .forEach(function (f) { need(!jsFns[f], '[js]: weggefallene Funktion ' + f); });
+['tempo', 'tuning', 'beatsclear', 'beatsadd', 'beatsdone']
+    .forEach(function (s) { need(!new RegExp("Max\\.outlet\\('" + s + "'").test(node), 'Node schickt weggefallenes ' + s); });
+need(!/Max\.outlet\('bpm'/.test(node), 'Node schickt noch bpm <video> <bpm>');
+['beattrack', 'analyzeall'].forEach(function (h) {
+    need(!nodeHandlers[h] && !(sent[1] && sent[1][h]), 'weggefallene Nachricht [js] → Node: ' + h);
+});
 need(pat.boxes[pat.boxes.length - 1].box.filename === 'ytgrid.js', 'Grid-Overlay ist nicht die letzte Box');
 
 if (fails.length) { console.log(fails.join('\n')); process.exit(1); }
