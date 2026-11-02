@@ -5,12 +5,24 @@ Live-Instrument: Ausschnitte aus YouTube-Tracks liegen auf Pads und werden per M
 ## Sprache
 
 **Pad**:
-Einer von 16 Plätzen, auf dem ein Ausschnitt eines Tracks liegt, bestimmt durch seinen Startpunkt.
+Einer von 16 Plätzen, auf dem ein Ausschnitt eines Tracks liegt, bestimmt durch seinen Track und seinen Startpunkt.
 _Avoid_: Slot, Slice (für den Platz selbst)
 
 **Bank**:
-Ein kuratierter Satz aus 16 Pads, alle aus genau einem Track.
+Ein kuratierter Satz aus 16 Plätzen. Jedes Pad bringt seinen Track mit, ein Platz darf leer sein.
 _Avoid_: Favorit, Sample-Set, Sample Pack, Preset
+
+**Track-Bank**:
+Eine Bank, deren 16 Pads alle aus demselben Track kommen.
+_Avoid_: normale Bank
+
+**Mix-Bank**:
+Eine Bank mit Pads aus mehreren Tracks oder mit leeren Plätzen. Kein eigener Typ: Das Device spielt sie wie jede Bank.
+_Avoid_: Kit, Playlist
+
+**Quellleiste**:
+Die Leiste unter den Pads im Editor, die die Pads einer anderen Bank zeigt. Von dort zieht man Pads auf Plätze. Gezogen wird eine Kopie, spätere Änderungen an der Quelle wirken nicht.
+_Avoid_: Browser, Pool
 
 **Snippet**:
 Der gespeicherte Audioausschnitt eines Pads ab seinem Startpunkt, mehr als das spielt das Pad nie.
