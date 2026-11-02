@@ -1,4 +1,4 @@
-// Bibliothek (Spec 2.2, 2.6): node tools/tests/test_library.js
+// Bibliothek (Spec 2.2, 2.6; Mix-Spec 2.1 format 2): node tools/tests/test_library.js
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
@@ -14,6 +14,17 @@ const VALID = () => ({
   ],
   videos: { AAAAAAAAAAA: { title: 'A', bpm: 99.5 }, BBBBBBBBBBB: { title: 'B' } },
 });
+// format 1 im Speicher als format 2
+const PADS = (v, k) => S(k).map((start) => ({ video: v, start }));
+const VALID2 = () => ({
+  format: 2, rev: 3, nextId: 4,
+  banks: [
+    { id: 1, name: 'Funk', pads: PADS('AAAAAAAAAAA', 1) },
+    { id: 3, name: 'Soul', pads: PADS('BBBBBBBBBBB', 3) },
+  ],
+  videos: { AAAAAAAAAAA: { title: 'A', bpm: 99.5 }, BBBBBBBBBBB: { title: 'B' } },
+});
+const starts = (b) => b.pads.map((p) => p && p.start);
 function home(lib) {
   const h = tempHome(false);
   if (lib !== undefined) {
@@ -27,21 +38,39 @@ const throwsCode = (fn, code) => assert.throws(fn, (e) => e.code === code && typ
 
 t('fehlende Datei = leere Bibliothek, entsteht beim ersten Schreiben', () => {
   const { node } = loadNode(home());
-  assert.deepStrictEqual(node.libNow.lib, { format: 1, rev: 0, nextId: 1, banks: [], videos: {} });
+  assert.deepStrictEqual(node.libNow.lib, { format: 2, rev: 0, nextId: 1, banks: [], videos: {} });
   assert.strictEqual(node.libNow.state, 'leer');
   assert.ok(!fs.existsSync(node.LIB_FILE));
   assert.deepStrictEqual(node.libChange('create', { video: 'AAAAAAAAAAA', title: 'Titel', starts: S(0) }, 'c1'), { id: 1 });
   const lib = readLib(node);
   assert.strictEqual(lib.rev, 1); assert.strictEqual(lib.nextId, 2);
-  assert.deepStrictEqual(lib.banks[0], { id: 1, name: 'Titel', video: 'AAAAAAAAAAA', starts: S(0) });
+  assert.strictEqual(lib.format, 2);
+  assert.deepStrictEqual(lib.banks[0], { id: 1, name: 'Titel', pads: PADS('AAAAAAAAAAA', 0) });
   assert.strictEqual(fs.readFileSync(node.LIB_FILE, 'utf8'), JSON.stringify(lib, null, 1));
   assert.ok(!fs.existsSync(node.LIB_LOCK) && !fs.existsSync(node.LIB_FILE + '.tmp'));
 });
 
-t('gültige Datei wird gelesen', () => {
+t('format 1 wird im Speicher format 2, beim nächsten Schreiben auf der Platte; Sicherung hält format 1', () => {
   const { node } = loadNode(home(VALID()));
   assert.strictEqual(node.libNow.state, 'ok');
-  assert.deepStrictEqual(node.libNow.lib, VALID());
+  assert.deepStrictEqual(node.libNow.lib, VALID2());
+  assert.strictEqual(JSON.parse(fs.readFileSync(node.LIB_FILE, 'utf8')).format, 1, 'Lesen schreibt nicht');
+  const bk = fs.readdirSync(node.BACKUP_DIR);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(node.BACKUP_DIR, bk[0]), 'utf8')).format, 1);
+  node.libChange('rename', { id: 3, name: 'Soul' });
+  assert.deepStrictEqual(readLib(node), { ...VALID2(), rev: 4 });
+});
+
+t('format 2 gültig: gemischte Videos, leere Plätze, 16 × null, unbekannte Pad-Felder', () => {
+  const l = VALID2();
+  l.banks[0].pads[2] = { video: 'BBBBBBBBBBB', start: 0, farbe: 'rot' };
+  l.banks[0].pads[5] = null;
+  l.banks.push({ id: 2, name: 'Leer', pads: Array(16).fill(null) });
+  const { node } = loadNode(home(l));
+  assert.strictEqual(node.libNow.state, 'ok');
+  assert.deepStrictEqual(node.libNow.lib, l);
+  node.libChange('setstart', { id: 1, pad: 2, ms: 9 });
+  assert.deepStrictEqual(readLib(node).banks[0].pads[2], { video: 'BBBBBBBBBBB', start: 9, farbe: 'rot' });
 });
 
 // jede Kaputt-Regel: Zustand kaputt, Schreiben libbroken, Datei unberührt
@@ -70,10 +99,22 @@ const BROKEN = {
   'title fehlt': (l) => { delete l.videos.BBBBBBBBBBB.title; },
   'bpm als String': (l) => { l.videos.AAAAAAAAAAA.bpm = '99'; },
 };
-for (const [name, br] of Object.entries(BROKEN)) {
+// format 2 (Mix-Spec 2.1)
+const BROKEN2 = {
+  'f2: pads fehlt': (l) => { delete l.banks[0].pads; },
+  'f2: 15 Pads': (l) => { l.banks[0].pads.pop(); },
+  'f2: 17 Pads': (l) => { l.banks[0].pads.push(null); },
+  'f2: Pad mit fremdem Video': (l) => { l.banks[0].pads[4].video = 'CCCCCCCCCCC'; },
+  'f2: Pad ohne video': (l) => { delete l.banks[0].pads[4].video; },
+  'f2: start negativ': (l) => { l.banks[0].pads[4].start = -1; },
+  'f2: start nicht ganz': (l) => { l.banks[0].pads[4].start = 2.5; },
+  'f2: Pad als Zahl': (l) => { l.banks[0].pads[4] = 7; },
+  'f2: alte Felder statt pads': (l) => { l.banks[0] = { id: 1, name: 'x', video: 'AAAAAAAAAAA', starts: S(1) }; },
+};
+for (const [name, br] of Object.entries({ ...BROKEN, ...BROKEN2 })) {
   t('kaputt: ' + name, () => {
     let text = br;
-    if (typeof br === 'function') { const l = VALID(); br(l); text = JSON.stringify(l); }
+    if (typeof br === 'function') { const l = name.startsWith('f2:') ? VALID2() : VALID(); br(l); text = JSON.stringify(l); }
     const { node } = loadNode(home(text));
     assert.strictEqual(node.libNow.state, 'kaputt');
     assert.ok(node.libNow.error);
@@ -93,11 +134,12 @@ t('kaputt: iCloud-Platzhalter statt Datei', () => {
   assert.ok(!fs.existsSync(node.LIB_FILE));
 });
 
-t('neuer: format 2', () => {
-  const text = JSON.stringify({ format: 2, whatever: true });
+t('neuer: format 3', () => {
+  const text = JSON.stringify({ format: 3, whatever: true });
   const { node } = loadNode(home(text));
   assert.strictEqual(node.libNow.state, 'neuer');
   throwsCode(() => node.libChange('rename', { id: 1, name: 'x' }), 'libnewer');
+  throwsCode(() => node.libChange('newmix', {}), 'libnewer');
   assert.strictEqual(fs.readFileSync(node.LIB_FILE, 'utf8'), text);
 });
 
@@ -129,13 +171,13 @@ t('Vorgänge: rename, duplicate, move, setstart, setstarts, swap, tempo', () => 
   node.libChange('move', { id: 3, to: 3 });
   assert.deepStrictEqual(readLib(node).banks.map((b) => b.id), [1, 4, 3]);
   node.libChange('setstart', { id: 4, pad: 15, ms: 777 });
-  assert.strictEqual(readLib(node).banks[1].starts[15], 777);
-  assert.strictEqual(readLib(node).banks[0].starts[15], 1015);
+  assert.strictEqual(readLib(node).banks[1].pads[15].start, 777);
+  assert.strictEqual(readLib(node).banks[0].pads[15].start, 1015);
   node.libChange('setstarts', { id: 4, starts: S(9) });
-  assert.deepStrictEqual(readLib(node).banks[1].starts, S(9));
+  assert.deepStrictEqual(starts(readLib(node).banks[1]), S(9));
   node.libChange('swap', { id: 4, a: 0, b: 5 });
   r = readLib(node);
-  assert.strictEqual(r.banks[1].starts[0], 9005); assert.strictEqual(r.banks[1].starts[5], 9000);
+  assert.strictEqual(r.banks[1].pads[0].start, 9005); assert.strictEqual(r.banks[1].pads[5].start, 9000);
   assert.deepStrictEqual(node.libChange('tempo', { video: 'BBBBBBBBBBB', bpm: 120.04 }), { bpm: 120 });
   assert.strictEqual(readLib(node).videos.BBBBBBBBBBB.bpm, 120);
   assert.strictEqual(readLib(node).rev, 3 + 8);
@@ -153,6 +195,10 @@ t('Fehlercodes: nobank, badreq; Datei bleibt dann gleich', () => {
     ['move', { id: 1, to: 0 }], ['move', { id: 1, to: 3 }],
     ['tempo', { video: 'AAAAAAAAAAA', bpm: 29 }], ['tempo', { video: 'AAAAAAAAAAA', bpm: 301 }], ['tempo', { video: 'CCCCCCCCCCC', bpm: 100 }],
     ['create', { video: 'X', title: 'x', starts: [1] }], ['gibtsnicht', {}],
+    ['setpad', { id: 1, pad: 16, video: null }], ['setpad', { id: 1, pad: 0, video: 'AAAAAAAAAAA', start: -1 }],
+    ['setpad', { id: 1, pad: 0, video: 'CCCCCCCCCCC', start: 0 }], ['setpad', { id: 1, pad: 0, video: 'CCCCCCCCCCC', start: 0, info: { bpm: 3 } }],
+    ['restore', { bank: { id: 2, name: 'x', pads: PADS('CCCCCCCCCCC', 0) }, at: 1, videos: {} }],
+    ['restore', { bank: { id: 2, name: 'x', pads: PADS('AAAAAAAAAAA', 0).slice(1) }, at: 1 }],
   ]) throwsCode(() => node.libChange(op, a), 'badreq');
   assert.strictEqual(fs.readFileSync(node.LIB_FILE, 'utf8'), before);
 });
@@ -160,7 +206,7 @@ t('Fehlercodes: nobank, badreq; Datei bleibt dann gleich', () => {
 t('nextId, delete samt videos, restore, idtaken', () => {
   const { node } = loadNode(home(VALID()));
   const { removed } = node.libChange('delete', { id: 1 });
-  assert.deepStrictEqual(removed, { bank: VALID().banks[0], at: 1, video: { title: 'A', bpm: 99.5 } });
+  assert.deepStrictEqual(removed, { bank: VALID2().banks[0], at: 1, videos: { AAAAAAAAAAA: { title: 'A', bpm: 99.5 } } });
   let r = readLib(node);
   assert.ok(!('AAAAAAAAAAA' in r.videos), 'letzte Bank des Videos weg -> Eintrag weg');
   assert.strictEqual(r.nextId, 4);
@@ -175,10 +221,50 @@ t('nextId, delete samt videos, restore, idtaken', () => {
   throwsCode(() => node.libChange('restore', removed), 'idtaken');
   throwsCode(() => node.libChange('restore', { ...removed, bank: { ...removed.bank, id: 5 } }), 'idtaken');
   // restore mit vorhandenem Video lässt dessen Eintrag stehen; at hinter dem Ende hängt an
-  node.libChange('restore', { bank: { id: 2, name: 'Zwei', video: 'BBBBBBBBBBB', starts: S(2) }, at: 99, video: { title: 'anders', bpm: 50 } });
+  node.libChange('restore', { bank: { id: 2, name: 'Zwei', pads: PADS('BBBBBBBBBBB', 2) }, at: 99, videos: { BBBBBBBBBBB: { title: 'anders', bpm: 50 } } });
   r = readLib(node);
   assert.deepStrictEqual(r.banks.map((b) => b.id), [1, 3, 2]);
   assert.deepStrictEqual(r.videos.BBBBBBBBBBB, { title: 'B' });
+});
+
+t('newmix, setpad (mit info, null), Leeres: setstart badreq, setstarts/swap; delete/restore mit mehreren Videos; dropOrphans über Pads', () => {
+  const { node } = loadNode(home(VALID()));
+  assert.deepStrictEqual(node.libChange('newmix', {}), { id: 4 });
+  let r = readLib(node);
+  assert.deepStrictEqual(r.banks[2], { id: 4, name: 'Mix-Bank', pads: Array(16).fill(null) });
+  node.libChange('setpad', { id: 4, pad: 0, video: 'AAAAAAAAAAA', start: 1000 });
+  node.libChange('setpad', { id: 4, pad: 1, video: 'CCCCCCCCCCC', start: 500, info: { title: 'C', bpm: 88 } });
+  r = readLib(node);
+  assert.deepStrictEqual(r.banks[2].pads.slice(0, 3), [{ video: 'AAAAAAAAAAA', start: 1000 }, { video: 'CCCCCCCCCCC', start: 500 }, null]);
+  assert.deepStrictEqual(r.videos.CCCCCCCCCCC, { title: 'C', bpm: 88 });
+  // vorhandenes Video: info wird ignoriert
+  node.libChange('setpad', { id: 4, pad: 2, video: 'AAAAAAAAAAA', start: 7, info: { title: 'anders' } });
+  assert.strictEqual(readLib(node).videos.AAAAAAAAAAA.title, 'A');
+  throwsCode(() => node.libChange('setstart', { id: 4, pad: 5, ms: 1 }), 'badreq');
+  node.libChange('setstarts', { id: 4, starts: S(2) });
+  assert.deepStrictEqual(starts(readLib(node).banks[2]).slice(0, 4), [2000, 2001, 2002, null]);
+  node.libChange('swap', { id: 4, a: 0, b: 5 });
+  assert.deepStrictEqual([readLib(node).banks[2].pads[0], readLib(node).banks[2].pads[5]], [null, { video: 'AAAAAAAAAAA', start: 2000 }]);
+  // Platz leeren: letztes Pad von C weg -> videos-Eintrag weg
+  node.libChange('setpad', { id: 4, pad: 1, video: null });
+  r = readLib(node);
+  assert.strictEqual(r.banks[2].pads[1], null);
+  assert.ok(!('CCCCCCCCCCC' in r.videos));
+  node.libChange('setpad', { id: 4, pad: 1, video: 'CCCCCCCCCCC', start: 500, info: { title: 'C', bpm: 88 } });
+  node.libChange('setpad', { id: 4, pad: 3, video: 'BBBBBBBBBBB', start: 1 });
+  // delete der Mix-Bank: videos aller Pads, restore bringt die fehlenden zurück
+  node.libChange('delete', { id: 3 });
+  const { removed } = node.libChange('delete', { id: 4 });
+  assert.deepStrictEqual(removed.videos, { AAAAAAAAAAA: { title: 'A', bpm: 99.5 }, CCCCCCCCCCC: { title: 'C', bpm: 88 }, BBBBBBBBBBB: { title: 'B' } });
+  assert.deepStrictEqual(Object.keys(readLib(node).videos), ['AAAAAAAAAAA']);
+  throwsCode(() => node.libChange('restore', { ...removed, videos: { CCCCCCCCCCC: { title: 'C' } } }), 'badreq');
+  node.libChange('restore', removed);
+  r = readLib(node);
+  assert.deepStrictEqual(r.banks[1], removed.bank);
+  assert.deepStrictEqual(r.videos, { AAAAAAAAAAA: { title: 'A', bpm: 99.5 }, CCCCCCCCCCC: { title: 'C', bpm: 88 }, BBBBBBBBBBB: { title: 'B' } });
+  // 16 × null gültig und schreibbar
+  node.libChange('newmix', {});
+  assert.strictEqual(loadNode(process.env.HOME).node.libNow.state, 'ok');
 });
 
 t('verwaiste videos fallen beim nächsten Schreiben weg', () => {
@@ -232,7 +318,7 @@ t('zwei Prozesse schreiben gleichzeitig, nichts geht verloren', async () => {
   assert.strictEqual(lib.nextId, 4 + 2 * N);
   assert.strictEqual(new Set(lib.banks.map((b) => b.id)).size, 2 + 2 * N);
   for (const tag of ['P1PPPPPPPPP', 'P2PPPPPPPPP']) {
-    assert.deepStrictEqual(lib.banks.filter((b) => b.video === tag).map((b) => b.name), Array.from({ length: N }, (_, i) => tag + i));
+    assert.deepStrictEqual(lib.banks.filter((b) => b.pads[0].video === tag).map((b) => b.name), Array.from({ length: N }, (_, i) => tag + i));
   }
 });
 

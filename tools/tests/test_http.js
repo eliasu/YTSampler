@@ -92,7 +92,10 @@ function sse(port) {
   return c;
 }
 
-const bankArgs = (m) => ({ id: m[1], nr: m[2], bpm: m[3], starts: m.slice(4, 20), lens: m.slice(20, 36), dur: m[36], video: m[37], path: m[38] });
+// bank <id> <nr> <s×16> <l×16> <pfad> (Mix-Spec 3.3)
+const bankArgs = (m) => ({ id: m[1], nr: m[2], starts: m.slice(3, 19), lens: m.slice(19, 35), path: m[35], n: m.length });
+const PADS = (v, st = STARTS) => st.map((start) => ({ video: v, start }));
+const starts = (b) => b.pads.map((p) => p && p.start);
 
 t('Schutz für /cmd: Content-Type, Host, Origin, 64 KB, Methode → 403; kaputtes JSON → 400; unbekannt → badreq', async () => {
   const { port, done } = await setup();
@@ -170,10 +173,12 @@ t('SSE: retry, hello, lib, device, cache beim Verbinden; beats erst mit aktiver 
   assert.strictEqual(lib.state, 'ok');
   assert.strictEqual(lib.by, 'test');
   // Bank 1 und 3 schneidet das Entprellen 150 ms nach create: Auf langsamen Rechnern ist das vor dem Verbinden schon passiert
-  assert.deepStrictEqual(lib.banks.map((b) => [b.id, b.name, b.video, b.snip === 'ok' && b.id !== ids[1] ? 'stale' : b.snip, b.wav]),
-    [[ids[0], 'Eins', V1, 'stale', true], [ids[1], 'Zwei', V2, 'ok', false], [ids[2], 'Drei', V1, 'stale', true]]);
-  assert.deepStrictEqual(lib.banks[0].starts, STARTS);
-  assert.deepStrictEqual(lib.videos, { [V1]: { title: 'Titel ' + V1 }, [V2]: { title: 'Titel ' + V2 } });
+  assert.deepStrictEqual(lib.banks.map((b) => [b.id, b.name, b.mix, b.snip === 'ok' && b.id !== ids[1] ? 'stale' : b.snip, b.wav]),
+    [[ids[0], 'Eins', false, 'stale', true], [ids[1], 'Zwei', false, 'ok', false], [ids[2], 'Drei', false, 'stale', true]]);
+  assert.deepStrictEqual(lib.banks[0].pads, PADS(V1));
+  assert.deepStrictEqual(Object.keys(lib.banks[0]), ['id', 'name', 'pads', 'mix', 'snip', 'wav']);
+  // dur aus dem Cache, ohne WAV aus der Snippet-.json
+  assert.deepStrictEqual(lib.videos, { [V1]: { title: 'Titel ' + V1, wav: true, dur: DUR }, [V2]: { title: 'Titel ' + V2, wav: false, dur: DUR } });
   assert.deepStrictEqual(Object.keys(lib.cache), ['bytes', 'warn']);
   assert.deepStrictEqual(a.last('device'), { bankId: 0, nr: 0, video: '-', sel: 0, starts: [], spans: [], params: null });
   assert.strictEqual(a.last('cache').warn, false);
@@ -199,11 +204,12 @@ t('select: bankname, bank mit Starts, Längen, Songdauer, Video, Pfad; danach di
   assert.deepStrictEqual(max.out.slice(0, 2).map((m) => m[0]), ['bankname', 'bank']);
   assert.deepStrictEqual(on('bankname')[0], ['bankname', ids[2], 'Drei']);
   const b = bankArgs(on('bank')[0]);
-  assert.deepStrictEqual(b, { id: ids[2], nr: 3, bpm: 0, starts: STARTS, lens: STARTS.map((s) => Math.min(16000, DUR - s)), dur: DUR, video: V1, path: path.join(node.SNIP_DIR, `${ids[2]}.wav`) });
+  assert.deepStrictEqual(b, { id: ids[2], nr: 3, starts: STARTS, lens: STARTS.map((s) => Math.min(16000, DUR - s)), path: path.join(node.SNIP_DIR, `${ids[2]}.wav`), n: 36 });
   assert.strictEqual(b.lens[15], 5000);
   assert.ok(fs.existsSync(b.path));
   await until(() => on('analysisready').length, 'analysisready');
-  assert.deepStrictEqual(max.out.filter((m) => ['tuning', 'tempo', 'silence', 'analysisready'].includes(m[0])).map((m) => m[0]), ['tuning', 'tempo', 'analysisready']);
+  assert.deepStrictEqual(max.out.filter((m) => ['tuning', 'tempo', 'silence', 'analysisready', 'beatsclear'].includes(m[0])).map((m) => m[0]), ['analysisready']);
+  assert.strictEqual(on('padana').length, 16);
   assert.ok(fs.existsSync(path.join(node.SNIP_DIR, `${V1}.chroma`)), 'Analyse liegt in D');
   assert.strictEqual(node.activeId, ids[2]);
 
@@ -211,7 +217,7 @@ t('select: bankname, bank mit Starts, Längen, Songdauer, Video, Pfad; danach di
   max.out = [];
   fs.writeFileSync(process.env.FAKE_LOG, '');
   await cmd({ cmd: 'select', id: ids[1] });
-  assert.strictEqual(bankArgs(on('bank')[0]).video, V2);
+  assert.strictEqual(bankArgs(on('bank')[0]).id, ids[1]);
   await until(() => node.hasWav(V2), 'Track im Hintergrund');
   // ohne Snippets und ohne WAV: nosnip, an [js] bankfail
   fs.unlinkSync(path.join(node.SNIP_DIR, `${ids[1]}.json`));
@@ -235,7 +241,7 @@ t('Device: banksel, bankpeek, bankopen/bankgone, banksel über der letzten Bank,
   assert.deepStrictEqual(on('bankpeek')[1], ['bankpeek', 4, 3, '']);
   h.banksel(1);
   const b = bankArgs(on('bank')[0]);
-  assert.deepStrictEqual([b.id, b.nr, b.dur, b.lens[15], b.path], [ids[0], 1, DUR, 5000, path.join(node.SNIP_DIR, `${ids[0]}.wav`)]);
+  assert.deepStrictEqual([b.id, b.nr, b.lens[15], b.path], [ids[0], 1, 5000, path.join(node.SNIP_DIR, `${ids[0]}.wav`)]);
   max.out = [];
   h.banksel(4);
   h.bankopen(77);
@@ -307,7 +313,7 @@ t('rename, move, duplicate, delete, restore: Antworten, by/rev in lib, Nachricht
   // delete der aktiven (letzten) Bank: die davor wird aktiv
   max.out = [];
   const del = await cmd({ client: 'c1', cmd: 'delete', id: 4 });
-  assert.deepStrictEqual(del.removed, { bank: { id: 4, name: 'Neu; Name (Kopie)', video: V1, starts: STARTS }, at: 4, video: { title: 'Titel ' + V1 } });
+  assert.deepStrictEqual(del.removed, { bank: { id: 4, name: 'Neu; Name (Kopie)', pads: PADS(V1) }, at: 4, videos: { [V1]: { title: 'Titel ' + V1 } } });
   assert.strictEqual(bankArgs(on('bank')[0]).id, ids[0]);
   // delete der aktiven Bank in der Mitte: Nachrücker auf demselben Platz
   await cmd({ cmd: 'move', id: ids[0], to: 2 });
@@ -318,7 +324,7 @@ t('rename, move, duplicate, delete, restore: Antworten, by/rev in lib, Nachricht
   max.out = [];
   const del2 = await cmd({ client: 'c1', cmd: 'delete', id: ids[1] });
   assert.deepStrictEqual(on('bank'), []);
-  assert.deepStrictEqual(del2.removed.video, { title: 'Titel ' + V2 });
+  assert.deepStrictEqual(del2.removed.videos, { [V2]: { title: 'Titel ' + V2 } });
   assert.deepStrictEqual(Object.keys(node.libNow.lib.videos), [V1], 'verwaister videos-Eintrag weg');
   // restore: alte ID, videos zurück; vergebene ID → idtaken
   assert.deepStrictEqual(await cmd({ client: 'c1', cmd: 'restore', ...del2.removed }), { ok: true });
@@ -350,7 +356,7 @@ t('setstart, setstarts, swap, roll: neu schneiden, aktive Bank lädt danach; ohn
   max.out = [];
   const r = await cmd({ cmd: 'roll', id: ids[0], pad: 0 });
   assert.ok(r.ok && Number.isInteger(r.ms) && r.ms >= 0 && r.ms <= DUR - 16000);
-  assert.strictEqual(node.libNow.lib.banks[0].starts[0], r.ms);
+  assert.strictEqual(node.libNow.lib.banks[0].pads[0].start, r.ms);
   await until(() => on('bank').length, 'bank nach roll');
 
   // nicht aktive Bank ohne WAV: Starts setzen geht nicht, tauschen schon
@@ -361,7 +367,7 @@ t('setstart, setstarts, swap, roll: neu schneiden, aktive Bank lädt danach; ohn
   assert.strictEqual((await cmd({ cmd: 'setstarts', id: ids[1], starts: STARTS.map((s) => s + 1) })).code, 'playonly');
   assert.deepStrictEqual(await cmd({ cmd: 'setstarts', id: ids[1], starts: sw }), { ok: true }, 'Undo eines Tauschs ohne WAV');
   assert.deepStrictEqual(await cmd({ cmd: 'swap', id: ids[1], a: 0, b: 5 }), { ok: true });
-  assert.deepStrictEqual(node.libNow.lib.banks[1].starts, STARTS);
+  assert.deepStrictEqual(starts(node.libNow.lib.banks[1]), STARTS);
   assert.strictEqual((await cmd({ cmd: 'swap', id: ids[1], a: 0, b: 16 })).code, 'badreq');
   assert.strictEqual((await cmd({ cmd: 'setstart', id: ids[0], pad: 0, ms: -1 })).code, 'badreq');
   assert.strictEqual((await cmd({ cmd: 'setstarts', id: ids[0], starts: [1, 2] })).code, 'badreq');
@@ -371,28 +377,30 @@ t('setstart, setstarts, swap, roll: neu schneiden, aktive Bank lädt danach; ohn
   done();
 });
 
-t('tempo, tempook: bpm an [js] nur für die aktive Bank, notempo; bpmset gibt es nicht mehr', async () => {
+t('tempo, tempook: padana an [js] nur für die aktive Bank, notempo; bpmset gibt es nicht mehr', async () => {
   const { node, max, ids, on, cmd, events, done } = await setup();
   const a = events();
   await cmd({ cmd: 'select', id: ids[0] });
+  await until(() => on('analysisready').length, 'analysisready');
   max.out = [];
   assert.deepStrictEqual(await cmd({ client: 'c1', cmd: 'tempo', video: V1, bpm: 99.94 }), { ok: true });
-  assert.deepStrictEqual(on('bpm'), [['bpm', V1, 99.9]]);
+  assert.deepStrictEqual(on('padana').map((m) => [m[1], m[2]]), STARTS.map((_, i) => [i, 99.9]));
+  assert.deepStrictEqual(on('bpm'), []);
   await a.wait((ev, d) => ev === 'beats' && d.confirmed && d.bpm === 99.9, 'beats mit bestätigtem Tempo');
   max.out = [];
   await cmd({ cmd: 'tempo', video: V2, bpm: 80 });
-  assert.deepStrictEqual(on('bpm'), [], 'nicht aktiv');
+  assert.deepStrictEqual(on('padana'), [], 'nicht aktiv');
   assert.strictEqual((await cmd({ cmd: 'tempo', video: V1, bpm: 20 })).code, 'badreq');
   assert.strictEqual((await cmd({ cmd: 'tempo', video: V3, bpm: 100 })).code, 'badreq');
 
   const ok = await cmd({ cmd: 'tempook', video: V1 });
   assert.ok(ok.ok && Math.abs(ok.bpm - 120) < 2, JSON.stringify(ok));
-  assert.deepStrictEqual(on('bpm'), [['bpm', V1, ok.bpm]]);
+  assert.deepStrictEqual(on('padana').map((m) => m[2]), Array(16).fill(ok.bpm));
   fs.writeFileSync(path.join(node.SNIP_DIR, `${V2}.chroma`), 'kaputt');
   fs.unlinkSync(path.join(node.CACHE, `${V2}.chroma`));
   assert.deepStrictEqual(await cmd({ cmd: 'tempook', video: V2 }), { ok: false, code: 'notempo', text: 'Kein Tempo erkannt' });
 
-  for (const h of ['bpmset', 'load', 'key', 'analyze']) assert.ok(!(h in max.handlers), h);
+  for (const h of ['bpmset', 'load', 'key', 'analyze', 'beattrack', 'analyzeall']) assert.ok(!(h in max.handlers), h);
   done();
 });
 
@@ -406,7 +414,8 @@ t('hit/up → padhit/padup; bankstate mit Reglern → device.params; playing/pla
   const w = Array.from({ length: 16 }, (_, i) => 1000 + i);
   // <div> <rate> <tune> <warp> <quant> <vol> <voices> <base> <qdiv> <qcatch>
   const P = [5, 1.25, 1, 0, 1, -3.5, 6, 36, 2, 1];
-  max.handlers.bankstate(ids[2], V1, 5, 1, 1, ...STARTS, ...w, ...P);
+  await cmd({ cmd: 'select', id: ids[2] });
+  max.handlers.bankstate(ids[2], 5, 1, 1, ...STARTS, ...w, ...P);
   await a.wait((ev, d) => ev === 'device' && d.bankId === ids[2]);
   const d = a.last('device');
   assert.deepStrictEqual(d, { bankId: ids[2], nr: 3, video: V1, sel: 5, starts: STARTS, spans: w,
@@ -414,15 +423,15 @@ t('hit/up → padhit/padup; bankstate mit Reglern → device.params; playing/pla
   assert.ok(!('mode' in d) && !('rev' in d) && !('teletext' in d));
   await a.wait((ev, d2) => ev === 'beats' && d2.video === V1, 'beats der aktiven Bank');
   const n = a.of('device').length;
-  max.handlers.bankstate(ids[2], V1, 5, 1, 1, ...STARTS, ...w, ...P);
+  max.handlers.bankstate(ids[2], 5, 1, 1, ...STARTS, ...w, ...P);
   await sleep(80);
   assert.strictEqual(a.of('device').length, n, 'Gleiches nicht noch einmal');
-  max.handlers.bankstate(ids[2], V1, 5, 0, 1, ...STARTS, ...w, 5, 1.25, 1, 1, 1, -3.5, 6, 36, 2, 1);
+  max.handlers.bankstate(ids[2], 5, 0, 1, ...STARTS, ...w, 5, 1.25, 1, 1, 1, -3.5, 6, 36, 2, 1);
   await a.wait((ev, d2) => ev === 'device' && d2.params && d2.params.warp === 1 && d2.params.mode === 0, 'Regleränderung');
   max.handlers.playing(5, 2000, 3500, 1500);
   max.handlers.playstop(5);
   await a.wait((ev) => ev === 'stop');
-  assert.deepStrictEqual([a.last('play'), a.last('stop')], [{ pad: 5, from: 2000, to: 3500, dur: 1500 }, { pad: 5 }]);
+  assert.deepStrictEqual([a.last('play'), a.last('stop')], [{ pad: 5, from: 2000, to: 3500, dur: 1500, video: V1 }, { pad: 5 }]);
   max.handlers.trackname('3', 'YT', 'Sampler');
   await a.wait((ev, d) => ev === 'hello' && d.track === '3 YT Sampler');
   done();
@@ -451,7 +460,8 @@ t('newbank: {} sofort, job bis done mit bankId, Bank am Ende wird aktiv; fetch u
   assert.ok(a.of('job').some((x) => x.kind === 'newbank' && x.phase === 'download'));
   await until(() => on('bank').length, 'bank');
   const b = bankArgs(on('bank')[0]);
-  assert.deepStrictEqual([b.id, b.nr, b.video], [4, 4, V3]);
+  assert.deepStrictEqual([b.id, b.nr], [4, 4]);
+  assert.deepStrictEqual(node.libNow.lib.banks[3].pads.map((p) => p.video), Array(16).fill(V3));
   assert.deepStrictEqual(b.starts, b.starts.slice().sort((x, y) => x - y));
   assert.strictEqual(node.libNow.lib.banks[3].name, `Titel; ${V3}`);
   await a.wait((ev, d) => ev === 'lib' && d.banks.length === 4 && d.by === 'c1');
@@ -491,7 +501,7 @@ t('kaputte Bibliothek: schreibend libbroken, hit/up gehen, [js] libstate kaputt;
   assert.deepStrictEqual(a.last('lib').banks, []);
   assert.deepStrictEqual(on('libstate').pop(), ['libstate', 0, 0, 'kaputt']);
   assert.strictEqual((await cmd({ cmd: 'newbank', video: V3 })).code, 'libbroken');
-  fs.writeFileSync(node.LIB_FILE, JSON.stringify({ format: 2 }));
+  fs.writeFileSync(node.LIB_FILE, JSON.stringify({ format: 3 }));
   await a.wait((ev, d) => ev === 'lib' && d.state === 'neuer');
   assert.strictEqual((await cmd({ cmd: 'swap', id: ids[0], a: 0, b: 1 })).code, 'libnewer');
   max.out = [];
@@ -540,6 +550,75 @@ t('/cmd param: gültig → param an [js] und {}, ungültig → badreq, auch bei 
   assert.deepStrictEqual(await cmd({ cmd: 'param', name: 'warp', value: 1 }), { ok: true }, 'kaputt erlaubt');
   assert.deepStrictEqual(on('param'), [['param', 'warp', 1]]);
   assert.strictEqual(fs.readFileSync(node.LIB_FILE, 'utf8'), '{kaputt', 'schreibt nichts');
+  done();
+});
+
+t('newmix, setpad (mit/ohne info, null), leerer Platz badreq, device.video und beats folgen sel, delete/restore mit mehreren Videos', async () => {
+  const { node, max, ids, on, cmd, events, done } = await setup();
+  const a = events();
+  await a.wait((ev) => ev === 'cache');
+  max.out = [];
+  const r = await cmd({ client: 'c1', cmd: 'newmix' });
+  assert.deepStrictEqual(r, { ok: true, id: 4 });
+  const mb = bankArgs(on('bank')[0]);
+  assert.deepStrictEqual([mb.id, mb.nr, mb.starts, mb.lens], [4, 4, Array(16).fill(0), Array(16).fill(0)]);
+  await a.wait((ev, d) => ev === 'lib' && d.banks.length === 4 && d.banks[3].mix === true && d.banks[3].wav === true, 'Mix-Bank im lib');
+  assert.deepStrictEqual(a.last('lib').banks[3].pads, Array(16).fill(null));
+  await until(() => on('analysisready').length, 'analysisready leer');
+  assert.deepStrictEqual(on('padana'), []);
+
+  // Pad aus Bank 1 (V1, WAV da) und aus Bank 2 (V2, ohne WAV, aus deren Snippets)
+  assert.deepStrictEqual(await cmd({ cmd: 'setpad', id: 4, pad: 0, video: V1, start: STARTS[2] }), { ok: true });
+  assert.deepStrictEqual(await cmd({ cmd: 'setpad', id: 4, pad: 1, video: V2, start: STARTS[15] }), { ok: true });
+  // V2 ohne WAV, Start in keinem Fach: playonly; unbekanntes Video ohne info: badreq, mit info ok (Quelle: WAV)
+  assert.strictEqual((await cmd({ cmd: 'setpad', id: 4, pad: 2, video: V2, start: 123 })).code, 'playonly');
+  fs.copyFileSync(SRC, path.join(node.CACHE, `${V3}.wav`));
+  assert.strictEqual((await cmd({ cmd: 'setpad', id: 4, pad: 2, video: V3, start: 0 })).code, 'badreq');
+  assert.deepStrictEqual(await cmd({ cmd: 'setpad', id: 4, pad: 2, video: V3, start: 0, info: { title: 'Drei', bpm: 90 } }), { ok: true });
+  assert.deepStrictEqual(node.libNow.lib.videos[V3], { title: 'Drei', bpm: 90 });
+  for (const bad of [{ pad: 16, video: null }, { pad: 0, video: 'kurz', start: 0 }, { pad: 0, video: V1, start: -1 }, { pad: 0, video: V1 }]) {
+    assert.strictEqual((await cmd({ cmd: 'setpad', id: 4, ...bad })).code, 'badreq', JSON.stringify(bad));
+  }
+  await until(() => { const l = on('bank').pop(); return l && bankArgs(l).lens[2] === 16000; }, 'Mix-Bank neu geschnitten');
+  const lb = bankArgs(on('bank').pop());
+  assert.deepStrictEqual([lb.starts.slice(0, 4), lb.lens.slice(0, 4)], [[STARTS[2], STARTS[15], 0, 0], [16000, 5000, 16000, 0]]);
+  // leerer Platz: setstart, roll -> badreq
+  assert.strictEqual((await cmd({ cmd: 'setstart', id: 4, pad: 5, ms: 1 })).code, 'badreq');
+  assert.strictEqual((await cmd({ cmd: 'roll', id: 4, pad: 5 })).code, 'badreq');
+  // roll ohne WAV des Pads: playonly, mit WAV würfelt im eigenen Video
+  assert.strictEqual((await cmd({ cmd: 'roll', id: 4, pad: 1 })).code, 'playonly');
+  assert.strictEqual((await cmd({ cmd: 'setstart', id: 4, pad: 1, ms: 5 })).code, 'playonly');
+  assert.ok((await cmd({ cmd: 'roll', id: 4, pad: 2 })).ok);
+  assert.strictEqual(node.libNow.lib.banks[3].pads[2].video, V3);
+
+  // device.video und beats folgen dem gewählten Pad
+  const w = Array(16).fill(0), P = [5, 1, 0, 0, 0, 0, 6, 36, 0, 0];
+  max.handlers.bankstate(4, 0, 0, 0, ...w, ...w, ...P);
+  await a.wait((ev, d) => ev === 'device' && d.bankId === 4 && d.video === V1, 'device V1');
+  await a.wait((ev, d) => ev === 'beats' && d.video === V1, 'beats V1');
+  max.handlers.bankstate(4, 2, 0, 0, ...w, ...w, ...P);
+  await a.wait((ev, d) => ev === 'device' && d.sel === 2 && d.video === V3, 'device V3');
+  await a.wait((ev, d) => ev === 'beats' && d.video === V3, 'beats V3');
+  max.handlers.bankstate(4, 9, 0, 0, ...w, ...w, ...P);
+  await a.wait((ev, d) => ev === 'device' && d.sel === 9 && d.video === '-', 'device leerer Platz');
+  // Platz leeren
+  assert.deepStrictEqual(await cmd({ cmd: 'setpad', id: 4, pad: 0, video: null }), { ok: true });
+  assert.strictEqual(node.libNow.lib.banks[3].pads[0], null);
+  max.handlers.playing(1, 0, 100, 100);
+  await a.wait((ev, d) => ev === 'play' && d.pad === 1);
+  assert.strictEqual(a.last('play').video, V2);
+
+  // delete/restore mit mehreren Videos; V3 lebt nur in der Mix-Bank
+  const del = await cmd({ cmd: 'delete', id: 4 });
+  assert.deepStrictEqual(del.removed.videos, { [V2]: { title: 'Titel ' + V2 }, [V3]: { title: 'Drei', bpm: 90 } });
+  assert.ok(!(V3 in node.libNow.lib.videos));
+  assert.deepStrictEqual(await cmd({ cmd: 'restore', ...del.removed }), { ok: true });
+  assert.deepStrictEqual(node.libNow.lib.banks[3], del.removed.bank);
+  assert.deepStrictEqual(node.libNow.lib.videos[V3], { title: 'Drei', bpm: 90 });
+  // select lädt fehlende WAVs aller Videos der Bank
+  fs.unlinkSync(path.join(node.CACHE, `${V3}.wav`));
+  await cmd({ cmd: 'select', id: 4 });
+  await until(() => node.hasWav(V2) && node.hasWav(V3), 'alle Videos der Bank im Cache');
   done();
 });
 

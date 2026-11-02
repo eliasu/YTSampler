@@ -1,6 +1,7 @@
 // YT Sampler – Node for Max Teil
 // Bibliothek, Snippets, Analyse, Downloads, Session-Dateien, Webserver für den Editor.
-// Protokolle zu [js] und Editor: .scratch/bank-editor/spec.md Abschnitt 3 und 6, Änderungen für 3.0 in .scratch/device-3/spec.md.
+// Protokolle zu [js] und Editor: .scratch/bank-editor/spec.md Abschnitt 3 und 6, Änderungen für 3.0 in .scratch/device-3/spec.md,
+// Mix-Bänke (Video pro Pad, library.json format 2) in .scratch/mix-banks/spec.md.
 
 const Max = require('max-api');
 const { spawn } = require('child_process');
@@ -170,8 +171,6 @@ const AN = {
 // Krumhansl-Kessler-Tonartprofile
 const KK_MAJ = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
 const KK_MIN = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
-
-let analysis = null; // { id, srd, tuning, nf, frames }
 
 function makeFFT(n) {
   const bits = Math.round(Math.log2(n));
@@ -542,16 +541,6 @@ function silentRanges(a) {
   return out.slice(0, 1000);   // ponytail: bei sehr zerhackter Musik nur die ersten 500 Bereiche
 }
 
-function sendBeats(bpm) {
-  const a = analysis;
-  if (!a) return;
-  const r = trackBeats(a, bpm);
-  Max.outlet('beatsclear');
-  if (!r) { Max.outlet('beatsdone', 0, 0); return; }
-  for (let i = 0; i < r.beats.length; i += 200) Max.outlet('beatsadd', ...r.beats.slice(i, i + 200));
-  Max.outlet('beatsdone', r.down, r.beats.length);
-}
-
 function saveAnalysis(file, a) {
   const head = new Float32Array([AN.VERSION, a.srd, a.tuning, a.nf, a.bpm || 0, a.bpmConf || 0, a.fps || 0, a.onset.length]);
   const f32 = (x) => Buffer.from(Float32Array.from(x).buffer);
@@ -609,28 +598,6 @@ function newerAnalysis(file) {
   try { const b = Buffer.alloc(4); const fd = fs.openSync(file, 'r'); fs.readSync(fd, b, 0, 4, 0); fs.closeSync(fd); return b.readFloatLE(0) > AN.VERSION; } catch (e) { return false; }
 }
 
-// Analyse ans Device: tuning, tempo, analysisready. Aus D/snippets (Spec 2.4), sonst Cache bzw. ganze WAV.
-async function ensureAnalysis(id, title) {
-  analysis = null;
-  await new Promise((r) => setImmediate(r)); // "bank" zuerst rausschicken
-  let a = readAnalysis(chromaBank(id));
-  if (!a && hasWav(id)) {
-    status('Analysiere Tonart …');
-    await new Promise((r) => setTimeout(r, 20));
-    const t0 = Date.now();
-    a = getAnalysis(id, true);
-    Max.post(`YT Sampler: Analyse in ${Date.now() - t0} ms`);
-  }
-  if (!a) { status('Analyse fehlt – Bank im Editor neu schneiden'); return; }
-  analysis = { id, ...a };
-  const cents = Math.round(a.tuning * 100);
-  Max.outlet('tuning', cents);
-  Max.outlet('tempo', a.bpm, a.bpmConf);
-  Max.outlet('analysisready');
-  const tempoTxt = a.bpm ? ` · ${a.bpm} BPM${a.bpmConf < 0.3 ? ' (unsicher)' : ''}` : '';
-  status(`Bereit: ${title}${tempoTxt} · Stimmung ${cents >= 0 ? '+' : ''}${cents} ct`);
-}
-
 function pearson(x, y) {
   let mx = 0, my = 0;
   for (let i = 0; i < 12; i++) { mx += x[i]; my += y[i]; }
@@ -641,9 +608,7 @@ function pearson(x, y) {
 }
 
 // Analyse eines Zeitfensters: Chroma, Tonart, Konfidenz
-function analyzeWindow(startMs, spanMs) {
-  const a = analysis;
-  if (!a) return null;
+function analyzeWindow(a, startMs, spanMs) {
   const len = Math.max(Math.abs(spanMs), AN.MINWIN);
   const center = startMs + spanMs / 2;
   const from = center - len / 2, to = center + len / 2;
@@ -678,9 +643,8 @@ function analyzeWindow(startMs, spanMs) {
   return { conf, tonic, minor, c };
 }
 
-function sendPadInfo(i, startMs, spanMs) {
-  const r = analyzeWindow(startMs, spanMs);
-  if (!r) return;
+function sendPadInfo(a, i, startMs, spanMs) {
+  const r = analyzeWindow(a, startMs, spanMs);
   Max.outlet('padinfo', i, +r.conf.toFixed(3), r.tonic, r.minor, ...r.c.map((v) => +v.toFixed(4)));
 }
 
@@ -723,9 +687,6 @@ async function download(id, job, onPhase) {
     for (const n of fs.readdirSync(CACHE)) if (n.startsWith(`${id}.dl.`)) { try { fs.unlinkSync(path.join(CACHE, n)); } catch (e) { /* weg */ } }
   }
 }
-
-Max.addHandler('beattrack', (bpm) => sendBeats(bpm));
-Max.addHandler('analyzeall', (span, ...starts) => starts.forEach((st, i) => sendPadInfo(i, st, span)));
 
 // =====================================================================
 // Session-Speicher: Zustand pro Device als JSON-Datei.
@@ -848,12 +809,19 @@ const isObj = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
 const isInt = (v, min) => Number.isInteger(v) && v >= min;
 const isPad = (v) => isInt(v, 0) && v < 16;
 const isStarts = (a) => Array.isArray(a) && a.length === 16 && a.every((v) => isInt(v, 0));
-const emptyLib = () => ({ format: 1, rev: 0, nextId: 1, banks: [], videos: {} });
+const emptyLib = () => ({ format: 2, rev: 0, nextId: 1, banks: [], videos: {} });
 const libState = (lib) => (lib.banks.length ? 'ok' : 'leer');
+// Pad = {video, start} oder null (leerer Platz). Videos einer Bank, ohne Doppelte, in Pad-Reihenfolge
+const padVideos = (b) => [...new Set(b.pads.filter(Boolean).map((p) => p.video))];
+const isPadList = (a) => Array.isArray(a) && a.length === 16
+  && a.every((p) => p === null || (isObj(p) && typeof p.video === 'string' && p.video !== '' && isInt(p.start, 0)));
+// Track-Bank: 16 belegte Pads aus einem Video, sonst Mix-Bank (Mix-Spec 2.1)
+const isMix = (b) => !(b.pads.every(Boolean) && padVideos(b).length === 1);
+const videoEntry = (v) => { const e = { title: v.title }; if (typeof v.bpm === 'number') e.bpm = v.bpm; return e; };
 
-// Kaputt-Regeln -> Fehlertext, '' = gültig
+// Kaputt-Regeln -> Fehlertext, '' = gültig. format 1 nach Spec 2.0, format 2 mit pads (Mix-Spec 2.1)
 function libCheck(lib) {
-  if (!isObj(lib) || lib.format !== 1) return 'format fehlt oder falsch';
+  if (!isObj(lib) || (lib.format !== 1 && lib.format !== 2)) return 'format fehlt oder falsch';
   if (!isInt(lib.rev, 0)) return 'rev fehlt oder falsch';
   if (!isInt(lib.nextId, 1)) return 'nextId fehlt oder falsch';
   if (!Array.isArray(lib.banks)) return 'banks fehlt oder falsch';
@@ -870,19 +838,37 @@ function libCheck(lib) {
     if (b.id >= lib.nextId) return at + `id ${b.id} nicht kleiner als nextId`;
     ids.add(b.id);
     if (typeof b.name !== 'string') return at + 'name fehlt oder falsch';
-    if (typeof b.video !== 'string' || !has(lib.videos, b.video)) return at + 'video fehlt in videos';
-    if (!isStarts(b.starts)) return at + 'starts nicht genau 16 ganze ms';
+    if (lib.format === 1) {
+      if (typeof b.video !== 'string' || !has(lib.videos, b.video)) return at + 'video fehlt in videos';
+      if (!isStarts(b.starts)) return at + 'starts nicht genau 16 ganze ms';
+      continue;
+    }
+    if (!Array.isArray(b.pads) || b.pads.length !== 16) return at + 'pads nicht genau 16';
+    for (let k = 0; k < 16; k++) {
+      const p = b.pads[k];
+      if (p === null) continue;
+      if (!isObj(p) || typeof p.video !== 'string' || !has(lib.videos, p.video)) return at + `Pad ${k + 1}: video fehlt in videos`;
+      if (!isInt(p.start, 0)) return at + `Pad ${k + 1}: start keine ganze ms`;
+    }
   }
   return '';
+}
+
+// format 1 -> 2 nur im Speicher, geschrieben wird beim nächsten libChange. Übrige Felder der Bank bleiben.
+function toFormat2(lib) {
+  lib.format = 2;
+  lib.banks = lib.banks.map(({ video, starts, ...b }) => ({ ...b, pads: starts.map((start) => ({ video, start })) }));
+  return lib;
 }
 
 // -> {state: ok|leer|kaputt|neuer, lib (null bei kaputt/neuer), error, text (Dateiinhalt, null wenn keine Datei)}
 function libParse(text) {
   let lib;
   try { lib = JSON.parse(text); } catch (e) { return { state: 'kaputt', lib: null, error: 'kein gültiges JSON', text }; }
-  if (isObj(lib) && typeof lib.format === 'number' && lib.format > 1) return { state: 'neuer', lib: null, error: `format ${lib.format}`, text };
+  if (isObj(lib) && typeof lib.format === 'number' && lib.format > 2) return { state: 'neuer', lib: null, error: `format ${lib.format}`, text };
   const error = libCheck(lib);
   if (error) return { state: 'kaputt', lib: null, error, text };
+  if (lib.format === 1) toFormat2(lib);
   return { state: libState(lib), lib, error: '', text };
 }
 
@@ -933,9 +919,9 @@ function libWrite(lib) {
   } catch (e) { throw libErr('writefail', clean(e.message).slice(0, 80)); }
 }
 
-// videos-Eintrag lebt nur, solange eine Bank ihn benutzt
+// videos-Eintrag lebt nur, solange ein Pad ihn benutzt
 function dropOrphans(lib) {
-  const used = new Set(lib.banks.map((b) => b.video));
+  const used = new Set(lib.banks.flatMap(padVideos));
   for (const v of Object.keys(lib.videos)) if (!used.has(v)) delete lib.videos[v];
 }
 
@@ -956,8 +942,26 @@ const LIB = {
     need(typeof video === 'string' && video !== '' && isStarts(starts));
     if (!has(lib.videos, video)) lib.videos[video] = { title: String(title || '') };
     const id = lib.nextId++;
-    lib.banks.push({ id, name: bankName(name === undefined ? lib.videos[video].title : name), video, starts: starts.slice() });
+    lib.banks.push({ id, name: bankName(name === undefined ? lib.videos[video].title : name), pads: starts.map((start) => ({ video, start })) });
     return { id };
+  },
+  // Neue Mix-Bank: 16 leere Plätze am Ende (M1)
+  newmix(lib) {
+    const id = lib.nextId++;
+    lib.banks.push({ id, name: 'Mix-Bank', pads: Array(16).fill(null) });
+    return { id };
+  },
+  // Pad kopieren (video + start) oder Platz leeren (video null). Unbekanntes Video braucht info {title, bpm?}
+  setpad(lib, { id, pad, video, start, info }) {
+    const i = bankIndex(lib, id);
+    need(isPad(pad));
+    if (video === null) { lib.banks[i].pads[pad] = null; return; }
+    need(typeof video === 'string' && video !== '' && isInt(start, 0));
+    if (!has(lib.videos, video)) {
+      need(isObj(info) && typeof info.title === 'string');
+      lib.videos[video] = videoEntry(info);
+    }
+    lib.banks[i].pads[pad] = { video, start };
   },
   rename(lib, { id, name }) {
     need(typeof name === 'string');
@@ -975,10 +979,9 @@ const LIB = {
   delete(lib, { id }) {
     const i = bankIndex(lib, id);
     const bank = lib.banks.splice(i, 1)[0];
-    const v = lib.videos[bank.video];
-    const video = { title: v.title };
-    if (has(v, 'bpm')) video.bpm = v.bpm;
-    return { removed: { bank, at: i + 1, video } };
+    const videos = {};
+    for (const v of padVideos(bank)) videos[v] = videoEntry(lib.videos[v]);
+    return { removed: { bank, at: i + 1, videos } };
   },
   move(lib, { id, to }) {
     const i = bankIndex(lib, id);
@@ -986,31 +989,34 @@ const LIB = {
     lib.banks.splice(to - 1, 0, lib.banks.splice(i, 1)[0]);
   },
   // Undo von delete: alte ID, nextId bleibt
-  restore(lib, { bank, at, video }) {
-    need(isObj(bank) && isInt(bank.id, 1) && typeof bank.name === 'string' && typeof bank.video === 'string' && bank.video !== '' && isStarts(bank.starts) && isInt(at, 1));
+  restore(lib, { bank, at, videos }) {
+    need(isObj(bank) && isInt(bank.id, 1) && typeof bank.name === 'string' && isPadList(bank.pads) && isInt(at, 1));
     if (bank.id >= lib.nextId || lib.banks.some((b) => b.id === bank.id)) throw libErr('idtaken');
-    if (!has(lib.videos, bank.video)) {
-      need(isObj(video) && typeof video.title === 'string');
-      lib.videos[bank.video] = { title: video.title };
-      if (typeof video.bpm === 'number') lib.videos[bank.video].bpm = video.bpm;
+    for (const v of padVideos(bank)) {
+      if (has(lib.videos, v)) continue;
+      need(isObj(videos) && isObj(videos[v]) && typeof videos[v].title === 'string');
+      lib.videos[v] = videoEntry(videos[v]);
     }
     const b = JSON.parse(JSON.stringify(bank));
     lib.banks.splice(Math.min(at, lib.banks.length + 1) - 1, 0, b);
   },
+  // leerer Platz -> badreq
   setstart(lib, { id, pad, ms }) {
     const i = bankIndex(lib, id);
-    need(isPad(pad) && isInt(ms, 0));
-    lib.banks[i].starts[pad] = ms;
+    need(isPad(pad) && isInt(ms, 0) && lib.banks[i].pads[pad]);
+    lib.banks[i].pads[pad].start = ms;
   },
+  // Starts der belegten Pads, bei leeren wird der Wert ignoriert
   setstarts(lib, { id, starts }) {
     const i = bankIndex(lib, id);
     need(isStarts(starts));
-    lib.banks[i].starts = starts.slice();
+    lib.banks[i].pads.forEach((p, k) => { if (p) p.start = starts[k]; });
   },
+  // tauscht ganze Pad-Einträge, auch leere
   swap(lib, { id, a, b }) {
     const i = bankIndex(lib, id);
     need(isPad(a) && isPad(b));
-    const s = lib.banks[i].starts;
+    const s = lib.banks[i].pads;
     [s[a], s[b]] = [s[b], s[a]];
   },
   // tempo und tempook aus dem Editor: bestätigtes Tempo des Videos
@@ -1105,46 +1111,80 @@ function wavHeader(dataBytes) {
   return h;
 }
 
-// aktuell = .json passt zu video und starts der Bank
+// Snippet-.json lesen -> {pads, lens, durs}. Alte Form {video, starts, lens, dur} gilt als Pads aus einem Video
+// (Mix-Spec 2.2), sie bleibt aktuell und wird nicht neu geschnitten. null = fehlt oder unlesbar.
+function readSnip(id) {
+  const j = readJson(snipJson(id));
+  if (!isObj(j) || !Array.isArray(j.lens) || j.lens.length !== 16) return null;
+  if (isPadList(j.pads)) return { pads: j.pads, lens: j.lens, durs: isObj(j.durs) ? j.durs : {} };
+  if (typeof j.video === 'string' && isStarts(j.starts)) {
+    return { pads: j.starts.map((start) => ({ video: j.video, start })), lens: j.lens, durs: typeof j.dur === 'number' ? { [j.video]: j.dur } : {} };
+  }
+  return null;
+}
+const samePad = (a, b) => (a && b ? a.video === b.video && a.start === b.start : !a && !b);
+
+// aktuell = Pads der .json gleich den Pads der Bank
 function snipCurrent(bank) {
-  const j = readJson(snipJson(bank.id));
-  return !!j && j.video === bank.video && Array.isArray(j.starts) && j.starts.join() === bank.starts.join() && fs.existsSync(snipWav(bank.id));
+  const j = readSnip(bank.id);
+  return !!j && bank.pads.every((p, i) => samePad(p, j.pads[i])) && fs.existsSync(snipWav(bank.id));
 }
 
-// Für SSE lib: banks[].snip und .wav (videos[].fail steht in videoFail)
+// Für SSE lib: banks[].snip und .wav = alle Videos der Bank im Cache (videos[].fail steht in videoFail)
 function snipStatus(bank) {
   const snip = snipCutting === bank.id ? 'cutting' : snipTimers.has(bank.id) ? 'stale'
     : snipCurrent(bank) ? 'ok' : fs.existsSync(snipJson(bank.id)) ? 'stale' : 'missing';
-  return { snip, wav: hasWav(bank.video) };
+  return { snip, wav: padVideos(bank).every(hasWav) };
 }
 
-// Quelle fürs Schneiden: die ganze WAV, sonst die Fächer der alten Snippet-Datei. Das geht nur, wenn jeder
-// Start darin vorkommt (Tauschen, Undo eines Tauschs, Duplizieren). null = keine Quelle (playonly).
-// slots[i] = [Byte-Position, Bytes] in file
-function snipSource(bank) {
-  if (hasWav(bank.video)) {
-    const w = wavInfo(cacheWav(bank.video));
-    if (w.sr !== SNIP_SR || w.channels !== 2 || w.bits !== 16) throw libErr('cutfail', 'Track nicht 44,1 kHz/16 Bit/Stereo');
-    const frames = Math.floor(w.dataSize / BPF), dur = Math.round(frames * 1000 / SNIP_SR);
-    return {
-      file: cacheWav(bank.video), dur, whole: true,
-      lens: bank.starts.map((s) => Math.max(0, Math.min(SNIP_MS, dur - s))),
-      slots: bank.starts.map((s) => {
-        const f = Math.min(frames, Math.round(s * SNIP_SR / 1000));
-        return [w.offset + f * BPF, Math.min(SLOT_BYTES, (frames - f) * BPF)];
-      }),
-    };
+// Fach mit gleichem {video, start} in einer Snippet-Datei: erst die eigene Bank, dann die übrigen der Bibliothek.
+// memo: Map bankId -> {j, w} (eine Suche liest jede Datei nur einmal). -> {id, k, j, w} oder null
+function findSlot(p, bankId, memo) {
+  const ids = [bankId, ...(libNow.lib ? libNow.lib.banks.map((b) => b.id).filter((x) => x !== bankId) : [])];
+  for (const id of ids) {
+    if (!memo.has(id)) {
+      const j = readSnip(id);
+      let w = null;
+      if (j) { try { w = wavInfo(snipWav(id)); } catch (e) { /* keine WAV */ } }
+      memo.set(id, w ? { j, w } : null);
+    }
+    const m = memo.get(id);
+    const k = m ? m.j.pads.findIndex((q) => samePad(p, q)) : -1;
+    if (k >= 0) return { id, k, ...m };
   }
-  const old = readJson(snipJson(bank.id));
-  if (!old || old.video !== bank.video || !Array.isArray(old.starts) || !Array.isArray(old.lens)) return null;
-  const from = bank.starts.map((s) => old.starts.indexOf(s));
-  if (from.some((k) => k < 0)) return null;
-  let w;
-  try { w = wavInfo(snipWav(bank.id)); } catch (e) { return null; }
-  return {
-    file: snipWav(bank.id), dur: old.dur, lens: from.map((k) => old.lens[k]),
-    slots: from.map((k) => [w.offset + k * SLOT_BYTES, Math.max(0, Math.min(SLOT_BYTES, w.dataSize - k * SLOT_BYTES))]),
-  };
+  return null;
+}
+// Gibt es für ein Pad eine Quelle zum Schneiden (ganze WAV oder ein passendes Fach)?
+const padSource = (p, bankId, memo = new Map()) => hasWav(p.video) || !!findSlot(p, bankId, memo);
+
+// Quelle pro Fach (Mix-Spec 2.2): ganze WAV des Videos, sonst ein Fach mit gleichem {video, start} in der alten
+// Snippet-Datei derselben Bank, sonst in der einer anderen Bank. Leerer Platz: Stille. null = ein Pad ohne Quelle (playonly).
+// -> {slots[i] = [Datei, Byte-Position, Bytes] | null, lens, durs, whole = Videos aus ganzer WAV}
+function snipSource(bank) {
+  const memo = new Map(), whole = new Map();
+  const lens = [], slots = [], durs = {};
+  for (const p of bank.pads) {
+    if (!p) { lens.push(0); slots.push(null); continue; }
+    if (hasWav(p.video)) {
+      if (!whole.has(p.video)) {
+        const w = wavInfo(cacheWav(p.video));
+        if (w.sr !== SNIP_SR || w.channels !== 2 || w.bits !== 16) throw libErr('cutfail', 'Track nicht 44,1 kHz/16 Bit/Stereo');
+        const frames = Math.floor(w.dataSize / BPF);
+        whole.set(p.video, { w, frames, dur: Math.round(frames * 1000 / SNIP_SR) });
+      }
+      const x = whole.get(p.video), f = Math.min(x.frames, Math.round(p.start * SNIP_SR / 1000));
+      durs[p.video] = x.dur;
+      lens.push(Math.max(0, Math.min(SNIP_MS, x.dur - p.start)));
+      slots.push([cacheWav(p.video), x.w.offset + f * BPF, Math.min(SLOT_BYTES, (x.frames - f) * BPF)]);
+      continue;
+    }
+    const s = findSlot(p, bank.id, memo);
+    if (!s) return null;
+    if (!has(durs, p.video) && typeof s.j.durs[p.video] === 'number') durs[p.video] = s.j.durs[p.video];
+    lens.push(s.j.lens[s.k]);
+    slots.push([snipWav(s.id), s.w.offset + s.k * SLOT_BYTES, Math.max(0, Math.min(SLOT_BYTES, s.w.dataSize - s.k * SLOT_BYTES))]);
+  }
+  return { slots, lens, durs, whole: [...whole.keys()] };
 }
 
 // Schneidet die Snippets einer Bank, synchron. Erst die WAV, dann die .json, beide über <id>.<pid>.tmp.
@@ -1152,29 +1192,32 @@ function snipSource(bank) {
 function cutSnippets(bank) {
   clearTimeout(snipTimers.get(bank.id));
   snipTimers.delete(bank.id);
-  const job = (phase) => libEvents.emit('job', { kind: 'cut', bankId: bank.id, video: bank.video, phase, progress: phase === 'done' ? 100 : 0, left: 0 });
+  const job = (phase) => libEvents.emit('job', { kind: 'cut', bankId: bank.id, video: padVideos(bank)[0] || '-', phase, progress: phase === 'done' ? 100 : 0, left: 0 });
   let src;
   try { src = snipSource(bank); } catch (e) { throw e.code === 'cutfail' ? e : libErr('cutfail', clean(e.message).slice(0, 80)); }
   if (!src) throw libErr('playonly');
   const tmp = path.join(SNIP_DIR, `${bank.id}.${process.pid}.tmp`);
   snipCutting = bank.id;
   job('cut');
+  const fds = new Map();
+  const fd = (f) => { if (!fds.has(f)) fds.set(f, fs.openSync(f, 'r')); return fds.get(f); };
   try {
     const out = fs.openSync(tmp, 'w');
     try {
-      const inp = fs.openSync(src.file, 'r');
-      try {
-        fs.writeSync(out, wavHeader(16 * SLOT_BYTES), 0, 44, 0);
-        const buf = Buffer.alloc(SLOT_BYTES);
-        src.slots.forEach(([at, n], i) => {
-          buf.fill(0);
-          if (n > 0) fs.readSync(inp, buf, 0, n, at);
-          fs.writeSync(out, buf, 0, SLOT_BYTES, 44 + i * SLOT_BYTES);
-        });
-      } finally { fs.closeSync(inp); }
-    } finally { fs.closeSync(out); }
+      fs.writeSync(out, wavHeader(16 * SLOT_BYTES), 0, 44, 0);
+      const buf = Buffer.alloc(SLOT_BYTES);
+      src.slots.forEach((sl, i) => {
+        buf.fill(0);
+        if (sl && sl[2] > 0) fs.readSync(fd(sl[0]), buf, 0, sl[2], sl[1]);
+        fs.writeSync(out, buf, 0, SLOT_BYTES, 44 + i * SLOT_BYTES);
+      });
+    } finally {
+      fs.closeSync(out);
+      for (const f of fds.values()) fs.closeSync(f);
+    }
     fs.renameSync(tmp, snipWav(bank.id));
-    fs.writeFileSync(tmp, JSON.stringify({ video: bank.video, starts: bank.starts, lens: src.lens, dur: src.dur }));
+    const pads = bank.pads.map((p) => (p ? { video: p.video, start: p.start } : null));
+    fs.writeFileSync(tmp, JSON.stringify({ pads, lens: src.lens, durs: src.durs }));
     fs.renameSync(tmp, snipJson(bank.id));
   } catch (e) {
     try { fs.unlinkSync(tmp); } catch (e2) { /* weg */ }
@@ -1183,19 +1226,19 @@ function cutSnippets(bank) {
   } finally {
     snipCutting = 0;
   }
-  // Analyse einmal neben die Snippets legen (Spec 2.4)
-  if (src.whole) { try { getAnalysis(bank.video, true); } catch (e) { Max.post(`YT Sampler: Analyse fehlgeschlagen: ${e.message}`); } }
+  // Analyse pro Video mit ganzer WAV einmal neben die Snippets legen (Spec 2.4)
+  for (const v of src.whole) { try { getAnalysis(v, true); } catch (e) { Max.post(`YT Sampler: Analyse fehlgeschlagen: ${e.message}`); } }
   job('done');
   libEvents.emit('status');
 }
 
 // select/banksel/bankopen: veraltete oder fehlende Snippets sofort schneiden.
-// -> {path, video, starts, lens, dur} aus der .json. Geht das Schneiden nicht, spielt die alte Datei weiter.
+// -> {path, pads, lens, durs} aus der .json. Geht das Schneiden nicht, spielt die alte Datei weiter.
 // Ohne Snippet-Datei: libErr nosnip (keine Quelle) bzw. cutfail.
 function snipEnsure(bank) {
   let err = null;
   if (!snipCurrent(bank)) { try { cutSnippets(bank); } catch (e) { err = e; } }
-  const j = readJson(snipJson(bank.id));
+  const j = readSnip(bank.id);
   if (!j || !fs.existsSync(snipWav(bank.id))) throw err && err.code !== 'playonly' ? err : libErr('nosnip');
   return { path: snipWav(bank.id), ...j };
 }
@@ -1215,7 +1258,7 @@ function snipSchedule(id) {
 function snipRefresh(video) {
   if (!libNow.lib) return;
   for (const b of libNow.lib.banks) {
-    if ((video && b.video !== video) || snipCurrent(b)) continue;
+    if ((video && !padVideos(b).includes(video)) || snipCurrent(b)) continue;
     let ok;
     try { ok = !!snipSource(b); } catch (e) { ok = true; }   // Fehler zeigt dann das Schneiden
     if (ok) snipSchedule(b.id);
@@ -1394,7 +1437,7 @@ async function edRun(e) {
 // fetchall: alle fehlenden ganzen WAVs der Bibliothek, ohne gescheiterte
 function fetchAll() {
   if (!libNow.lib) return { todo: 0 };
-  const todo = [...new Set(libNow.lib.banks.map((b) => b.video))].filter((v) => !hasWav(v) && !has(videoFail, v));
+  const todo = [...new Set(libNow.lib.banks.flatMap(padVideos))].filter((v) => !hasWav(v) && !has(videoFail, v));
   todo.forEach((v) => fetchVideo(v, 'fetchall').catch(() => { /* steht in videoFail */ }));
   return { todo: todo.length };
 }
@@ -1434,32 +1477,91 @@ async function newBank(video, by, tag) {
 // =====================================================================
 const VIDEO_RE = /^[\w-]{11}$/;
 const CMD_MAX = 65536;
-let dev = { bankId: 0, video: '-', sel: 0, starts: [], spans: [], params: null };   // letzter bankstate
+let dev = { bankId: 0, sel: 0, starts: [], spans: [], params: null };   // letzter bankstate
 let activeId = 0;
 let track = '';            // Spurname für hello
 let libBy = 'extern';      // by der letzten Bibliotheksänderung (SSE lib)
 let sending = false;       // sendBank schneidet gerade selbst
 let activeSnip = '';       // .json der aktiven Bank beim Laden (zweites Device schneidet -> neu laden)
+let loaded = { pads: [], lens: [] };   // Pads und Längen, wie zuletzt mit bank ans Device geschickt
+let anaMap = new Map();    // video -> Analyse (null = fehlt) für die Videos der geladenen Bank (Mix-Spec 2.3)
+let anaSeq = 0;            // neuere Bank bricht eine laufende Analyse ab
+const ANALYSIS_MS = 4000;  // Analysefenster pro Pad ab Start (padinfo)
 
 const libBroken = () => libErr(libNow.state === 'neuer' ? 'libnewer' : 'libbroken');
 const bankById = (id) => (libNow.lib ? libNow.lib.banks.find((b) => b.id === id) : null);
 const bankNr = (id) => (libNow.lib ? libNow.lib.banks.findIndex((b) => b.id === id) + 1 : 0);
 const readText = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return ''; } };
 
-// Bank ins Device: bankname, bank …, danach die Analyse. Ohne Snippets bankfail an [js] und libErr.
+// Bank ins Device: bankname, bank <id> <nr> <s×16> <l×16> <pfad…>, danach die Analyse pro Pad (Mix-Spec 3.3).
+// Ohne Snippets bankfail an [js] und libErr.
 function sendBank(b) {
   let s;
   sending = true;
   try { s = snipEnsure(b); } catch (e) { Max.outlet('bankfail', b.id, clean(e.text || e.message)); throw e; } finally { sending = false; }
-  const v = libNow.lib.videos[b.video];
   if (activeId !== b.id) fs.unwatchFile(snipJson(activeId), onActiveSnip);
   fs.watchFile(snipJson(b.id), { interval: 500 }, onActiveSnip);   // doppelt angemeldet zählt einmal
   activeId = b.id;
   activeSnip = readText(snipJson(b.id));
+  loaded = { pads: s.pads, lens: s.pads.map((p, i) => (p ? s.lens[i] : 0)) };
   Max.outlet('bankname', b.id, clean(b.name));
-  Max.outlet('bank', b.id, bankNr(b.id), (v && v.bpm) || 0, ...s.starts, ...s.lens, s.dur, s.video, s.path);
-  ensureAnalysis(s.video, clean(b.name)).catch((e) => status('Tonart-Analyse fehlgeschlagen: ' + clean(e.message).slice(0, 80)));
-  edDirty('beats');
+  Max.outlet('bank', b.id, bankNr(b.id), ...s.pads.map((p) => (p ? p.start : 0)), ...loaded.lens, s.path);
+  sendAnalysis(clean(b.name)).catch((e) => status('Tonart-Analyse fehlgeschlagen: ' + clean(e.message).slice(0, 80)));
+  edDirty('device'); edDirty('beats');
+}
+
+// padana <i> <bpm> <cent> <off> <beats…>: Tempo, Stimmung und Schläge des Videos von Pad i.
+// bpm: bestätigt, sonst Analyse, sonst 0. beats: Song-ms in [start − 4 Schläge, start + l + 4 Schläge],
+// off = Index des ersten gesendeten Schlags ab der ersten „1“. Leerer Platz: nichts.
+function sendPadana(i) {
+  const p = loaded.pads[i];
+  if (!p) return;
+  const a = anaMap.get(p.video) || null;
+  const b = beatsOf(p.video, a);
+  let beats = [], off = 0;
+  if (b.bpm > 0 && b.beats.length) {
+    const edge = 4 * 60000 / b.bpm, from = p.start - edge, to = p.start + loaded.lens[i] + edge;
+    const k0 = b.beats.findIndex((t) => t >= from);
+    if (k0 >= 0) {
+      beats = b.beats.slice(k0).filter((t) => t <= to);
+      off = beats.length ? k0 - b.down : 0;
+    }
+  }
+  Max.outlet('padana', i, b.bpm, a ? Math.round(a.tuning * 100) : 0, off, ...beats);
+}
+
+// Analyse pro Video der geladenen Bank: aus D/snippets, sonst Cache bzw. ganze WAV. Dann padana und padinfo
+// pro belegtem Pad, analysisready, Status.
+async function sendAnalysis(name) {
+  const seq = ++anaSeq;
+  await new Promise((r) => setImmediate(r)); // "bank" zuerst rausschicken
+  const map = new Map();
+  const vids = [...new Set(loaded.pads.filter(Boolean).map((p) => p.video))];
+  for (const v of vids) {
+    let a = readAnalysis(chromaBank(v));
+    if (!a) {
+      if (hasWav(v)) {
+        status('Analysiere Tonart …');
+        await new Promise((r) => setTimeout(r, 20));
+        if (seq !== anaSeq) return;
+      }
+      try { a = getAnalysis(v, true); } catch (e) { Max.post(`YT Sampler: Analyse fehlgeschlagen: ${e.message}`); }
+    }
+    map.set(v, a || null);
+  }
+  if (seq !== anaSeq) return;
+  anaMap = map;
+  for (let i = 0; i < 16; i++) sendPadana(i);
+  loaded.pads.forEach((p, i) => { const a = p && map.get(p.video); if (a) sendPadInfo(a, i, p.start, ANALYSIS_MS); });
+  Max.outlet('analysisready');
+  const missing = loaded.pads.filter((p) => p && !map.get(p.video)).length;
+  const a = map.get(vids[0]);
+  if (missing) status(`Analyse fehlt bei ${missing} Pads – im Editor neu schneiden`);
+  else if (vids.length === 1 && loaded.pads.every(Boolean)) {
+    const cents = Math.round(a.tuning * 100);
+    const tempoTxt = a.bpm ? ` · ${a.bpm} BPM${a.bpmConf < 0.3 ? ' (unsicher)' : ''}` : '';
+    status(`Bereit: ${name}${tempoTxt} · Stimmung ${cents >= 0 ? '+' : ''}${cents} ct`);
+  } else status(`Bereit: ${name} · Mix aus ${vids.length} Tracks`);
 }
 const trySend = (b) => { try { sendBank(b); } catch (e) { Max.post(`YT Sampler: Bank ${b.id} nicht geladen: ${e.message}`); } };
 
@@ -1473,7 +1575,10 @@ function onActiveSnip() {
 function sendLibstate() {
   Max.outlet('libstate', libNow.lib ? libNow.lib.banks.length : 0, bankNr(activeId), libNow.state);
 }
-const bpmToDevice = (v, bpm) => { const b = bankById(activeId); if (b && b.video === v) Max.outlet('bpm', v, bpm); };
+// Tempo-Korrektur im Editor: padana für alle geladenen Pads mit diesem Video noch einmal
+const bpmToDevice = (v) => { if (activeId) loaded.pads.forEach((p, i) => { if (p && p.video === v) sendPadana(i); }); };
+// Video des gewählten Pads der aktiven Bank, '-' bei leerem Platz oder ohne Bank
+const devVideo = () => { const b = bankById(activeId), p = b && b.pads[dev.sel]; return p ? p.video : '-'; };
 
 // Aktive Bank wird gleich neu geschnitten: [js] hält Anschläge zurück, bis die neuen Snippets im Buffer sind
 function busyIfStale(by) {
@@ -1490,11 +1595,11 @@ libEvents.on('job', (j) => edEmit('job', j));
 libEvents.on('msg', (m) => edEmit('msg', m));
 
 // ---------- [js] -> Node (6.2, Spec 3.0 3.2) ----------
-// bankstate <bankId> <video|-> <sel> <mode> <rev> <s×16> <w×16> <div> <rate> <tune> <warp> <quant> <vol> <voices> <base> <qdiv> <qcatch>
-Max.addHandler('bankstate', (id, video, sel, mode, rev, ...sw) => {
+// bankstate <bankId> <sel> <mode> <rev> <s×16> <w×16> <div> <rate> <tune> <warp> <quant> <vol> <voices> <base> <qdiv> <qcatch>
+Max.addHandler('bankstate', (id, sel, mode, rev, ...sw) => {
   const p = sw.slice(32, 42);
   const params = p.length === 10 ? { div: p[0], rate: p[1], mode, rev, tune: p[2], warp: p[3], quant: p[4], vol: p[5], voices: p[6], base: p[7], qdiv: p[8], qcatch: p[9] } : null;
-  dev = { bankId: Math.floor(id) || 0, video: String(video), sel, starts: sw.slice(0, 16), spans: sw.slice(16, 32), params };
+  dev = { bankId: Math.floor(id) || 0, sel, starts: sw.slice(0, 16), spans: sw.slice(16, 32), params };
   activeId = dev.bankId;
   edDirty('device'); edDirty('beats');
 });
@@ -1523,7 +1628,7 @@ Max.addHandler('bankopen', (id) => {
   const b = bankById(Math.floor(id));
   if (b) trySend(b); else Max.outlet('bankgone', Math.floor(id));
 });
-Max.addHandler('playing', (pad, from, to, dur) => edEmit('play', { pad, from, to, dur }));
+Max.addHandler('playing', (pad, from, to, dur) => edEmit('play', { pad, from, to, dur, video: (loaded.pads[pad] && loaded.pads[pad].video) || '-' }));
 Max.addHandler('playstop', (pad) => edEmit('stop', { pad }));
 Max.addHandler('trackname', (...w) => { track = w.join(' '); edDirty('hello'); });
 
@@ -1536,7 +1641,12 @@ function libBank(id) {
   if (!b) throw libErr('nobank');
   return b;
 }
-function checkWav(b) { if (!hasWav(b.video)) throw libErr('playonly'); }
+// belegtes Pad q.pad der Bank q.id, leerer Platz -> badreq
+function libPad(q) {
+  const b = libBank(q.id);
+  need(isPad(q.pad) && b.pads[q.pad]);
+  return { b, p: b.pads[q.pad] };
+}
 
 // Direkte Suche über die YouTube-Ergebnisseite (unter 1 s). Die Seite kann sich ändern: Dann bleibt der Rückfall auf yt-dlp.
 function parseSearchPage(html) {
@@ -1613,10 +1723,25 @@ const PARAMS = {
 
 // (Felder, client) -> Antwortfelder, wirft libErr
 const CMD = {
+  // fehlende WAVs aller Videos der Bank laden, das des gewählten Pads mit Vorrang, die übrigen im Hintergrund
   select(q) {
     const b = libBank(q.id);
-    if (!hasWav(b.video)) fetchVideo(b.video, 'select').catch(() => { /* steht in videoFail */ });
+    const first = b.pads[dev.sel] ? b.pads[dev.sel].video : null;
+    for (const v of padVideos(b)) if (v !== first && !hasWav(v)) fetchVideo(v, 'fetchall').catch(() => { /* steht in videoFail */ });
+    if (first && !hasWav(first)) fetchVideo(first, 'select').catch(() => { /* steht in videoFail */ });
     sendBank(b);
+  },
+  newmix(q, by) {
+    const r = libChange('newmix', {}, by);
+    trySend(bankById(r.id));
+    return r;
+  },
+  // Pad kopieren oder leeren (video null). Ohne Quelle zum Schneiden playonly, dann bleibt alles, wie es ist.
+  setpad(q, by) {
+    const b = libBank(q.id);
+    need(isPad(q.pad) && (q.video === null || (isVideo(q.video) && isInt(q.start, 0))));
+    if (q.video !== null && !padSource({ video: q.video, start: q.start }, b.id)) throw libErr('playonly');
+    libChange('setpad', { id: q.id, pad: q.pad, video: q.video, start: q.start, info: q.info }, by);
   },
   rename(q, by) {
     libChange('rename', { id: q.id, name: q.name }, by);
@@ -1636,27 +1761,26 @@ const CMD = {
     return r;
   },
   move: (q, by) => { libChange('move', { id: q.id, to: q.to }, by); },
-  restore: (q, by) => { libChange('restore', { bank: q.bank, at: q.at, video: q.video }, by); },
+  restore: (q, by) => { libChange('restore', { bank: q.bank, at: q.at, videos: q.videos }, by); },
   setstart(q, by) {
-    const b = libBank(q.id);
-    need(isPad(q.pad) && isInt(q.ms, 0));
-    checkWav(b);
+    const { p } = libPad(q);
+    need(isInt(q.ms, 0));
+    if (!hasWav(p.video)) throw libErr('playonly');
     libChange('setstart', { id: q.id, pad: q.pad, ms: q.ms }, by);
   },
+  // ohne WAV nur, wenn jedes neue {video, start} als Fach in einer Snippet-Datei liegt
   setstarts(q, by) {
     const b = libBank(q.id);
     need(isStarts(q.starts));
-    if (!hasWav(b.video)) {
-      const j = readJson(snipJson(b.id));
-      if (!j || !Array.isArray(j.starts) || !q.starts.every((s) => j.starts.includes(s))) throw libErr('playonly');
-    }
+    const memo = new Map();
+    if (!b.pads.every((p, k) => !p || padSource({ video: p.video, start: q.starts[k] }, b.id, memo))) throw libErr('playonly');
     libChange('setstarts', { id: q.id, starts: q.starts }, by);
   },
   swap: (q, by) => { libChange('swap', { id: q.id, a: q.a, b: q.b }, by); },
+  // würfelt im Video des Pads, belegt sind die Starts der Pads mit demselben Video (M3)
   roll(q, by) {
-    const b = libBank(q.id);
-    need(isPad(q.pad));
-    const ms = rollStart(b.video, b.starts);
+    const { b, p } = libPad(q);
+    const ms = rollStart(p.video, b.pads.filter((x) => x && x.video === p.video).map((x) => x.start));
     libChange('setstart', { id: q.id, pad: q.pad, ms }, by);
     return { ms };
   },
@@ -1677,8 +1801,8 @@ const CMD = {
     });
   },
   tempo(q, by) {
-    const r = libChange('tempo', { video: q.video, bpm: q.bpm }, by);
-    bpmToDevice(q.video, r.bpm);
+    libChange('tempo', { video: q.video, bpm: q.bpm }, by);
+    bpmToDevice(q.video);
   },
   tempook(q, by) {
     if (!libNow.lib) throw libBroken();
@@ -1686,7 +1810,7 @@ const CMD = {
     const a = getAnalysis(q.video, true);
     if (!a || !(a.bpm > 0)) throw libErr('notempo');
     const r = libChange('tempo', { video: q.video, bpm: a.bpm }, by);
-    bpmToDevice(q.video, r.bpm);
+    bpmToDevice(q.video);
     return r;
   },
   fetch(q) {
@@ -1739,23 +1863,32 @@ const ED = {
     const L = libNow.lib;
     const m = { rev: L ? L.rev : 0, by: libBy, state: libNow.state, cache: cacheSize(), banks: [], videos: {} };
     if (!L) { m.error = `${ERR[libNow.state === 'neuer' ? 'libnewer' : 'libbroken']}: ${libNow.error}`; return m; }
-    m.banks = L.banks.map((b) => ({ id: b.id, name: b.name, video: b.video, starts: b.starts, ...snipStatus(b) }));
+    m.banks = L.banks.map((b) => ({ id: b.id, name: b.name, pads: b.pads, mix: isMix(b), ...snipStatus(b) }));
+    // Songdauer: aus dem Cache, sonst aus einer Snippet-.json
+    const durs = {};
+    for (const b of L.banks) {
+      const j = readSnip(b.id);
+      if (j) for (const v of Object.keys(j.durs)) if (!has(durs, v) && typeof j.durs[v] === 'number') durs[v] = j.durs[v];
+    }
     for (const v of Object.keys(L.videos)) {
       const e = { title: L.videos[v].title };
       if (has(L.videos[v], 'bpm')) e.bpm = L.videos[v].bpm;
       if (has(videoFail, v)) e.fail = videoFail[v];
+      e.wav = hasWav(v);
+      if (e.wav) { try { e.dur = Math.round(wavDurationMs(cacheWav(v))); } catch (err) { /* unlesbar */ } }
+      if (!has(e, 'dur') && has(durs, v)) e.dur = durs[v];
       m.videos[v] = e;
     }
     return m;
   },
-  device: () => ({ bankId: dev.bankId, nr: bankNr(dev.bankId), video: dev.video, sel: dev.sel, starts: dev.starts, spans: dev.spans, params: dev.params }),
+  device: () => ({ bankId: dev.bankId, nr: bankNr(dev.bankId), video: devVideo(), sel: dev.sel, starts: dev.starts, spans: dev.spans, params: dev.params }),
   cache: () => cacheSize(),
-  // Track der aktiven Bank
+  // Track des gewählten Pads (device.video)
   beats() {
-    const b = bankById(activeId), v = b ? b.video : dev.video;
-    if (!v || v === '-') return null;
+    const v = devVideo();
+    if (v === '-') return null;
     let a = null;
-    try { a = getAnalysis(v, !!b); } catch (e) { /* ohne Analyse keine Beats */ }
+    try { a = getAnalysis(v, true); } catch (e) { /* ohne Analyse keine Beats */ }
     return beatsOf(v, a);
   },
 };
@@ -1896,8 +2029,8 @@ Max.outlet('needsession');
 // Für tools/tests/ (unter Max ohne Wirkung)
 module.exports = {
   errMsg, DATA, LOCAL, CACHE, SESSIONS, LIB_FILE, LIB_LOCK, BACKUP_DIR, ERR, LIB, libErr, libParse, libRead, libChange, libBackup, libEvents, get libNow() { return libNow; },
-  AN, SNIP_DIR, SNIP_MS, computeAnalysis, tempoFromOnset, saveAnalysis, readAnalysis, getAnalysis, ensureAnalysis, trackBeats, silentRanges,
-  hasWav, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, cacheSize, videoFail,
-  beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, newBank, get analysis() { return analysis; },
+  AN, SNIP_DIR, SNIP_MS, computeAnalysis, tempoFromOnset, saveAnalysis, readAnalysis, getAnalysis, trackBeats, silentRanges,
+  hasWav, readSnip, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, cacheSize, videoFail,
+  beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, newBank, get anaMap() { return anaMap; },
   parseSearchPage, runCmd, peaks, get webPort() { return webPort; }, get activeId() { return activeId; },
 };

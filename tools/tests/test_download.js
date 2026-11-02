@@ -79,7 +79,7 @@ t('newbank parallel: eigene job-Zeile pro tag, vierte wartet sichtbar, Bänke in
   await node.fetchVideo(V2, 'fetch');   // V2 liegt schon im Cache und wäre sofort fertig
   const ids = await Promise.all([V1, V2, V3, V4, V5].map((v, i) => node.newBank(v, 'c', 't' + i)));
   const banks = node.libNow.lib.banks;
-  assert.deepStrictEqual(banks.map((b) => b.video), [V1, V2, V3, V4, V5]);
+  assert.deepStrictEqual(banks.map((b) => b.pads[0].video), [V1, V2, V3, V4, V5]);
   assert.deepStrictEqual(banks.map((b) => b.id), ids);
   assert.ok(maxRunning(log().slice(2)) <= 3, log().join(', '));
   const nb = events.filter(([ev, d]) => ev === 'job' && d.kind === 'newbank').map(([, d]) => d);
@@ -132,8 +132,10 @@ t('newbank: laden, würfeln, Bank am Ende mit Titel, Snippets geschnitten, Forts
   assert.strictEqual(bank.id, id);
   assert.strictEqual(bank.name, `Titel; ${V}`);
   assert.strictEqual(lib.videos[V].title, `Titel; ${V}`);
-  assert.deepStrictEqual(bank.starts, [...bank.starts].sort((x, y) => x - y));
-  assert.strictEqual(new Set(bank.starts).size, 16);
+  const starts = bank.pads.map((p) => p.start);
+  assert.ok(bank.pads.every((p) => p.video === V));
+  assert.deepStrictEqual(starts, [...starts].sort((x, y) => x - y));
+  assert.strictEqual(new Set(starts).size, 16);
   assert.ok(node.snipCurrent(bank));
   assert.ok(fs.existsSync(path.join(node.SNIP_DIR, `${V}.chroma`)));
   const phases = events.filter(([ev, d]) => ev === 'job' && d.kind === 'newbank').map(([, d]) => d.phase);

@@ -1,8 +1,8 @@
-// Analyse (Spec 2.4) und Würfeln (Spec 3.1): node tools/tests/test_analysis.js
+// Analyse (Spec 2.4; pro Pad: Mix-Spec 2.3, 3.3) und Würfeln (Spec 3.1): node tools/tests/test_analysis.js
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { tempHome, loadNode, t, run } = require('./harness');
+const { tempHome, loadNode, t, run, sleep } = require('./harness');
 const { SR, beatWav, writeWav, signalWav } = require('./wav');
 
 const V = 'BBBBBBBBBBB';
@@ -19,13 +19,19 @@ function setup() {
 }
 // Abstand zum nächsten Rasterpunkt (Beats liegen LEAD ms vor dem Einsatz)
 const near = (t, grid) => { const r = ((t + LEAD) % grid + grid) % grid; return Math.min(r, grid - r); };
-// Was das Device nach ensureAnalysis und beattrack bekommt
-async function deviceOut(node, max) {
+const mod = (x, n) => ((x % n) + n) % n;
+const until = async (fn, what, ms = 30000) => { const t0 = Date.now(); while (!fn()) { if (Date.now() - t0 > ms) throw new Error('Zeit um: ' + what); await sleep(10); } };
+const ST = Array.from({ length: 16 }, (_, i) => i * 1000);
+const mkBank = (node, v, starts = ST) => node.libChange('create', { video: v, title: 'T', starts }, 't').id;
+// Was das Device beim Laden der Bank bekommt (bankopen), bis analysisready. Ohne status.
+async function deviceOut(node, max, id) {
   max.out.length = 0;
-  await node.ensureAnalysis(V, 'Titel');
-  max.handlers.beattrack(120);
+  max.handlers.bankopen(id);
+  await until(() => max.out.some((m) => m[0] === 'analysisready'), 'analysisready');
   return max.out.filter((m) => m[0] !== 'status');
 }
+const padana = (out) => out.filter((m) => m[0] === 'padana').map((m) => ({ i: m[1], bpm: m[2], cent: m[3], off: m[4], beats: m.slice(5) }));
+const statusOf = (max) => max.out.filter((m) => m[0] === 'status' && !/yt-dlp/.test(m[1])).map((m) => m[1]);
 
 t('Tempo, Beats und „1“ aus erzeugter WAV, Beats gültig', () => {
   const { node, done } = setup();
@@ -41,37 +47,89 @@ t('Tempo, Beats und „1“ aus erzeugter WAV, Beats gültig', () => {
   done();
 });
 
-t('Ergebnis aus dem Bank-Ordner gleich wie aus der WAV, ohne ganze WAV; kein silence', async () => {
+t('Ergebnis aus dem Bank-Ordner gleich wie aus der WAV, ohne ganze WAV; kein silence; Status Track-Bank', async () => {
   const { node, max, wav, done } = setup();
-  const fromCache = await deviceOut(node, max);
-  assert.deepStrictEqual(fromCache.map((m) => m[0]), ['tuning', 'tempo', 'analysisready', 'beatsclear', 'beatsadd', 'beatsdone']);
-  const { id } = node.libChange('create', { video: V, title: 'T', starts: Array.from({ length: 16 }, (_, i) => i * 1000) }, 't');
-  node.cutSnippets(node.libNow.lib.banks.find((x) => x.id === id));
+  const id = mkBank(node, V);
+  const fromCache = await deviceOut(node, max, id);
+  const sel = fromCache.map((m) => m[0]);
+  assert.deepStrictEqual(sel, ['bankname', 'bank', ...Array(16).fill('padana'), ...Array(16).fill('padinfo'), 'analysisready']);
+  assert.match(statusOf(max).pop(), /^Bereit: T · 12\d(\.\d)? BPM · Stimmung [+-]\d+ ct$/);
   fs.unlinkSync(wav);
   fs.unlinkSync(path.join(node.CACHE, `${V}.chroma`));
-  const fromBank = await deviceOut(node, max);
+  const fromBank = await deviceOut(node, max, id);
   assert.deepStrictEqual(fromBank, fromCache);
-  assert.strictEqual(node.analysis.id, V);
+  assert.ok(node.anaMap.get(V));
   done();
 });
 
-t('Analyse fehlt ohne WAV: Status, keine Analyse-Nachrichten', async () => {
+t('Analyse fehlt ohne WAV: padana ohne Tempo und Schläge, analysisready, Status', async () => {
   const { node, max, wav, done } = setup();
+  const id = mkBank(node, V);
+  node.cutSnippets(node.libNow.lib.banks[0]);
   fs.unlinkSync(wav);
-  max.out.length = 0;
-  await node.ensureAnalysis(V, 'Titel');
-  // ohne yt-dlp im Temp-HOME meldet der Start das per status: hier egal
-  const out = max.out.filter((m) => !(m[0] === 'status' && /yt-dlp/.test(m[1])));
-  assert.deepStrictEqual(out, [['status', 'Analyse fehlt – Bank im Editor neu schneiden']]);
-  assert.strictEqual(node.analysis, null);
+  for (const f of [path.join(node.CACHE, `${V}.chroma`), path.join(node.SNIP_DIR, `${V}.chroma`)]) fs.unlinkSync(f);
+  const out = await deviceOut(node, max, id);
+  assert.deepStrictEqual(padana(out), ST.map((_, i) => ({ i, bpm: 0, cent: 0, off: 0, beats: [] })));
+  assert.ok(!out.some((m) => m[0] === 'padinfo'));
+  assert.deepStrictEqual(statusOf(max), ['Analyse fehlt bei 16 Pads – im Editor neu schneiden']);
+  assert.strictEqual(node.anaMap.get(V), null);
+  // bestätigtes Tempo: Warp geht weiter
+  node.libChange('tempo', { video: V, bpm: 120 }, 't');
+  assert.ok(padana(await deviceOut(node, max, id)).every((p) => p.bpm === 120 && p.beats.length === 0));
   done();
 });
 
 t('Analyse fehlt in D, WAV da: neu rechnen und ablegen', async () => {
   const { node, max, done } = setup();
-  await node.ensureAnalysis(V, 'Titel');
+  const id = mkBank(node, V);
+  node.cutSnippets(node.libNow.lib.banks[0]);
+  fs.unlinkSync(path.join(node.SNIP_DIR, `${V}.chroma`));
+  const out = await deviceOut(node, max, id);
   assert.ok(fs.existsSync(path.join(node.SNIP_DIR, `${V}.chroma`)));
-  assert.ok(max.out.some((m) => m[0] === 'analysisready'));
+  assert.ok(padana(out).every((p) => p.bpm > 0));
+  done();
+});
+
+t('padana pro Pad für zwei Videos: bpm, cent, Fenster ± 4 Schläge, off auf die „1“; Tempo-Korrektur nur für Pads dieses Videos', async () => {
+  const { node, max, done } = setup();
+  const X = 'XXXXXXXXXXX';
+  beatWav(path.join(node.CACHE, `${X}.wav`), 60, 100);   // 100 BPM: Schlag 600 ms, Takt 2400 ms
+  mkBank(node, V);
+  const { id } = node.libChange('newmix', {}, 't');
+  node.libChange('setpad', { id, pad: 0, video: V, start: 8000 }, 't');
+  node.libChange('setpad', { id, pad: 1, video: X, start: 6000, info: { title: 'X' } }, 't');
+  node.libChange('setpad', { id, pad: 3, video: X, start: 50000 }, 't');   // nur 10 s bis zum Ende
+  const out = await deviceOut(node, max, id);
+  assert.deepStrictEqual(out[1], ['bank', id, 2, 8000, 6000, 0, 50000, ...Array(12).fill(0), 16000, 16000, 0, 10000, ...Array(12).fill(0), path.join(node.SNIP_DIR, `${id}.wav`)]);
+  const pa = padana(out);
+  assert.deepStrictEqual(pa.map((p) => p.i), [0, 1, 3], 'leere Plätze: kein padana');
+  assert.deepStrictEqual(out.filter((m) => m[0] === 'padinfo').map((m) => m[1]), [0, 1, 3]);
+  const [p0, p1, p3] = pa;
+  assert.ok(Math.abs(p0.bpm - 120) < 1 && Math.abs(p1.bpm - 100) < 1, `bpm ${p0.bpm} ${p1.bpm}`);
+  assert.strictEqual(p0.cent, Math.round(node.anaMap.get(V).tuning * 100));
+  assert.strictEqual(p1.cent, Math.round(node.anaMap.get(X).tuning * 100));
+  for (const [p, start, len, beat] of [[p0, 8000, 16000, 500], [p1, 6000, 16000, 600], [p3, 50000, 10000, 600]]) {
+    const from = start - 4 * 60000 / p.bpm, to = start + len + 4 * 60000 / p.bpm;
+    assert.ok(p.beats.every((x) => x >= from && x <= to), `Pad ${p.i} im Fenster`);
+    assert.ok(p.beats[0] - from < beat + 30 && Math.min(to, p.i === 3 ? 60000 : to) - p.beats[p.beats.length - 1] < beat + 30, `Pad ${p.i} Fenster voll`);   // Pad 4 endet mit dem Track
+    assert.ok(p.beats.length < 200);
+    // Takt-Einsen nach off liegen auf den Takten der Quelle (Rand nach der Stille von V ausgenommen)
+    const bar = 4 * beat;
+    const ones = p.beats.filter((x, j) => mod(p.off + j, 4) === 0 && (p.i || x < SIL[0] * 1000 - 500));
+    assert.ok(ones.length >= 3 && ones.every((x) => near(x, bar) < 30), `Pad ${p.i}: Einsen ${ones}`);
+  }
+  assert.match(statusOf(max).pop(), /^Bereit: Mix-Bank · Mix aus 2 Tracks$/);
+
+  // Tempo-Korrektur: padana nur für Pads mit X
+  max.out.length = 0;
+  await node.runCmd({ cmd: 'tempo', video: X, bpm: 101 });
+  const again = padana(max.out);
+  assert.deepStrictEqual(again.map((p) => [p.i, p.bpm]), [[1, 101], [3, 101]]);
+  assert.ok(!max.out.some((m) => m[0] === 'bpm'), 'bpm <video> <bpm> gibt es nicht mehr');
+  max.out.length = 0;
+  await node.runCmd({ cmd: 'tempook', video: V });
+  assert.deepStrictEqual(padana(max.out).map((p) => p.i), [0]);
+  for (const h of ['beattrack', 'analyzeall']) assert.ok(!(h in max.handlers), h);
   done();
 });
 
@@ -127,12 +185,12 @@ t('Tempo aus der Einsatzkurve neu beim Lesen: alte Konfidenz im Kopf zählt nich
 // Tonart-Konfidenz (padinfo): tonal über 0,5, Drums und Rauschen darunter; dichter Mix mit Flatness ~0,46 bleibt tonal
 t('Tonart-Konfidenz: Akkorde über 0,5 mit richtiger Tonart, Drums/Rauschen nahe 0', async () => {
   const { node, max, done } = setup();
-  const info = async (id, name, ...args) => {
-    if (name) signalWav(path.join(node.CACHE, `${id}.wav`), name, 30, ...args);
-    await node.ensureAnalysis(id, 'T');
-    max.out.length = 0;
-    max.handlers.analyzeall(2000, 3000, 12000, id === V ? 60000 : 21000);   // V ist von 20–45 s still
-    return max.out.filter((m) => m[0] === 'padinfo').map((m) => ({ conf: m[2], tonic: m[3], minor: m[4] }));
+  // padinfo der Pads 1–3 (Fenster 4 s ab Start), über eine Bank des Videos
+  const info = async (v, name, ...args) => {
+    if (name) signalWav(path.join(node.CACHE, `${v}.wav`), name, 30, ...args);
+    const st = [3000, 12000, v === V ? 60000 : 21000, ...Array(13).fill(0)];   // V ist von 20–45 s still
+    const out = await deviceOut(node, max, mkBank(node, v, st));
+    return out.filter((m) => m[0] === 'padinfo' && m[1] < 3).map((m) => ({ conf: m[2], tonic: m[3], minor: m[4] }));
   };
   for (const p of await info(V)) assert.ok(p.conf > 0.5 && p.tonic === 9 && p.minor === 1, `a-Moll ${JSON.stringify(p)}`);
   for (const p of await info('PPPPPPPPPPP', 'pad')) assert.ok(p.conf > 0.5, `Flächen ${p.conf}`);

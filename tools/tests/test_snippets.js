@@ -1,11 +1,11 @@
-// Snippets (Spec 2.3, 2.5): node tools/tests/test_snippets.js
+// Snippets (Spec 2.3, 2.5; Mix-Spec 2.2): node tools/tests/test_snippets.js
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { tempHome, loadNode, t, run, sleep } = require('./harness');
 const { SR, rampWav, rampFrame } = require('./wav');
 
-const V = 'VVVVVVVVVVV';
+const V = 'VVVVVVVVVVV', W = 'WWWWWWWWWWW';
 const DUR = 40000;                 // Track 40 s
 const SLOT = 16000 * SR / 1000 * 4;
 // Pad 16 startet 5 s vor dem Ende -> kürzeres Snippet
@@ -23,6 +23,9 @@ function setup() {
 const snipBuf = (node, id) => fs.readFileSync(path.join(node.SNIP_DIR, `${id}.wav`));
 // erster Frame von Fach i -> Quell-Frame
 const slotFrame = (buf, i, k = 0) => rampFrame(buf, 44 + i * SLOT + k * 4);
+const PADS = (v, st) => st.map((start) => ({ video: v, start }));
+const snipJ = (node, id) => JSON.parse(fs.readFileSync(path.join(node.SNIP_DIR, `${id}.json`), 'utf8'));
+const silent = (buf, i) => buf.subarray(44 + i * SLOT, 44 + (i + 1) * SLOT).every((b) => b === 0);
 
 t('Schneiden aus der ganzen WAV: Inhalt pro Fach, .json mit lens und dur', () => {
   const { node, id, bank, done } = setup();
@@ -36,8 +39,8 @@ t('Schneiden aus der ganzen WAV: Inhalt pro Fach, .json mit lens und dur', () =>
     assert.strictEqual(slotFrame(buf, i), Math.round(STARTS[i] * SR / 1000), `Fach ${i}`);
     assert.strictEqual(slotFrame(buf, i, 1000), Math.round(STARTS[i] * SR / 1000) + 1000, `Fach ${i} +1000`);
   }
-  const j = JSON.parse(fs.readFileSync(path.join(node.SNIP_DIR, `${id}.json`), 'utf8'));
-  assert.deepStrictEqual(j, { video: V, starts: STARTS, lens: STARTS.map((s) => Math.min(16000, DUR - s)), dur: DUR });
+  const j = snipJ(node, id);
+  assert.deepStrictEqual(j, { pads: PADS(V, STARTS), lens: STARTS.map((s) => Math.min(16000, DUR - s)), durs: { [V]: DUR } });
   assert.ok(node.snipCurrent(bank()));
   assert.deepStrictEqual(node.snipStatus(bank()), { snip: 'ok', wav: true });
   assert.ok(!fs.readdirSync(node.SNIP_DIR).some((n) => n.endsWith('.tmp')));
@@ -78,8 +81,8 @@ t('swap ohne WAV: Fächer aus der alten Datei, Undo des Tauschs auch', () => {
   assert.strictEqual(slotFrame(buf, 0), Math.round(STARTS[15] * SR / 1000));
   assert.strictEqual(slotFrame(buf, 15), 0);
   assert.ok(buf.subarray(44 + 5000 * SR / 1000 * 4, 44 + SLOT).every((b) => b === 0), 'Stille wandert mit');
-  const j = JSON.parse(fs.readFileSync(path.join(node.SNIP_DIR, `${id}.json`), 'utf8'));
-  assert.deepStrictEqual([j.lens[0], j.lens[15], j.dur], [5000, 16000, DUR]);
+  const j = snipJ(node, id);
+  assert.deepStrictEqual([j.lens[0], j.lens[15], j.durs[V]], [5000, 16000, DUR]);
   node.libChange('swap', { id, a: 0, b: 15 }, 'test');
   node.cutSnippets(bank());
   buf = snipBuf(node, id);
@@ -107,7 +110,7 @@ t('Start setzen ohne WAV: playonly, snipEnsure spielt die alte Datei weiter', ()
   assert.throws(() => node.cutSnippets(bank()), (e) => e.code === 'playonly' && e.text === 'Track fehlt – nur spielbar');
   assert.throws(() => node.rollStart(V, STARTS), (e) => e.code === 'playonly');
   const r = node.snipEnsure(bank());
-  assert.deepStrictEqual(r.starts, STARTS);
+  assert.deepStrictEqual(r.pads, PADS(V, STARTS));
   assert.ok(r.path.endsWith(`snippets/${id}.wav`));
   done();
 });
@@ -116,11 +119,82 @@ t('ohne Snippets und ohne WAV: nosnip; mit WAV schneidet snipEnsure sofort', () 
   const { node, id, bank, done } = setup();
   assert.deepStrictEqual(node.snipStatus(bank()), { snip: 'stale', wav: true });   // Entprell-Timer läuft
   const r = node.snipEnsure(bank());
-  assert.deepStrictEqual([r.dur, r.lens[15], r.video], [DUR, 5000, V]);
+  assert.deepStrictEqual([r.durs[V], r.lens[15], r.pads[15].video], [DUR, 5000, V]);
   fs.unlinkSync(path.join(node.CACHE, `${V}.wav`));
   for (const n of [`${id}.wav`, `${id}.json`]) fs.unlinkSync(path.join(node.SNIP_DIR, n));
   assert.deepStrictEqual(node.snipStatus(bank()), { snip: 'missing', wav: false });
   assert.throws(() => node.snipEnsure(bank()), (e) => e.code === 'nosnip');
+  done();
+});
+
+t('alte .json (video, starts, dur) gilt als aktuell: kein Neuschnitt, auch ohne WAV', () => {
+  const { node, id, bank, done } = setup();
+  node.cutSnippets(bank());
+  const f = path.join(node.SNIP_DIR, `${id}.json`);
+  const lens = snipJ(node, id).lens;
+  fs.writeFileSync(f, JSON.stringify({ video: V, starts: STARTS, lens, dur: DUR }));
+  fs.unlinkSync(path.join(node.CACHE, `${V}.wav`));
+  assert.ok(node.snipCurrent(bank()));
+  assert.deepStrictEqual(node.readSnip(id), { pads: PADS(V, STARTS), lens, durs: { [V]: DUR } });
+  const t0 = fs.statSync(path.join(node.SNIP_DIR, `${id}.wav`)).mtimeMs;
+  const r = node.snipEnsure(bank());
+  assert.deepStrictEqual([r.pads[3], r.lens[15], r.durs[V]], [{ video: V, start: 3333 }, 5000, DUR]);
+  assert.strictEqual(fs.statSync(path.join(node.SNIP_DIR, `${id}.wav`)).mtimeMs, t0);
+  assert.ok(fs.readFileSync(f, 'utf8').includes('"starts"'), 'Datei unverändert');
+  done();
+});
+
+t('Mix aus zwei WAVs, leerer Platz still mit lens 0, durs pro Video', () => {
+  const { node, done } = setup();
+  rampWav(path.join(node.CACHE, `${W}.wav`), 20);   // W: 20 s
+  const { id } = node.libChange('newmix', {}, 'test');
+  const pads = [{ video: V, start: 1000 }, { video: W, start: 2000 }, null, { video: W, start: 10000 }];
+  pads.forEach((p, pad) => { if (p) node.libChange('setpad', { id, pad, ...p, info: { title: 'W' } }, 'test'); });
+  const mix = node.libNow.lib.banks.find((b) => b.id === id);
+  node.cutSnippets(mix);
+  const buf = snipBuf(node, id);
+  assert.strictEqual(slotFrame(buf, 0), Math.round(1000 * SR / 1000));
+  assert.strictEqual(slotFrame(buf, 1), Math.round(2000 * SR / 1000));
+  assert.strictEqual(slotFrame(buf, 3, 500), Math.round(10000 * SR / 1000) + 500);
+  for (const i of [2, 4, 15]) assert.ok(silent(buf, i), `Fach ${i} still`);
+  const j = snipJ(node, id);
+  assert.deepStrictEqual(j.pads, [...pads, ...Array(12).fill(null)]);
+  assert.deepStrictEqual(j.lens, [16000, 16000, 0, 10000, ...Array(12).fill(0)]);
+  assert.deepStrictEqual(j.durs, { [V]: DUR, [W]: 20000 });
+  assert.ok(node.snipCurrent(mix));
+  assert.deepStrictEqual(node.snipStatus(mix), { snip: 'ok', wav: true });
+  assert.ok(fs.existsSync(path.join(node.SNIP_DIR, `${W}.chroma`)), 'Analyse pro Video abgelegt');
+  fs.unlinkSync(path.join(node.CACHE, `${W}.wav`));
+  assert.strictEqual(node.snipStatus(mix).wav, false, 'ein Video fehlt -> wav false');
+  done();
+});
+
+t('Quelle aus einer anderen Bank ohne WAV; leeren geht ohne Quelle; keine Quelle -> playonly', () => {
+  const { node, id, bank, done } = setup();
+  node.cutSnippets(bank());
+  fs.unlinkSync(path.join(node.CACHE, `${V}.wav`));
+  const { id: mid } = node.libChange('newmix', {}, 'test');
+  const mix = () => node.libNow.lib.banks.find((b) => b.id === mid);
+  node.cutSnippets(mix());
+  assert.ok(silent(snipBuf(node, mid), 0));
+  node.libChange('setpad', { id: mid, pad: 7, video: V, start: STARTS[15] }, 'test');
+  node.libChange('setpad', { id: mid, pad: 0, video: V, start: STARTS[3] }, 'test');
+  node.cutSnippets(mix());
+  let buf = snipBuf(node, mid);
+  assert.strictEqual(slotFrame(buf, 7), Math.round(STARTS[15] * SR / 1000));
+  assert.strictEqual(slotFrame(buf, 0, 100), Math.round(STARTS[3] * SR / 1000) + 100);
+  let j = snipJ(node, mid);
+  assert.deepStrictEqual([j.lens[7], j.lens[0], j.lens[1], j.durs], [5000, 16000, 0, { [V]: DUR }]);
+  // Platz leeren ohne WAV: Fach wird still
+  node.libChange('setpad', { id: mid, pad: 0, video: null }, 'test');
+  node.cutSnippets(mix());
+  assert.ok(silent(snipBuf(node, mid), 0));
+  // Start ohne passendes Fach irgendwo: playonly, alte Datei bleibt
+  node.libChange('setpad', { id: mid, pad: 1, video: V, start: 4444 }, 'test');
+  assert.throws(() => node.cutSnippets(mix()), (e) => e.code === 'playonly');
+  const r = node.snipEnsure(mix());
+  assert.deepStrictEqual([r.pads[0], r.pads[1], r.pads[7]], [null, null, { video: V, start: STARTS[15] }]);
+  assert.ok(id !== mid);
   done();
 });
 
@@ -148,7 +222,7 @@ t('Änderung von außen schneidet nicht', async () => {
   const { node, bank, done } = setup();
   node.cutSnippets(bank());
   const lib = JSON.parse(fs.readFileSync(node.LIB_FILE, 'utf8'));
-  lib.banks[0].starts[0] = 50; lib.rev++;
+  lib.banks[0].pads[0].start = 50; lib.rev++;
   fs.writeFileSync(node.LIB_FILE, JSON.stringify(lib));
   await sleep(1300);
   assert.strictEqual(node.libNow.lib.rev, lib.rev);
