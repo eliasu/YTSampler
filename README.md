@@ -57,7 +57,7 @@ Alle Regler und Buttons sind `live.*`-Objekte: MIDI-Map-Modus (Cmd+M) funktionie
 
 ## Bänke und Bibliothek
 
-Eine **Bank** sind 16 Plätze. Jedes Pad bringt seinen Track und seinen Startpunkt mit, ein Platz darf leer sein. Kommen alle 16 Pads aus einem Track, ist es eine **Track-Bank**, sonst eine **Mix-Bank** (in der Liste mit dem Zeichen „Mix“). Das Device spielt beide gleich: Tempo, Stimmung, Raster und Warp gelten pro Pad, aus dem Track des Pads. Leere Plätze sind stumm und am Device dunkel ohne Nummer. Die Slice-Länge kommt immer von den Reglern am Device. Alle Bänke zusammen sind die **Bibliothek**, geordnet und für alle Live-Sets gleich. Die Banknummer ist der Platz in der Liste und ändert sich beim Umsortieren.
+Eine **Bank** sind 16 Plätze. Jedes Pad bringt seinen Track und seinen Startpunkt mit, ein Platz darf leer sein. Eine Bank kann Pads aus einem oder mehreren Tracks haben, es gibt dafür keine zwei Arten. In der Liste steht unter dem Namen bei einem Track „Titel · BPM“, bei mehreren „n Tracks“, bei einer leeren Bank „leer“. Tempo, Stimmung, Raster und Warp gelten pro Pad, aus dem Track des Pads. Leere Plätze sind stumm und am Device dunkel ohne Nummer. Die Slice-Länge kommt immer von den Reglern am Device. Alle Bänke zusammen sind die **Bibliothek**, geordnet und für alle Live-Sets gleich. Die Banknummer ist der Platz in der Liste und ändert sich beim Umsortieren.
 
 Pro Bank liegen die 16 Pads als **Snippets** à 16 s in einer eigenen Datei. Auf der Bühne lädt das Device nur diese Datei: kein Internet, kein Warten, Bankwechsel klickfrei. Mehr als 16 s spielt ein Pad nie, auch nicht im Hold-Modus.
 
@@ -67,20 +67,23 @@ Solange das Device läuft: Button **Editor** im Device drücken, oder **http://l
 
 | Aktion | Wie |
 |---|---|
-| Video suchen, neue Bank | „Video suchen“ oder ⌘K, Begriff oder YouTube-URL. Treffer anklicken oder auf die Pads ziehen: Track laden, 16 Starts würfeln, Bank am Ende anlegen, sie wird aktiv. |
+| Neue Bank | „Neue Bank“ im Listenfuß: Bank mit 16 leeren Plätzen am Ende, sie wird aktiv |
+| Track aus YouTube aufs Pad | „Video suchen“ oder ⌘K, Begriff oder YouTube-URL. Treffer auf ein Pad ziehen oder anklicken (kommt auf das gewählte Pad). Ein belegtes Pad wird überschrieben. Die Stelle im Track wird gewürfelt (Taktanfang, keine Stille, kein Start doppelt). Danach anspielen, würfeln oder den Start ziehen. |
+| leere Plätze füllen | Knopf „Leere Plätze füllen“ am Suchtreffer: alle leeren Plätze der Bank bekommen zufällige Stellen aus diesem Track |
+| Ladezustand | Solange der Track lädt (bis 3 gleichzeitig, der Rest wartet), zeigt das Pad „wartet“ bzw. „lädt n %“. Danach wird geschnitten und das Device lädt die Bank neu. |
 | Bank wählen | Klick in der Liste, ◀ ▶ oder ↑/↓ |
 | umbenennen, duplizieren, löschen | Icons an der Zeile, umbenennen auch per Doppelklick. Löschen fragt nicht, dafür 5 s „Rückgängig“. |
 | verschieben | Zeile in der Liste ziehen |
 | Start setzen | Marker in der Waveform ziehen. Rastet auf Schläge, mit Alt frei. |
 | neues Snippet | Würfel am Pad oder „Neues Snippet“ |
 | Pads tauschen | Pad auf Pad ziehen (auch mit leeren Plätzen) |
-| Neue Mix-Bank | „Neue Mix-Bank“ im Listenfuß: Bank mit 16 leeren Plätzen am Ende, sie wird aktiv |
-| Pad aus einer anderen Bank | **Quellleiste** unter den Pads (einklappbar): Bank wählen, ihre 16 Pads erscheinen, eins auf einen Platz ziehen. Kopiert Track und Start, spätere Änderungen an der Quelle wirken nicht. Geht auch ohne Cache. Vorhören gibt es nicht: reinziehen, anspielen, ⌘Z. |
+| Pad aus einer anderen Bank | **Quell-Grid** rechts neben den Pads (4×4, Pad 1 unten links): Bank wählen, eins ihrer Pads auf einen Platz ziehen. Kopiert Track und Start, spätere Änderungen an der Quelle wirken nicht. Geht auch ohne Cache. Vorhören gibt es nicht: reinziehen, anspielen, ⌘Z. |
 | Platz leeren | Icon „leeren“ am Pad (bei Hover und am gewählten Pad) |
 | anspielen | Pad klicken, klingt am Device |
 | Tempo | Zahlenfeld, ½×, 2×, „Tempo stimmt“ für das Video des gewählten Pads (gilt für alle Bänke mit diesem Video) |
 | Device-Regler | Leiste über den Pads, siehe unten |
-| Rückgängig | ⌘Z / ⇧⌘Z oder ↶ ↷ (100 Schritte, nur in diesem Fenster) |
+| Rückgängig | ⌘Z / ⇧⌘Z oder ↶ ↷ (100 Schritte, nur in diesem Fenster). Geleerte oder überschriebene Pads kommen auch ohne Cache zurück, solange Node läuft. |
+| Cache leeren | Knopf neben der Cache-Größe im Listenfuß, mit Rückfrage. Löscht die ganzen Tracks im lokalen Cache, nicht die Snippets. Gesperrt, solange Tracks laden oder geschnitten wird. |
 
 **Device-Regler im Editor:** Die Leiste über den Pads zeigt die Regler des Device: links die Bühne (Slice, Rate, Trigger/Hold, Rev, Tune, Warp, Quant, Raster, Catch), rechts gedämpft die Einrichtung (Base Note, Voices, Volume). Es ist derselbe Zustand wie im Device: Dreht man am Device (oder per MIDI), folgt der Editor. Stellt man im Editor, bewegt sich der Regler im Device und wird mit dem Set gespeichert. Doppelklick auf Rate bzw. Volume setzt 1× bzw. 0 dB. Die Regler sind kein Schritt im Rückgängig des Editors. Ohne laufendes Device ist die Leiste ausgegraut.
 
@@ -128,7 +131,7 @@ Beim ersten Laden eines Videos wird ein Chromagramm berechnet (ca. 3 s bei 10 Mi
 
 ## Tempo, Beats und Warp
 
-Beim ersten Laden eines Videos werden Tempo, Schläge und die „1“ erkannt und gecacht. Der Status zeigt z. B. „94 BPM“, bei einer Mix-Bank „Mix aus 3 Tracks“. Jedes Pad warpt aus dem Tempo seines eigenen Tracks. Ist das Tempo falsch (typisch: halb/doppelt, z. B. 172 → 86 bei Drum & Bass), korrigiert man es **im Editor** (Zahlenfeld, ½×, 2×, „Tempo stimmt“). Das Tempo steht dann in der Bibliothek und gilt für alle Bänke des Videos, das Raster wird sofort neu berechnet.
+Beim ersten Laden eines Videos werden Tempo, Schläge und die „1“ erkannt und gecacht. Der Status zeigt z. B. „94 BPM“, bei einer Bank aus mehreren Tracks „3 Tracks“. Jedes Pad warpt aus dem Tempo seines eigenen Tracks. Ist das Tempo falsch (typisch: halb/doppelt, z. B. 172 → 86 bei Drum & Bass), korrigiert man es **im Editor** (Zahlenfeld, ½×, 2×, „Tempo stimmt“). Das Tempo steht dann in der Bibliothek und gilt für alle Bänke des Videos, das Raster wird sofort neu berechnet.
 
 Der Beat-Tracker folgt leichten Tempo-Schwankungen, eine echte Band ist also kein Problem. Die „1“ jedes Takts schätzt er aus der Kick und aus Harmoniewechseln. Ein Intro ohne Beat (Stille, Gerede, Flächen) wird übersprungen, Takt 1 ist dort, wo der Beat einsetzt.
 
@@ -141,7 +144,8 @@ Grenzen: Timestretching verschmiert Transienten leicht, hat etwas Latenz und bra
 
 ## Hinweise
 
-- Cache: `~/Music/YTSampler/cache` (ganze Tracks, WAV 44.1 kHz). Wird nie automatisch geleert, der Editor warnt ab 10 GB. Löschen geht im Finder: Bänke spielen weiter aus ihren Snippets, sind dann aber „nur spielbar“.
+- Cache: `~/Music/YTSampler/cache` (ganze Tracks, WAV 44.1 kHz). Wird nie automatisch geleert, der Editor warnt ab 10 GB. Leeren mit „Cache leeren“ im Editor (oder im Finder): Bänke spielen weiter aus ihren Snippets, sind dann aber „nur spielbar“.
+- Was beim Leeren oder Überschreiben eines Pads anfällt (sein Audio, Analyse, Titel und Tempo des Tracks), bleibt bis zum nächsten Start liegen, damit Rückgängig geht. Beim Start räumt der Sampler weg, was keine Bank mehr braucht.
 - Videos über 10 Minuten: Nur die ersten 10 Minuten werden geladen (RAM). Die Grenze steht als `MAX_SECONDS` in `ytsampler_node.js`.
 - Takt: 4/4 wird angenommen („1 Bar“ = 4 Viertel).
 - Das Herunterladen von YouTube verstößt gegen deren Nutzungsbedingungen. Für veröffentlichte Tracks die Rechte am Sample klären.

@@ -93,7 +93,7 @@ function createMock(opts = {}) {
   m.scenario = function (name) {
     m.name = name;
     m.lib = scenarioLib(name);
-    m.params = { ...PARAMS_START };
+    m.params = { ...PARAMS_START }; m.cacheBytes = opts.cacheBytes != null ? opts.cacheBytes : 4.2e9;
     const b = name === 'nichtsgeladen' ? null : m.lib.banks[name === 'nurspielbar' ? 2 : name === 'mix' ? 7 : 0];
     m.dev = null; m.dev = devFor(b);
     m.beatsOk = null;

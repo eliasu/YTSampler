@@ -278,3 +278,36 @@ Pads vorhören in der Quellleiste, Mix-Zeichen am Device, Pads aus Suchtreffern 
 | M4 | Quell-Pads vorhören | nein (reinziehen, anspielen, ⌘Z) | ja, braucht zweite Bank im Device (großer Umbau) |
 | M5 | „Platz leeren“ | **ja, Icon „leeren“ am Pad** (Undo-Schritt, Device dunkel, Fach still) | nur über Undo |
 | M6 | Zwei Macs | format 2, beide Macs gleichzeitig updaten | format 1 lesbar halten (riskant: 3.x schneidet Mix-Snippets falsch) |
+
+## 10. Nachtrag Editor-Flow (Nutzer, 2026-11-02)
+
+Ersetzt, was oben über Track-/Mix-Bank, „Neue Mix-Bank“, Quellleiste und `newbank` steht. Der Rest gilt weiter.
+
+**Entscheidungen (fest):**
+1. **Keine Track-/Mix-Bank mehr.** Jede neue Bank startet leer (16 × `null`). Der Knopf heißt „Neue Bank“ (Befehl bleibt `newmix`, Name der Bank „Neue Bank“). Ein Klick auf einen Suchtreffer legt keine Bank mehr an.
+2. **Track aus der Suche aufs Pad:**
+   - a) Treffer auf einen Platz ziehen oder anklicken (gewählter Platz). Der Platz bekommt eine gewürfelte Stelle (`roller`: Taktanfang bevorzugt, keine Stille, kein Start doppelt mit den übrigen Pads dieses Videos).
+   - b) Knopf „Leere Plätze füllen“ am Treffer: alle leeren Plätze der aktiven Bank, Starts aufsteigend in Pad-Reihenfolge.
+   - Solange geladen wird (Warteschlange, bis 3 parallel), zeigen die Pads „wartet“/„lädt n %“. Danach wird geschnitten, das Device lädt die Bank neu (wie bei `setpad`).
+   - Ein belegter Platz wird überschrieben, als Undo-Schritt. Ein Platz, der gerade lädt, nimmt keine weitere Ablage an.
+3. **Quell-Grid** statt Quellleiste: 4×4 rechts neben den Pads, Pad 1 unten links, darüber die Auswahl der Quellbank (jede außer der aktiven, gemerkt pro Browser). Bei jeder Bank. Ziehen = Kopie (`setpad` mit `info`). Die Detailspalte (Start, Video · BPM, Knöpfe, Tempo) steht kompakt darunter. Einklappen gibt es nicht mehr.
+4. **Kein Zeichen „Mix“.** Unter dem Namen: ein Track „Titel · BPM“, mehrere „n Tracks“, leer „leer“. Titel am Pad nur bei mehreren Tracks. Device-Status: „Bereit: <Name> · n Tracks“ bzw. „· leer“ (statt „Mix aus n Tracks“).
+
+**Protokoll:**
+- `fillpads {id, video, pads[], tag?}` → `{}` sofort. Prüfung: `video` = YouTube-ID, `pads` 1–16 verschiedene Plätze, Bank vorhanden (`nobank`), Bibliothek schreibbar. Ablauf (`fillPads`): Video über `fetchVideo(…, 'pads')` laden (Stufe zwischen select/fetch und fetchall), würfeln (`rollBank(v, n, taken)`), ein `libChange('fill')` für alle Plätze, Titel aus dem Download. SSE `job {kind: 'pads', tag, id, video, pads, phase, progress}`, `done` zusätzlich mit `before`/`after` (Pad-Einträge der Plätze) und `videos` (Titel/bpm aller beteiligten Videos). Fehler: `loadfail` meldet der Download, sonst `msg`.
+- Undo/Redo im Editor: `setpad` pro Platz mit `before` bzw. `after` (+ `info` aus `videos`).
+- `newbank` (Bank aus einem Video) entfällt. `LIB.create` bleibt nur als Hilfe für Tests.
+
+**Ablage statt sofort löschen (Nutzer, gleicher Tag):** Nichts, was zu einem Track gehört, wird gelöscht, nur weil das letzte Pad mit diesem Track verschwindet.
+- `setpad` und `fillpads` legen das alte Pad vor dem Überschreiben/Leeren als `D/snippets/keep/<video>_<start>.wav` (ein Fach, 16 s) + `.json` (`{len, dur}`) ab (`keepPad`, Quelle wie beim Schneiden). Die Ablage ist die letzte Quelle beim Schneiden (2.2). Damit geht Undo ohne Cache.
+- `videos`-Einträge ohne Pad und `D/snippets/<video>.chroma` bleiben während der Sitzung (`dropOrphans` nicht mehr in `libChange`).
+- Beim Start von Node (`keepCleanup`): Ablage, `.chroma` in D und `videos`-Einträge ohne Pad in irgendeiner Bank fliegen raus. 7-Tage-Regel für Snippets gelöschter Bänke bleibt, der Cache in L wird weiter nie automatisch gelöscht.
+- Grenze: Startet ein zweites Device, räumt es auf, was das erste noch für Undo bräuchte.
+
+**Cache leeren (Nutzer, gleicher Tag, überholt „kein Knopf zum Leeren“):** Knopf „Cache leeren“ neben der Cache-Größe. Rückfrage „Cache leeren (2,7 GB)? Bänke spielen weiter, zum Bearbeiten werden Tracks neu geladen.“ `clearcache` → `{freed}` löscht in `L/cache/` nur `.wav`, `.json`, `.chroma`, nie etwas in D. Gesperrt (`cachebusy`, im Editor ausgegraut), solange Downloads laufen oder warten oder geschnitten wird. Danach „nur spielbar“/„Track laden“ wie üblich, Anzeige 0 GB.
+
+**Offen gelassen (einfach gelöst, nicht gefragt):**
+- Klick auf einen Treffer schließt die Suche (wie früher), damit der Ladezustand am Pad sichtbar ist.
+- Ohne aktive Bank (leere Bibliothek) ist die Suche gesperrt, „Neue Bank“ ist der Einstieg.
+- Ladende Pads sperren nur Ablagen, keine anderen Schritte (Undo/Redo können sie trotzdem ändern; `fillpads` überschreibt dann beim Fertigwerden).
+

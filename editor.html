@@ -459,7 +459,7 @@ async function swap(a, c) {
   const r = await cmd('swap', { id: b.id, a, b: c });
   if (r.ok) { const id = b.id; S.sel = c; pushStep({ label: 'Pad ' + (a + 1) + ' ↔ ' + (c + 1) + ' getauscht', undo: onBank(id, () => ['swap', { id, a, b: c }]), redo: onBank(id, () => ['swap', { id, a, b: c }]) }); }
 }
-// Pad aus der Quellleiste kopieren (Spec 5.4), ein belegter Platz wird ersetzt
+// Pad aus dem Quell-Grid kopieren (Spec 5.4, 10), ein belegter Platz wird ersetzt
 async function copyPad(src, k, i) {
   const b = curBank(), np = src && src.pads[k]; if (!b || !np || !writable()) return;
   if (loadingPad(i)) { toast('Pad ' + (i + 1) + ' lädt gerade', { err: true }); return; }

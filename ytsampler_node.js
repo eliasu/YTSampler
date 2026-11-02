@@ -816,7 +816,7 @@ const libState = (lib) => (lib.banks.length ? 'ok' : 'leer');
 const padVideos = (b) => [...new Set(b.pads.filter(Boolean).map((p) => p.video))];
 const isPadList = (a) => Array.isArray(a) && a.length === 16
   && a.every((p) => p === null || (isObj(p) && typeof p.video === 'string' && p.video !== '' && isInt(p.start, 0)));
-// Track-Bank: 16 belegte Pads aus einem Video, sonst Mix-Bank (Mix-Spec 2.1)
+// mix (SSE lib): nicht 16 belegte Pads aus einem Video. Nur abgeleitet, der Editor unterscheidet seit Spec 10 nicht mehr
 const isMix = (b) => !(b.pads.every(Boolean) && padVideos(b).length === 1);
 const videoEntry = (v) => { const e = { title: v.title }; if (typeof v.bpm === 'number') e.bpm = v.bpm; return e; };
 
