@@ -794,6 +794,7 @@ const ERR = {
   superseded: 'Neuere Suche läuft',
   searchfail: 'Suche fehlgeschlagen',
   loadfail: 'Download fehlgeschlagen',
+  cachebusy: 'Downloads oder Schnitte laufen – danach noch einmal',
   badreq: 'Ungültiger Befehl',
 };
 // Fehler mit .code und .text, z. B. libErr('writefail', 'Platte voll') -> "Speichern fehlgeschlagen: Platte voll"
@@ -1868,6 +1869,21 @@ const CMD = {
     if (!hasWav(q.video)) fetchVideo(q.video, 'fetch').catch(() => { /* steht in videoFail */ });
   },
   fetchall: () => fetchAll(),
+  // Knopf „Cache leeren“: ganze Tracks in L/cache (.wav, .json, .chroma). Nie etwas in D. Gesperrt, solange geladen
+  // oder geschnitten wird. -> {freed} in Byte
+  clearcache() {
+    if (edJobs.length || edQueue.length || snipCutting || snipTimers.size) throw libErr('cachebusy');
+    let freed = 0;
+    for (const n of fs.readdirSync(CACHE)) {
+      if (!/\.(wav|json|chroma)$/.test(n)) continue;
+      const f = path.join(CACHE, n);
+      try { freed += fs.statSync(f).size; fs.unlinkSync(f); } catch (e) { /* weg */ }
+    }
+    beatStore.clear();
+    libEvents.emit('cache', cacheSize());
+    libEvents.emit('status');
+    return { freed };
+  },
 };
 
 async function runCmd(q) {

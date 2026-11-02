@@ -639,4 +639,29 @@ t('session: libstate vor state, hello mit Session-Nummer', async () => {
   done();
 });
 
+t('clearcache: löscht nur L/cache (.wav/.json/.chroma), D bleibt, Bänke spielen weiter; gesperrt bei Download', async () => {
+  const { node, ids, cmd, events, done } = await setup('400');
+  const a = events();
+  await sleep(300);   // Schneiden aus setup entprellt
+  await cmd({ cmd: 'select', id: ids[0] });
+  fs.writeFileSync(path.join(node.CACHE, 'notiz.txt'), 'x');
+  const dBefore = fs.readdirSync(node.SNIP_DIR).sort();
+  assert.ok(dBefore.includes(`${V1}.chroma`) && fs.readdirSync(node.CACHE).some((n) => n.endsWith('.chroma')));
+  // laufender Download: gesperrt
+  await cmd({ cmd: 'fetch', video: V3 });
+  assert.strictEqual((await cmd({ cmd: 'clearcache' })).code, 'cachebusy');
+  await until(() => node.hasWav(V3), 'Download fertig');
+  await sleep(300);
+  const r = await cmd({ cmd: 'clearcache' });
+  assert.ok(r.ok && r.freed > 0, JSON.stringify(r));
+  assert.deepStrictEqual(fs.readdirSync(node.CACHE).filter((n) => /\.(wav|json|chroma)$/.test(n)), []);
+  assert.ok(fs.existsSync(path.join(node.CACHE, 'notiz.txt')), 'fremde Dateien bleiben');
+  assert.deepStrictEqual(fs.readdirSync(node.SNIP_DIR).sort(), dBefore, 'D unberührt');
+  await a.wait((ev, d) => ev === 'cache' && d.bytes < 10, 'Cache-Anzeige auf 0');
+  await a.wait((ev, d) => ev === 'lib' && d.banks.every((b) => b.wav === false && b.snip === 'ok'), 'nur spielbar, Snippets ok');
+  assert.strictEqual((await cmd({ cmd: 'setstart', id: ids[0], pad: 0, ms: 5 })).code, 'playonly');
+  assert.strictEqual(node.snipEnsure(node.libNow.lib.banks[0]).lens.length, 16, 'Bank spielt weiter');
+  done();
+});
+
 run();

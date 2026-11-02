@@ -253,7 +253,7 @@
       <ul id="banklist"></ul>
       <div id="sidefoot">
         <div class="btns"><button class="small" id="newbank" title="Bank mit 16 leeren Plätzen am Ende, aus der Suche oder dem Quell-Grid füllen">Neue Bank</button><button class="small" id="fetchall">Alle nachladen</button></div>
-        <span class="hint num" id="cachesize"></span>
+        <div class="btns" style="align-items:center"><span class="hint num" id="cachesize"></span><button class="small ghost" id="clearcache" title="Ganze Tracks im lokalen Cache löschen. Snippets und Bänke bleiben.">Cache leeren</button></div>
       </div>
     </aside>
     <div id="vsplit"></div>
@@ -551,7 +551,7 @@ function renderList() {
   if (editing != null || (S.drag && S.drag.kind === 'bank')) return; // Umbenennen oder Ziehen läuft
   const ul = $('banklist'), w = writable(), cb = curBank();
   // nur neu bauen, wenn sich etwas geändert hat: sonst gehen Klicks verloren, die auf ein play-Event fallen
-  const sig = JSON.stringify([S.lib, S.jobs, cb && cb.id, w, S.cache, S.beats && S.beats.bpm]);
+  const sig = JSON.stringify([S.lib, S.jobs, S.fills.length, S.conn, cb && cb.id, w, S.cache, S.beats && S.beats.bpm]);
   if (sig === renderList.sig) return;
   renderList.sig = sig;
   ul.innerHTML = '';
@@ -604,6 +604,10 @@ function renderList() {
   const c = S.cache || (S.lib && S.lib.cache);
   $('cachesize').textContent = c ? (c.warn ? 'Cache über 10 GB – im Finder aufräumen' : 'Cache ' + fmtGB(c.bytes)) : '';
   $('cachesize').className = 'hint num' + (c && c.warn ? ' warn' : '');
+  // gesperrt, solange geladen oder geschnitten wird (Node prüft das auch)
+  const busy = Object.keys(S.jobs).length || S.fills.length || banks().some((x) => x.snip === 'cutting' || x.snip === 'stale');
+  $('clearcache').disabled = !S.conn || !c || !c.bytes || !!busy;
+  $('clearcache').title = busy ? 'Erst wenn Downloads und Schnitte fertig sind' : 'Ganze Tracks im lokalen Cache löschen. Snippets und Bänke bleiben.';
 }
 function startRename(li, b) {
   if (!writable()) return;
@@ -1023,6 +1027,12 @@ function step(d) { const n = banks().length; if (!n) return; const i = curIdx(),
 $('prev').onclick = () => step(-1); $('next').onclick = () => step(1);
 $('undo').onclick = undo; $('redo').onclick = redo;
 $('newbank').onclick = newEmptyBank;
+$('clearcache').onclick = async () => {
+  const c = S.cache || (S.lib && S.lib.cache);
+  if (!confirm('Cache leeren (' + fmtGB(c ? c.bytes : 0) + ')? Bänke spielen weiter, zum Bearbeiten werden Tracks neu geladen.')) return;
+  const r = await cmd('clearcache');
+  if (r.ok) { S.peaks.clear(); toast('Cache geleert'); render(); }
+};
 $('fetchall').onclick = async () => { const r = await cmd('fetchall'); if (r.ok) toast(r.todo ? r.todo + ' Tracks werden geladen' : 'Nichts nachzuladen'); };
 document.addEventListener('keydown', (e) => {
   const ae = document.activeElement, mod = e.metaKey || e.ctrlKey, inField = ae.tagName === 'TEXTAREA' || (ae.tagName === 'INPUT' && ae.type !== 'range');

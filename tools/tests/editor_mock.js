@@ -13,7 +13,7 @@ const EDITOR = path.join(__dirname, '..', '..', 'editor.html');
 const ERR = {
   nobank: 'Bank gibt es nicht mehr', libbroken: 'Bibliothek kaputt – Speichern gesperrt', libnewer: 'Bibliothek aus neuerer Version',
   playonly: 'Track fehlt – nur spielbar', nosnip: 'Snippets fehlen – Bank nicht ladbar', idtaken: 'Bank existiert schon',
-  notempo: 'Kein Tempo erkannt', superseded: 'Neuere Suche läuft', badreq: 'Ungültiger Befehl',
+  notempo: 'Kein Tempo erkannt', cachebusy: 'Downloads oder Schnitte laufen – danach noch einmal', superseded: 'Neuere Suche läuft', badreq: 'Ungültiger Befehl',
 };
 const WRITE = ['rename', 'duplicate', 'delete', 'move', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'fillpads', 'newmix', 'setpad', 'tempo', 'tempook', 'fetch', 'fetchall'];
 
@@ -107,7 +107,8 @@ function createMock(opts = {}) {
     const { rev, state, error, banks, videos } = m.lib;
     return { rev, by, state, error, cache: cacheMsg(), banks: banks.map((b) => ({ ...b, mix: isMix(b), wav: bankWav(b) })), videos };
   }
-  function cacheMsg() { const bytes = opts.cacheBytes != null ? opts.cacheBytes : 4.2e9; return { bytes, warn: bytes >= 1e10 }; }
+  m.cacheBytes = opts.cacheBytes != null ? opts.cacheBytes : 4.2e9;
+  function cacheMsg() { const bytes = m.cacheBytes; return { bytes, warn: bytes >= 1e10 }; }
   function beatsMsg() {
     const v = m.dev.video; if (!VIDEOS[v]) return null;
     const conf = m.lib.videos[v] && m.lib.videos[v].bpm ? 0.8 : 0.42, bpm = (m.lib.videos[v] && m.lib.videos[v].bpm) || VIDEOS[v][1];
@@ -272,6 +273,13 @@ function createMock(opts = {}) {
           m.emit('lib', libMsg(q.client)); return {};
         });
         return { ok: true };
+      }
+      case 'clearcache': { // ganze Tracks weg, Snippets bleiben: alles „nur spielbar“
+        if (m.busy) return fail('cachebusy');
+        const freed = m.cacheBytes; m.cacheBytes = 0;
+        for (const e of Object.values(m.lib.videos)) e.wav = false;
+        m.emit('lib', libMsg(q.client)); m.emit('cache', cacheMsg());
+        return { ok: true, freed };
       }
       case 'fetchall': return { ok: true, todo: Object.values(m.lib.videos).filter((x) => !x.wav).length };
       case 'param': { // auch bei kaputter Bibliothek erlaubt; Bestätigung nur über device.params

@@ -723,6 +723,26 @@ t('Suche → Pad: Treffer aufs Pad ziehen (überschreibt, Ladezustand), „Leere
   assert.deepStrictEqual(b.errors, []);
 });
 
+t('Cache leeren: Rückfrage mit Größe, gesperrt bei Download, danach nur spielbar und 0 GB', async () => {
+  await open('normal');
+  assert.strictEqual(await b.eval(`$('clearcache').disabled`), false);
+  // Rückfrage abgelehnt: nichts
+  await b.eval(`window.confirm = (t) => { window.asked = t; return false; }`);
+  m.log = []; await b.click('#clearcache'); await sleep(80);
+  assert.strictEqual(await b.eval('window.asked'), 'Cache leeren (4,2 GB)? Bänke spielen weiter, zum Bearbeiten werden Tracks neu geladen.');
+  assert(!m.log.some((x) => x.cmd === 'clearcache'));
+  // Download läuft: gesperrt
+  m.emit('job', { kind: 'fetch', video: 'Rk7tQ2mLp0A', phase: 'download', progress: 10, left: 0 });
+  await b.waitFor(`$('clearcache').disabled`);
+  m.emit('job', { kind: 'fetch', video: 'Rk7tQ2mLp0A', phase: 'done', progress: 100, left: 0 });
+  await b.waitFor(`!$('clearcache').disabled`);
+  await b.eval(`window.confirm = () => true`);
+  m.log = []; await b.click('#clearcache'); await waitLog((x) => x.cmd === 'clearcache');
+  await b.waitFor(`$('cachesize').textContent === 'Cache 0 GB' && $('clearcache').disabled && /nur spielbar/.test(document.querySelector('#banklist li.on').textContent)`);
+  await b.waitFor(`/Track fehlt/.test($('wavemsg').textContent) && !!$('fetchone') && !document.querySelector('.mk.edit')`);
+  assert.deepStrictEqual(b.errors, []);
+});
+
 t('Screenshots', async () => {
   if (!process.argv.includes('--shots')) return;
   await open('normal'); await b.click('#pad5'); await sleep(250); await b.shot('editor-normal');
