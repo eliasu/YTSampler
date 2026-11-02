@@ -622,6 +622,98 @@ t('bankbusy: Anschlag wartet auf neue Snippets im Buffer und spielt dann die neu
     assert.strictEqual(m.on(1, 'playing').length, 1, 'danach wieder sofort');
 });
 
+// Golden-Test (Spec Mix 4.5): Track-Bank, Anschläge und Reglerwechsel. Die Ausgänge 0, 2, 3 und playing/playstop
+// müssen gleich bleiben wie in 3.0 (aufgenommen in golden_trackbank.json). Nur das Laden unterscheidet sich.
+// Neu aufnehmen (nur mit dem 3.0-Stand sinnvoll): node tools/tests/test_main.js --write-golden
+var GOLDEN = path.join(__dirname, 'golden_trackbank.json');
+var G = { bpm: 99.5, cent: 23, down: 2 };
+var G_KEYS = [];                                   // padinfo pro Pad: konf, grundton, moll, chroma
+for (i = 0; i < 16; i++) {
+    var c = []; for (var q = 0; q < 12; q++) c.push(Math.round((0.5 + 0.5 * Math.sin(i * 1.7 + q * 0.9)) * 1000) / 1000);
+    G_KEYS.push([i % 5 === 4 ? 0.3 : 0.6 + (i % 3) * 0.1, (i * 5) % 12, i % 2].concat(c));
+}
+// Schläge mit Schwankung, damit Warp dem Raster folgt und nicht dem festen Verhältnis
+function goldenBeats() {
+    var b = [], t = 120, p = 60000 / G.bpm;
+    while (t < 400000) { b.push(Math.round(t * 1000) / 1000); t += p * (1 + 0.03 * Math.sin(b.length * 0.7)); }
+    return b;
+}
+function goldenLoad30(m) {
+    m.send('libstate', 3, 1, 'ok');
+    m.send.apply(null, ['bank', 7, 1, G.bpm].concat(STARTS, LENS, [400000, 'F2RnxZnubCM', '/x/7.wav']));
+    m.fire(m.ctx.replaceTask);
+    m.send('tuning', G.cent);
+    for (var i = 0; i < 16; i++) m.send.apply(null, ['padinfo', i].concat(G_KEYS[i]));
+    m.send('analysisready');
+    var b = goldenBeats();
+    m.send('beatsclear');
+    for (var k = 0; k < b.length; k += 200) m.send.apply(null, ['beatsadd'].concat(b.slice(k, k + 200)));
+    m.send('beatsdone', G.down, b.length);
+}
+function goldenScenario(m) {
+    var rec = [];
+    function step(name, fn) {
+        m.take(); fn();
+        rec.push([name, m.out.filter(function (o) {
+            return o[0] === 0 || o[0] === 2 || o[0] === 3 || (o[0] === 1 && (o[1] === 'playing' || o[1] === 'playstop'));
+        })]);
+        m.clock += 700;
+    }
+    function hits() {
+        [0, 3, 5, 9, 15].forEach(function (i) {
+            m.send('note', 36 + i, 100, 1); m.clock += 60; m.send('note', 36 + i, 0, 1); m.clock += 40;
+        });
+    }
+    step('grid', function () { m.send('sendGridUI'); });
+    step('bpm', function () { m.send('bpm', 120); });
+    [[], [['warp', 1]], [['division', 9]], [['division', 10]], [['division', 2]], [['reverse', 1]], [['warp', 0]],
+     [['playmode', 1]], [['reverse', 0]], [['warp', 1]], [['reverse', 1]], [['playmode', 0], ['reverse', 0], ['division', 5], ['tune', 1]],
+     [['rate', 1.3]], [['warp', 0]], [['scaleroot', 2]], [['bpm', 93]], [['warp', 1], ['division', 7]], [['tune', 0]]
+    ].forEach(function (cfg, n) {
+        step('cfg' + n, function () { cfg.forEach(function (s) { m.send.apply(null, s); }); hits(); });
+    });
+    // Quant + Catch mit Warp: zu spät (Catch), zu früh (wartet auf den Tick), 1/4
+    step('quant', function () {
+        m.send('quantize', 1); m.send('quantdiv', 2); m.send('quantcatch', 1); m.send('tick', 2);
+        m.clock += 100; m.send('padhit', 2);
+        m.clock += 200; m.send('padhit', 3);
+        m.clock += 50; m.send('tick', 2);
+        m.send('quantdiv', 3); m.send('tick', 3);
+        m.clock += 200; m.send('padhit', 6);
+        m.clock += 100; m.send('padhit', 7);
+        m.clock += 200; m.send('tick', 3);
+        m.send('warp', 0); m.clock += 100; m.send('padhit', 8);
+    });
+    return rec;
+}
+function closeEnough(a, b, where) {
+    if (typeof a === 'number' && typeof b === 'number') {
+        assert.ok(Math.abs(a - b) < 1e-6, where + ': ' + a + ' != ' + b);
+    } else if (Array.isArray(a)) {
+        assert.ok(Array.isArray(b) && a.length === b.length, where + ': Länge ' + JSON.stringify(a) + ' / ' + JSON.stringify(b));
+        for (var k = 0; k < a.length; k++) closeEnough(a[k], b[k], where);
+    } else assert.strictEqual(a, b, where);
+}
+function goldenRun(loader) {
+    var m = load(SRC);
+    startDevice(m);
+    loader(m);
+    return goldenScenario(m);
+}
+if (process.argv.indexOf('--write-golden') >= 0) {
+    fs.writeFileSync(GOLDEN, JSON.stringify(goldenRun(goldenLoad30)));
+    console.log('geschrieben: ' + GOLDEN);
+}
+t('Golden: Track-Bank klingt wie in 3.0 (Ausgänge 0, 2, 3, playing)', function () {
+    var want = JSON.parse(fs.readFileSync(GOLDEN, 'utf8')), got = goldenRun(goldenLoad30);
+    assert.strictEqual(got.length, want.length);
+    for (var k = 0; k < want.length; k++) {
+        var w = want[k], g = got[k];
+        assert.strictEqual(g[0], w[0]);
+        for (var n = 0; n < Math.max(w[1].length, g[1].length); n++) closeEnough(g[1][n], w[1][n], w[0] + ' #' + n);
+    }
+});
+
 var bad = 0;
 tests.forEach(function (x) {
     try { x[1](); console.log('ok   ' + x[0]); }
