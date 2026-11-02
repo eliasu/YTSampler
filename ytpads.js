@@ -1,6 +1,6 @@
 // YT Sampler – Pad-Raster (jsui)
 // raus: padhit <i> (Maus runter), padup <i> (Maus los)
-// rein: padflash <i> <ms> | padlight <i> <0/1> | padsel <i>
+// rein: padflash <i> <ms> | padlight <i> <0/1> | padsel <i> | padempty <16 × 0/1> (leerer Platz: dunkel, ohne Nummer)
 
 mgraphics.init();
 mgraphics.relative_coords = 0;
@@ -10,11 +10,11 @@ inlets = 1;
 outlets = 1;
 
 var NP = 16, GAP = 3;
-var level = [], held = [], until = [];
+var level = [], held = [], until = [], empty = [];
 var sel = 0;
 var pressed = -1;
 
-for (var i = 0; i < NP; i++) { level.push(0); held.push(0); until.push(0); }
+for (var i = 0; i < NP; i++) { level.push(0); held.push(0); until.push(0); empty.push(0); }
 
 var anim = new Task(tick, this);
 anim.interval = 30;
@@ -45,8 +45,9 @@ function paint() {
     mgraphics.set_font_size(10);
     for (var i = 0; i < NP; i++) {
         var r = padRect(i, g), l = level[i];
-        // dunkelgrau -> orange
-        mgraphics.set_source_rgba(0.20 + 0.80 * l, 0.20 + 0.42 * l, 0.22 - 0.12 * l, 1);
+        // dunkelgrau -> orange, leerer Platz fast schwarz
+        if (empty[i]) mgraphics.set_source_rgba(0.08, 0.08, 0.09, 1);
+        else mgraphics.set_source_rgba(0.20 + 0.80 * l, 0.20 + 0.42 * l, 0.22 - 0.12 * l, 1);
         mgraphics.rectangle_rounded(r[0], r[1], r[2], r[3], 5, 5);
         mgraphics.fill();
         if (i === sel) {
@@ -55,6 +56,7 @@ function paint() {
             mgraphics.rectangle_rounded(r[0] + 0.75, r[1] + 0.75, r[2] - 1.5, r[3] - 1.5, 5, 5);
             mgraphics.stroke();
         }
+        if (empty[i]) continue;
         mgraphics.set_source_rgba(l > 0.5 ? 0.1 : 0.75, l > 0.5 ? 0.1 : 0.75, l > 0.5 ? 0.1 : 0.78, 1);
         mgraphics.move_to(r[0] + 4, r[1] + 12);
         mgraphics.show_text(String(i + 1));
@@ -93,6 +95,12 @@ function padsel(i) {
     i = Math.floor(i);
     if (i < 0 || i >= NP || i === sel) return;
     sel = i;
+    mgraphics.redraw();
+}
+
+function padempty() {
+    var a = arrayfromargs(arguments);
+    for (var i = 0; i < NP; i++) empty[i] = a[i] ? 1 : 0;
     mgraphics.redraw();
 }
 

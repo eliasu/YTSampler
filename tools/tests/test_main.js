@@ -49,16 +49,26 @@ function bankstates(m) { return m.on(1, 'bankstate'); }
 var STARTS = [], LENS = [];
 for (var i = 0; i < 16; i++) { STARTS.push(10000 + i * 20000); LENS.push(16000); }
 LENS[5] = 3000;                                    // kurzes Snippet (Track endet früh)
-function bankMsg(id, nr, bpm, pathName) {
-    return ['bank', id, nr, bpm].concat(STARTS, LENS, [400000, 'F2RnxZnubCM'], pathName.split(' '));
+// bank <id> <nr> <s×16> <l×16> <pfad…> (Spec Mix 3.3)
+function bankMsg(id, nr, pathName, starts, lens) {
+    return ['bank', id, nr].concat(starts || STARTS, lens || LENS, pathName.split(' '));
+}
+// wie Node: bank, danach bei bekanntem Tempo padana pro Pad (ohne Schläge)
+function sendBank(m, id, nr, bpm, pathName) {
+    m.send.apply(null, bankMsg(id, nr, pathName));
+    if (bpm > 0) for (var i = 0; i < 16; i++) m.send('padana', i, bpm, 0, 0);
 }
 function beatsFor(bpm, dur) { var b = []; for (var t = 0; t < dur; t += 60000 / bpm) b.push(Math.round(t * 1000) / 1000); return b; }
+// padana wie Node: Schläge im Fenster [start − 4 Schläge, start + l + 4 Schläge], off = Index des ersten − down
+function padanaMsg(i, bpm, cent, b, down, start, len) {
+    var w = 4 * 60000 / bpm, lo = start - w, hi = start + len + w, first = -1, sent = [];
+    for (var j = 0; j < b.length; j++) if (b[j] >= lo && b[j] <= hi) { if (first < 0) first = j; sent.push(b[j]); }
+    return ['padana', i, bpm, cent, first < 0 ? 0 : first - down].concat(sent);
+}
 function feedBeats(m, bpm, down) {
     var b = beatsFor(bpm, 400000);
+    for (var i = 0; i < 16; i++) m.send.apply(null, padanaMsg(i, bpm, 0, b, down, STARTS[i], LENS[i]));
     m.send('analysisready');
-    m.send('beatsclear');
-    for (var k = 0; k < b.length; k += 200) m.send.apply(null, ['beatsadd'].concat(b.slice(k, k + 200)));
-    m.send('beatsdone', down, b.length);
     return b;
 }
 
@@ -68,7 +78,7 @@ function t(name, fn) { tests.push([name, fn]); }
 t('ready()-Sperren: Regler und Tempo vor init tun nichts', function () {
     var m = load(SRC);
     m.send('libstate', 3, 1, 'ok');
-    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    sendBank(m, 7, 1, 100, '/x/7.wav');
     m.take();
     m.named = [];
     m.send('banknum', 2); m.send('banknext'); m.send('bankprev'); m.send('param', 'warp', 1);
@@ -86,33 +96,33 @@ t('bank: klingende Stimmen in beiden poly~ aus, replace erst nach dem Task, letz
     var m = load(SRC);
     startDevice(m);
     m.send('libstate', 3, 1, 'ok');
-    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    sendBank(m, 7, 1, 100, '/x/7.wav');
     m.fire(m.ctx.replaceTask);
     feedBeats(m, 100, 0);
     m.send('note', 36, 100, 1);                    // Sampler-Stimme
     m.send('warp', 1); m.send('bpm', 120);
     m.send('note', 37, 100, 1);                    // Warp-Stimme
     m.take();
-    m.send.apply(null, bankMsg(8, 2, 0, '/x/8 a.wav'));
+    sendBank(m, 8, 2, 0, '/x/8 a.wav');
     var off0 = m.on(0, 'gateoff'), off3 = m.on(3, 'gateoff');
     assert.deepStrictEqual(off0, [[0, 'gateoff', 5]], 'Sampler-Stimme ausgeblendet');
     assert.deepStrictEqual(off3, [[3, 'gateoff', 5]], 'Warp-Stimme ausgeblendet');
     assert.deepStrictEqual(m.on(4), [], 'replace noch nicht');
     assert.ok(m.ctx.replaceTask.pending && m.ctx.replaceTask.ms <= 20);
-    m.send.apply(null, bankMsg(9, 3, 0, '/x/9.wav'));
+    sendBank(m, 9, 3, 0, '/x/9.wav');
     m.fire(m.ctx.replaceTask);
     assert.deepStrictEqual(m.on(4), [[4, 'replace', '/x/9.wav']], 'nur die letzte Bank');
     assert.strictEqual(m.ctx.st.bankId, 9);
     assert.ok(m.named.some(function (n) { return n[0] === 'bank' && n[1] === 'set' && n[2] === 3; }), 'Bank-Regler per set');
     // Pfad mit Leerzeichen bleibt ganz
-    m.take(); m.send.apply(null, bankMsg(8, 2, 0, '/x/8 a.wav')); m.fire(m.ctx.replaceTask);
+    m.take(); sendBank(m, 8, 2, 0, '/x/8 a.wav'); m.fire(m.ctx.replaceTask);
     assert.deepStrictEqual(m.on(4), [[4, 'replace', '/x/8 a.wav']]);
 });
 
 t('Song-ms -> Buffer-ms in pos/wplay, playing in Song-ms', function () {
     var m = load(SRC);
     startDevice(m);
-    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    sendBank(m, 7, 1, 100, '/x/7.wav');
     m.send('bpm', 120); m.take();
     m.send('note', 36 + 3, 100, 1);
     var pos = m.on(0, 'pos')[0];
@@ -128,7 +138,7 @@ t('Song-ms -> Buffer-ms in pos/wplay, playing in Song-ms', function () {
 t('Klammer am Snippet-Ende: Trigger, Hold (10 ms), Hold rückwärts, Warp mit Beats', function () {
     var m = load(SRC);
     startDevice(m);
-    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    sendBank(m, 7, 1, 100, '/x/7.wav');
     m.send('bpm', 120);
     m.send('division', 10);                        // 2 Takte = 4000 ms, Fach 5 hat nur 3000
     m.take();
@@ -169,7 +179,7 @@ t('effStart fest, kein Einrasten bei Beats', function () {
     var m = load(SRC);
     startDevice(m);
     STARTS[2] = 50123;
-    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    sendBank(m, 7, 1, 100, '/x/7.wav');
     feedBeats(m, 100, 0);
     assert.strictEqual(m.ctx.effStart(2), 50123);
     assert.ok(!('gridon' in m.ctx) && !('snapmode' in m.ctx), 'Grid/Snap gibt es nicht mehr');
@@ -179,7 +189,7 @@ t('effStart fest, kein Einrasten bei Beats', function () {
 t('Overlay in Buffer-ms ohne Schalter: show nach beatsOK, dur, beats, bars, pads', function () {
     var m = load(SRC);
     startDevice(m);
-    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    sendBank(m, 7, 1, 100, '/x/7.wav');
     assert.deepStrictEqual(m.on(2, 'grid').filter(function (o) { return o[2] === 'show'; }).pop(), [2, 'grid', 'show', 0], 'ohne Beats aus');
     m.take();
     var b = feedBeats(m, 100, 1);
@@ -207,7 +217,7 @@ t('Overlay in Buffer-ms ohne Schalter: show nach beatsOK, dur, beats, bars, pads
 t('bankstate nur bei Änderung, Song-ms, w gekappt auf l', function () {
     var m = load(SRC);
     startDevice(m);
-    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    sendBank(m, 7, 1, 100, '/x/7.wav');
     m.send('bpm', 120); m.send('playmode', 1);
     m.take();
     m.send('updateSel'); m.send('updateSel');
@@ -215,18 +225,18 @@ t('bankstate nur bei Änderung, Song-ms, w gekappt auf l', function () {
     var bs = m.on(1, 'bankstate');
     assert.strictEqual(bs.length, 1, 'einmal für reverse');
     var b = bs[0];
-    assert.deepStrictEqual(b.slice(1, 7), ['bankstate', 7, 'F2RnxZnubCM', 0, 1, 1]);
-    assert.deepStrictEqual(b.slice(7, 23), STARTS);
-    assert.deepStrictEqual(b.slice(23, 39), LENS, 'Hold: ganze Snippets');
+    assert.deepStrictEqual(b.slice(1, 6), ['bankstate', 7, 0, 1, 1], 'ohne Video');
+    assert.deepStrictEqual(b.slice(6, 22), STARTS);
+    assert.deepStrictEqual(b.slice(22, 38), LENS, 'Hold: ganze Snippets');
     // angehängt: div rate tune warp quant vol voices base qdiv qcatch
-    assert.strictEqual(b.length, 39 + 10);
-    assert.deepStrictEqual(b.slice(39), [5, 1, 0, 0, 0, 0, 6, 36, 1, 0]);
+    assert.strictEqual(b.length, 38 + 10);
+    assert.deepStrictEqual(b.slice(38), [5, 1, 0, 0, 0, 0, 6, 36, 1, 0]);
 });
 
 t('bankstate: die zwölf Reglerwerte, gerundet, nur bei Änderung', function () {
     var m = load(SRC);
     startDevice(m);
-    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    sendBank(m, 7, 1, 100, '/x/7.wav');
     m.send('bpm', 120);
     var steps = [['division', 3], ['rate', 1.23456], ['playmode', 1], ['reverse', 1], ['tune', 1], ['warp', 1],
         ['quantize', 1], ['volume', -3.54], ['voicecount', 2], ['basenote', 48], ['quantdiv', 2], ['quantcatch', 1]];
@@ -236,8 +246,8 @@ t('bankstate: die zwölf Reglerwerte, gerundet, nur bei Änderung', function () 
         assert.strictEqual(bankstates(m).length, 1, st[0] + ' meldet einmal');
     });
     var b = bankstates(m)[0];
-    assert.deepStrictEqual(b.slice(5, 7), [1, 1], 'mode rev');
-    assert.deepStrictEqual(b.slice(39), [3, 1.235, 1, 1, 1, -3.5, 2, 48, 2, 1]);
+    assert.deepStrictEqual(b.slice(4, 6), [1, 1], 'mode rev');
+    assert.deepStrictEqual(b.slice(38), [3, 1.235, 1, 1, 1, -3.5, 2, 48, 2, 1]);
     assert.strictEqual(m.ctx.P.voices, 3, 'Index 2 = 3 Stimmen');
     // Mikroänderung unterhalb der Rundung: kein neues bankstate
     m.take(); m.send('volume', -3.52); m.send('rate', 1.2349);
@@ -267,7 +277,7 @@ t('param vom Editor -> setNamed mit varname, unbekannt -> nichts', function () {
 t('MIDI: Kanal 15 und 16 spielen Pads, Kanal zählt nicht', function () {
     var m = load(SRC);
     startDevice(m);
-    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    sendBank(m, 7, 1, 100, '/x/7.wav');
     m.send('bpm', 120); m.take();
     m.send('note', 36 + 2, 100, 16);
     m.send('note', 36 + 3, 100, 15);
@@ -280,7 +290,7 @@ t('MIDI: Kanal 15 und 16 spielen Pads, Kanal zählt nicht', function () {
 t('Feste Attack 2 ms / Release 20 ms in env, rel, gateoff', function () {
     var m = load(SRC);
     startDevice(m);
-    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    sendBank(m, 7, 1, 100, '/x/7.wav');
     m.send('bpm', 120); m.take();
     m.send('note', 36, 100, 1);
     var env = m.on(0, 'env'), rel = m.on(0, 'rel')[0];
@@ -300,7 +310,7 @@ t('Prev/Next: Enden, über 128, 350 ms Ruhe', function () {
     var m = load(SRC);
     startDevice(m);
     m.send('libstate', 130, 129, 'ok');
-    m.send.apply(null, bankMsg(7, 129, 100, '/x/7.wav'));
+    sendBank(m, 7, 129, 100, '/x/7.wav');
     m.take(); m.named = [];
     m.send('banknext');
     assert.deepStrictEqual(m.on(1, 'bankpeek'), [[1, 'bankpeek', 130]]);
@@ -315,7 +325,7 @@ t('Prev/Next: Enden, über 128, 350 ms Ruhe', function () {
     m.fire(m.ctx.selTask);
     assert.deepStrictEqual(m.on(1, 'banksel'), [[1, 'banksel', 130]]);
     // Anfang
-    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    sendBank(m, 7, 1, 100, '/x/7.wav');
     m.take(); m.send('bankprev');
     assert.deepStrictEqual(m.on(1), [], 'an der ersten Bank bleibt es stehen');
     // über der letzten: Anzeige leer
@@ -330,56 +340,45 @@ t('Prev/Next: Enden, über 128, 350 ms Ruhe', function () {
     assert.notStrictEqual(m.on(2, 'status').pop()[2], 'nicht ladbar', 'nach 2 s wieder die normale Zeile');
 });
 
-t('Tempo: erkanntes Tempo gilt, Warp folgt Beats, ohne Beats festes Verhältnis', function () {
+t('Tempo pro Pad: Warp ohne Beats festes Verhältnis, mit Beats folgt das Raster, ohne padana kein Tempo', function () {
     var m = load(SRC);
     startDevice(m);
-    m.send.apply(null, bankMsg(7, 1, 0, '/x/7.wav'));
+    sendBank(m, 7, 1, 0, '/x/7.wav');
     m.send('bpm', 120); m.send('warp', 1); m.send('division', 9);   // 1 Takt
-    m.send('tempo', 100, 0.1);
-    m.send('analysisready');                       // beattrack angefordert, Beats noch nicht da
-    assert.ok(!m.ctx.beatsOK());
+    m.send('padana', 0, 100, 0, 0);
+    assert.ok(m.ctx.tempoTrusted(0) && !m.ctx.beatsOK(0));
     m.take(); m.send('note', 36, 100, 1);
     var wp = m.on(3, 'wplay')[0], wr = m.on(3, 'rel')[0];
     assert.ok(Math.abs(wp[3] - 1.2) < 1e-9, 'festes Verhältnis 120/100');
     assert.ok(Math.abs((wr[2] + wr[3]) - 2000) < 1e-6, '1 Takt bei 120 BPM');
     assert.ok(m.on(2, 'selinfo').pop()[2].indexOf(' T') < 0, 'ohne Beats keine Taktposition');
-    // Beats weichen vom Quelltempo ab (96 statt 100 BPM): Slice endet auf dem Raster der Quelle, nicht beim festen Verhältnis
-    var b = beatsFor(96, 400000);
-    m.send('beatsclear'); m.send.apply(null, ['beatsadd'].concat(b)); m.send('beatsdone', 0, b.length);
-    assert.ok(m.ctx.beatsOK(), 'erkanntes Tempo + Beats');
+    // Beats weichen vom Tempo ab (96 statt 100 BPM): Slice endet auf dem Raster der Quelle
+    m.send.apply(null, padanaMsg(0, 100, 0, beatsFor(96, 400000), 0, STARTS[0], LENS[0]));
+    assert.ok(m.ctx.beatsOK(0));
     m.take(); m.send('note', 36, 100, 1);
     wp = m.on(3, 'wplay')[0]; wr = m.on(3, 'rel')[0];
     assert.ok(Math.abs((wr[2] + wr[3]) * wp[3] - 4 * 60000 / 96) < 1, 'Raster der Quelle: 4 Schläge à 625 ms');
     assert.ok(/  T\d+\.\d/.test(m.on(2, 'selinfo').pop()[2]), 'Taktposition mit Beats');
-    // kein Tempo: W: kein Tempo
-    m.send.apply(null, bankMsg(8, 2, 0, '/x/8.wav')); m.take();
-    m.send('updateSel');
+    // Pad ohne padana: W: kein Tempo, Sampler-Stimme
+    m.take(); m.send('note', 37, 100, 1);
+    assert.strictEqual(m.on(3, 'wplay').length, 0);
+    assert.strictEqual(m.on(0, 'pos').length, 1);
     assert.ok(m.on(2, 'selinfo').pop()[2].indexOf('W: kein Tempo') > 0);
 });
 
-t('Tempo vom Editor: bpm <video> <bpm> bestätigt, kein bpmset, Analyse überschreibt es nicht', function () {
+t('Weggefallen: tempo, tuning, beats*, bpm mit Video, keine Analyse-Anfragen mehr', function () {
     var m = load(SRC);
     startDevice(m);
-    m.send.apply(null, bankMsg(7, 1, 0, '/x/7.wav'));
+    ['tempo', 'tuning', 'beatsclear', 'beatsadd', 'beatsdone', 'requestBeats', 'requestAll', 'analysisSpan',
+     'srcBpm', 'tuningCents', 'videoId', 'beatsDown', 'ANALYSIS_MS'].forEach(function (f) {
+        assert.ok(!(f in m.ctx), f + ' gibt es nicht mehr');
+    });
+    m.send('bpm', 124);
+    sendBank(m, 7, 1, 100, '/x/7.wav');
     m.send('analysisready');
-    m.send('tempo', 99.5, 0.1);
-    assert.strictEqual(m.ctx.srcBpm, 99.5);
-    m.take();
-    m.send('bpm', 'F2RnxZnubCM', 100);
-    assert.strictEqual(m.ctx.srcBpm, 100);
-    assert.strictEqual(m.ctx.srcAuto, 0);
-    assert.deepStrictEqual(m.on(1, 'bpmset'), [], 'kein Echo');
-    assert.deepStrictEqual(m.on(1, 'beattrack'), [[1, 'beattrack', 100]]);
-    m.send('tempo', 120, 0.9);
-    assert.strictEqual(m.ctx.srcBpm, 100, 'bestätigt bleibt');
-    m.send('bpm', 'anderesVide', 80);
-    assert.strictEqual(m.ctx.srcBpm, 100, 'anderes Video zählt nicht');
-    m.send('bpm', 128);
-    assert.strictEqual(m.ctx.P.bpm, 128, 'Lives Tempo kommt weiter an');
-    // bank mit bestätigtem Tempo
-    m.send.apply(null, bankMsg(8, 2, 87, '/x/8.wav'));
-    m.send('tempo', 120, 0.9);
-    assert.strictEqual(m.ctx.srcBpm, 87);
+    [['division', 0], ['division', 10], ['rate', 2], ['playmode', 1], ['warp', 1], ['bpm', 128]].forEach(function (x) { m.send.apply(null, x); });
+    assert.deepStrictEqual(m.out.filter(function (o) { return o[0] === 1 && (o[1] === 'analyzeall' || o[1] === 'beattrack'); }), []);
+    assert.strictEqual(m.ctx.P.bpm, 128, 'Lives Tempo kommt an');
 });
 
 t('Session: speichert nur bankId, liest alte Dateien, bankId -> bankopen', function () {
@@ -392,7 +391,7 @@ t('Session: speichert nur bankId, liest alte Dateien, bankId -> bankopen', funct
     assert.deepStrictEqual(m.on(1, 'bankopen'), [[1, 'bankopen', 7]]);
     assert.deepStrictEqual(m.on(1, 'bankload'), []);
     assert.deepStrictEqual(m.on(2, 'status').pop(), [2, 'status', 'Lade letzten Stand …']);
-    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    sendBank(m, 7, 1, 100, '/x/7.wav');
     var saved = JSON.parse(decodeURIComponent(m.on(1, 'savestate').pop()[2]));
     assert.deepStrictEqual(saved, { bankId: 7 });
     assert.deepStrictEqual(Object.keys(m.ctx.st), ['bankId']);
@@ -438,7 +437,7 @@ t('Ohne Bank: 1.x-/Teletext-Session, statenone, bankId 0 -> bankload <Regler>, e
     m.send('statenone');
     assert.deepStrictEqual(m.on(1, 'bankload'), [[1, 'bankload', 128]], 'Regler höchstens 128');
     // Bank kommt: kein weiteres bankload bei späteren libstate ok
-    m.send.apply(null, bankMsg(7, 3, 100, '/x/7.wav'));
+    sendBank(m, 7, 3, 100, '/x/7.wav');
     m.take(); m.send('libstate', 3, 3, 'ok');
     assert.deepStrictEqual(m.on(1, 'bankload'), []);
 });
@@ -449,7 +448,7 @@ t('bankgone: Bank gelöscht -> bankload <Regler>, Pads tun nichts bis zur neuen 
     m.send('init'); m.fire(m.ctx.initTask);
     m.send('libstate', 5, 0, 'ok');
     m.send('state', encodeURIComponent(JSON.stringify({ bankId: 7 })));
-    m.send.apply(null, bankMsg(7, 4, 100, '/x/7.wav'));
+    sendBank(m, 7, 4, 100, '/x/7.wav');
     m.fire(m.ctx.replaceTask);
     m.send('note', 36, 100, 1);                    // klingt
     m.take();
@@ -465,7 +464,7 @@ t('bankgone: Bank gelöscht -> bankload <Regler>, Pads tun nichts bis zur neuen 
     m.take(); m.send('note', 36, 100, 1); m.send('padhit', 2);
     assert.deepStrictEqual(m.on(0), [], 'nichts geladen: stumm');
     assert.deepStrictEqual(m.on(1, 'playing'), []);
-    m.send.apply(null, bankMsg(9, 4, 100, '/x/9.wav'));
+    sendBank(m, 9, 4, 100, '/x/9.wav');
     m.take(); m.send('note', 36, 100, 1);
     assert.strictEqual(m.on(0, 'pos').length, 1, 'Nachrücker spielt');
 });
@@ -484,7 +483,7 @@ t('bankfail ohne klingende Bank: stumm, „nicht ladbar“, Status', function ()
     m.take(); m.send('note', 36, 100, 1);
     assert.deepStrictEqual(m.on(0), []);
     // andere Bank gewählt: spielt
-    m.send.apply(null, bankMsg(8, 2, 100, '/x/8.wav'));
+    sendBank(m, 8, 2, 100, '/x/8.wav');
     assert.strictEqual(m.ctx.muted, 0);
     m.take(); m.send('note', 36, 100, 1);
     assert.strictEqual(m.on(0, 'pos').length, 1);
@@ -493,7 +492,7 @@ t('bankfail ohne klingende Bank: stumm, „nicht ladbar“, Status', function ()
 t('Bibliothek leer/kaputt: stumm, wieder ok -> bankopen', function () {
     var m = load(SRC);
     startDevice(m);
-    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    sendBank(m, 7, 1, 100, '/x/7.wav');
     m.take();
     m.send('libstate', 0, 0, 'kaputt');
     assert.deepStrictEqual(m.on(4), [[4, 'clear']]);
@@ -515,24 +514,11 @@ t('trackname über LiveAPI', function () {
     assert.deepStrictEqual(m.on(1, 'trackname'), [[1, 'trackname', '1-YT Sampler']]);
 });
 
-// Analysefenster fest 4 s: Slice-Länge, Rate und Mode ändern die Tonart (und damit Tune) nicht
-t('analyzeall: festes Fenster unabhängig von Division, Rate, Mode', function () {
-    var m = load(SRC);
-    startDevice(m);
-    m.send('bpm', 124);
-    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
-    m.send('analysisready');
-    [['division', 0], ['division', 10], ['rate', 2], ['playmode', 1], ['playmode', 0]].forEach(function (s) { m.send.apply(null, s); });
-    var spans = m.out.filter(function (o) { return o[0] === 1 && o[1] === 'analyzeall'; }).map(function (o) { return o[2]; });
-    assert.ok(spans.length >= 5);
-    spans.forEach(function (v) { assert.strictEqual(v, 4000); });
-});
-
 // Quant-Raster: nur der Tick des eingestellten Rasters zählt, Wartefenster wächst mit dem Raster
 t('Quant Div: tick <index> nur vom eingestellten Raster, Anschlag wartet darauf', function () {
     var m = load(SRC);
     startDevice(m);
-    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    sendBank(m, 7, 1, 100, '/x/7.wav');
     m.send('bpm', 120);
     m.send('quantize', 1);
     m.send('quantdiv', 3);                 // 1/4 = 500 ms bei 120 BPM
@@ -565,7 +551,7 @@ t('Catch: bei 1/8 und 1/4 zu spät (erste Rasterhälfte) später einsteigen, zu 
     function setup(qdiv, on) {
         var m = load(SRC);
         startDevice(m);
-        m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+        sendBank(m, 7, 1, 100, '/x/7.wav');
         m.send('bpm', 120);
         m.send('quantize', 1); m.send('quantdiv', qdiv); m.send('quantcatch', on);
         m.send('division', 7);             // Slice 1/4 = 500 ms
@@ -604,14 +590,14 @@ t('Catch: bei 1/8 und 1/4 zu spät (erste Rasterhälfte) später einsteigen, zu 
 t('bankbusy: Anschlag wartet auf neue Snippets im Buffer und spielt dann die neue Stelle', function () {
     var m = load(SRC);
     startDevice(m);
-    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    sendBank(m, 7, 1, 100, '/x/7.wav');
     m.send('bpm', 120); m.take();
     m.send('bankbusy');
     m.send('padhit', 2); m.send('padup', 2);
     assert.strictEqual(m.on(1, 'playing').length, 0, 'wartet');
     m.send('bufloaded');                   // alter Ladevorgang: zählt erst nach bank
     assert.strictEqual(m.on(1, 'playing').length, 0, 'noch keine neue Bank');
-    var neu = bankMsg(7, 1, 100, '/x/7.wav'); neu[3 + 1 + 2] = 77777;   // ['bank', id, nr, bpm, s0, s1, s2 …]
+    var neu = bankMsg(7, 1, '/x/7.wav'); neu[3 + 2] = 77777;   // ['bank', id, nr, s0, s1, s2 …]
     m.send.apply(null, neu);
     assert.strictEqual(m.on(1, 'playing').length, 0, 'Buffer lädt noch');
     m.send('bufloaded');
@@ -620,6 +606,219 @@ t('bankbusy: Anschlag wartet auf neue Snippets im Buffer und spielt dann die neu
     assert.strictEqual(p[0][3], 77777, 'neue Stelle');
     m.take(); m.send('padhit', 3);
     assert.strictEqual(m.on(1, 'playing').length, 1, 'danach wieder sofort');
+});
+
+// ---------- Mix-Bänke (Spec Mix 4.1–4.4): Pads 0–7 aus Video A (100 BPM), 8–15 aus Video B (80 BPM) ----------
+function mixDevice(opt) {
+    var m = load(SRC);
+    startDevice(m);
+    m.send('libstate', 3, 1, 'ok');
+    var lens = LENS.slice();
+    (opt && opt.empty || []).forEach(function (k) { lens[k] = 0; });
+    m.send.apply(null, bankMsg(13, 2, '/x/13.wav', STARTS, lens));
+    m.fire(m.ctx.replaceTask);
+    var bA = beatsFor(100, 400000), bB = beatsFor(80, 400000);
+    for (var i = 0; i < 16; i++) {
+        if (!lens[i]) continue;
+        if (i < 8) m.send.apply(null, padanaMsg(i, 100, 0, bA, 0, STARTS[i], lens[i]));
+        else m.send.apply(null, padanaMsg(i, 80, 50, bB, 1, STARTS[i], lens[i]));
+    }
+    m.send('analysisready');
+    m.send('bpm', 120);
+    return { m: m, bA: bA, bB: bB, lens: lens };
+}
+
+t('Mix: Warp-Faktor pro Pad aus dem Tempo seines Videos', function () {
+    var m = mixDevice().m;
+    m.send('warp', 1); m.send('playmode', 1);        // Hold: festes Verhältnis, Raster egal
+    m.take(); m.send('note', 36 + 2, 100, 1); m.send('note', 36 + 10, 100, 1);
+    var wp = m.on(3, 'wplay');
+    assert.strictEqual(wp.length, 2);
+    assert.ok(Math.abs(wp[0][3] - 1.2) < 1e-9, 'Video A: 120/100');
+    assert.ok(Math.abs(wp[1][3] - 1.5) < 1e-9, 'Video B: 120/80');
+    // Trigger mit Raster: 1 Takt = 4 Schläge im Tempo des eigenen Videos
+    m.send('playmode', 0); m.send('division', 9); m.take();
+    m.send('note', 36 + 2, 100, 1); m.send('note', 36 + 10, 100, 1);
+    wp = m.on(3, 'wplay'); var wr = m.on(3, 'rel');
+    assert.ok(Math.abs((wr[0][2] + wr[0][3]) * wp[0][3] - 2400) < 1, 'A: 4 × 600 ms');
+    assert.ok(Math.abs((wr[1][2] + wr[1][3]) * wp[1][3] - 3000) < 1, 'B: 4 × 750 ms');
+});
+
+t('Mix: Tune mit der Stimmung pro Pad (cent)', function () {
+    var m = mixDevice().m;
+    var c = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];   // nur C: in C-Dur ohne Verschiebung
+    m.send.apply(null, ['padinfo', 1, 0.9, 0, 0].concat(c));
+    m.send.apply(null, ['padinfo', 9, 0.9, 0, 0].concat(c));
+    m.send('tune', 1);
+    assert.strictEqual(m.ctx.pitchRate(1), 1, 'Video A: 0 ct');
+    assert.ok(Math.abs(m.ctx.pitchRate(9) - Math.pow(2, -0.5 / 12)) < 1e-12, 'Video B: −50 ct');
+    m.take(); m.send('note', 36 + 9, 100, 1);
+    assert.ok(/ -50 ct/.test(m.on(2, 'selinfo').pop()[2]));
+    m.take(); m.send('note', 36 + 1, 100, 1);
+    assert.ok(!/ ct/.test(m.on(2, 'selinfo').pop()[2]));
+});
+
+t('Mix: Overlay-Linien pro Fach aus den Schlägen seines Videos, Einsen nach off', function () {
+    var x = mixDevice(), m = x.m;
+    m.take(); m.send('sendGridUI');
+    var beats = [], bars = [];
+    m.on(2, 'grid').forEach(function (o) { if (o[2] === 'beats') beats = beats.concat(o.slice(3)); if (o[2] === 'bars') bars = bars.concat(o.slice(3)); });
+    var want = [], wantBars = [];
+    for (var i = 0; i < 16; i++) {
+        var b = i < 8 ? x.bA : x.bB, down = i < 8 ? 0 : 1;
+        for (var j = 0; j < b.length; j++) {
+            if (b[j] < STARTS[i] || b[j] >= STARTS[i] + LENS[i]) continue;
+            want.push(i * 16000 + b[j] - STARTS[i]);
+            if ((j - down) % 4 === 0) wantBars.push(i * 16000 + b[j] - STARTS[i]);
+        }
+    }
+    assert.deepStrictEqual(beats, want);
+    assert.deepStrictEqual(bars, wantBars);
+    // Abstände: Fach 0 alle 600 ms, Fach 8 alle 750 ms
+    var f0 = beats.filter(function (v) { return v < 16000; }), f8 = beats.filter(function (v) { return v >= 128000 && v < 144000; });
+    assert.ok(Math.abs(f0[1] - f0[0] - 600) < 0.01 && Math.abs(f8[1] - f8[0] - 750) < 0.01);
+    // Pad ohne Analyse: keine Linien in seinem Fach, die anderen bleiben
+    m.send.apply(null, bankMsg(13, 2, '/x/13.wav'));
+    m.send('padana', 4, 100, 0, 0);                  // Tempo, aber keine Schläge
+    m.send.apply(null, padanaMsg(5, 100, 0, x.bA, 0, STARTS[5], LENS[5]));
+    m.take(); m.send('sendGridUI');
+    beats = [];
+    m.on(2, 'grid').forEach(function (o) { if (o[2] === 'beats') beats = beats.concat(o.slice(3)); });
+    assert.ok(beats.length > 0 && beats.every(function (v) { return Math.floor(v / 16000) === 5; }), 'nur Fach 5');
+    assert.deepStrictEqual(m.on(2, 'grid').filter(function (o) { return o[2] === 'show'; }), [[2, 'grid', 'show', 1]]);
+});
+
+t('Mix: leerer Platz spielt nichts, meldet aber sel, dunkel per padempty', function () {
+    var x = mixDevice({ empty: [3, 12] }), m = x.m;
+    var pe = m.out.filter(function (o) { return o[0] === 2 && o[1] === 'padempty'; }).pop();
+    var want = [2, 'padempty']; for (var i = 0; i < 16; i++) want.push(i === 3 || i === 12 ? 1 : 0);
+    assert.deepStrictEqual(pe, want);
+    m.take();
+    m.send('note', 36 + 3, 100, 1);
+    assert.deepStrictEqual(m.on(0), [], 'kein pos');
+    assert.deepStrictEqual(m.on(3), [], 'kein wplay');
+    assert.deepStrictEqual(m.on(1, 'playing'), []);
+    assert.deepStrictEqual(m.on(2, 'padflash'), []);
+    assert.deepStrictEqual(m.on(2, 'selinfo').pop(), [2, 'selinfo', 'Pad 4  leer']);
+    assert.deepStrictEqual(m.on(2, 'padsel').pop(), [2, 'padsel', 3]);
+    assert.strictEqual(bankstates(m).pop()[3], 3, 'sel 3 an Node (Editor)');
+    // Warp, Hold, Rückwärts: auch still
+    m.send('warp', 1); m.send('playmode', 1); m.send('reverse', 1); m.take();
+    m.send('note', 36 + 12, 100, 1); m.send('note', 36 + 12, 0, 1);
+    assert.deepStrictEqual(m.on(0).concat(m.on(3)).filter(function (o) { return o[1] !== 'gateoff' && o[1] !== 'target'; }), []);
+    assert.deepStrictEqual(m.on(1, 'playing'), []);
+    // belegtes Pad daneben klingt
+    m.take(); m.send('note', 36 + 4, 100, 1);
+    assert.strictEqual(m.on(3, 'wplay').length, 1);
+    // nichts geladen (Bibliothek kaputt): keine dunklen Pads mehr
+    m.take(); m.send('libstate', 0, 0, 'kaputt');
+    pe = m.on(2, 'padempty').pop();
+    assert.ok(pe && pe.slice(2).every(function (v) { return v === 0; }));
+});
+
+t('Mix: padana vor bank verfällt, nach bank gilt, einzeln nach Tempo-Korrektur', function () {
+    var m = load(SRC);
+    startDevice(m);
+    m.send('bpm', 120); m.send('warp', 1); m.send('playmode', 1);
+    m.send('padana', 0, 100, 0, 0);
+    m.send.apply(null, bankMsg(13, 2, '/x/13.wav'));
+    assert.strictEqual(m.ctx.PA[0], null, 'bank leert PA');
+    m.take(); m.send('note', 36, 100, 1);
+    assert.strictEqual(m.on(3, 'wplay').length, 0, 'ohne Tempo kein Warp');
+    m.send('padana', 0, 100, 0, 0);
+    m.take(); m.send('note', 36, 100, 1);
+    assert.ok(Math.abs(m.on(3, 'wplay')[0][3] - 1.2) < 1e-9);
+    // Editor korrigiert das Tempo: nur dieses Pad kommt neu
+    m.send('padana', 0, 96, 0, 0);
+    m.take(); m.send('note', 36, 100, 1);
+    assert.ok(Math.abs(m.on(3, 'wplay')[0][3] - 1.25) < 1e-9);
+    m.send('padana', 99, 96, 0, 0); m.send('padana', -1, 96, 0, 0);   // außerhalb: nichts
+    assert.strictEqual(m.ctx.PA.length, 16);
+});
+
+// Golden-Test (Spec Mix 4.5): Track-Bank, Anschläge und Reglerwechsel. Die Ausgänge 0, 2, 3 und playing/playstop
+// müssen gleich bleiben wie in 3.0 (aufgenommen in golden_trackbank.json). Nur das Laden unterscheidet sich.
+// Aufgenommen mit dem 3.0-Stand (Commit „Golden-Aufnahme“, Laden per bank/tuning/beats*), nicht neu aufnehmen.
+var GOLDEN = path.join(__dirname, 'golden_trackbank.json');
+var G = { bpm: 99.5, cent: 23, down: 2 };
+var G_KEYS = [];                                   // padinfo pro Pad: konf, grundton, moll, chroma
+for (i = 0; i < 16; i++) {
+    var c = []; for (var q = 0; q < 12; q++) c.push(Math.round((0.5 + 0.5 * Math.sin(i * 1.7 + q * 0.9)) * 1000) / 1000);
+    G_KEYS.push([i % 5 === 4 ? 0.3 : 0.6 + (i % 3) * 0.1, (i * 5) % 12, i % 2].concat(c));
+}
+// Schläge mit Schwankung, damit Warp dem Raster folgt und nicht dem festen Verhältnis
+function goldenBeats() {
+    var b = [], t = 120, p = 60000 / G.bpm;
+    while (t < 400000) { b.push(Math.round(t * 1000) / 1000); t += p * (1 + 0.03 * Math.sin(b.length * 0.7)); }
+    return b;
+}
+function goldenLoad(m) {
+    m.send('libstate', 3, 1, 'ok');
+    m.send.apply(null, bankMsg(7, 1, '/x/7.wav'));
+    m.fire(m.ctx.replaceTask);
+    var b = goldenBeats();
+    for (var i = 0; i < 16; i++) m.send.apply(null, padanaMsg(i, G.bpm, G.cent, b, G.down, STARTS[i], LENS[i]));
+    for (i = 0; i < 16; i++) m.send.apply(null, ['padinfo', i].concat(G_KEYS[i]));
+    m.send('analysisready');
+}
+function goldenScenario(m) {
+    var rec = [];
+    function step(name, fn) {
+        m.take(); fn();
+        rec.push([name, m.out.filter(function (o) {
+            return o[0] === 0 || o[0] === 2 || o[0] === 3 || (o[0] === 1 && (o[1] === 'playing' || o[1] === 'playstop'));
+        })]);
+        m.clock += 700;
+    }
+    function hits() {
+        [0, 3, 5, 9, 15].forEach(function (i) {
+            m.send('note', 36 + i, 100, 1); m.clock += 60; m.send('note', 36 + i, 0, 1); m.clock += 40;
+        });
+    }
+    step('grid', function () { m.send('sendGridUI'); });
+    step('bpm', function () { m.send('bpm', 120); });
+    [[], [['warp', 1]], [['division', 9]], [['division', 10]], [['division', 2]], [['reverse', 1]], [['warp', 0]],
+     [['playmode', 1]], [['reverse', 0]], [['warp', 1]], [['reverse', 1]], [['playmode', 0], ['reverse', 0], ['division', 5], ['tune', 1]],
+     [['rate', 1.3]], [['warp', 0]], [['scaleroot', 2]], [['bpm', 93]], [['warp', 1], ['division', 7]], [['tune', 0]]
+    ].forEach(function (cfg, n) {
+        step('cfg' + n, function () { cfg.forEach(function (s) { m.send.apply(null, s); }); hits(); });
+    });
+    // Quant + Catch mit Warp: zu spät (Catch), zu früh (wartet auf den Tick), 1/4
+    step('quant', function () {
+        m.send('quantize', 1); m.send('quantdiv', 2); m.send('quantcatch', 1); m.send('tick', 2);
+        m.clock += 100; m.send('padhit', 2);
+        m.clock += 200; m.send('padhit', 3);
+        m.clock += 50; m.send('tick', 2);
+        m.send('quantdiv', 3); m.send('tick', 3);
+        m.clock += 200; m.send('padhit', 6);
+        m.clock += 100; m.send('padhit', 7);
+        m.clock += 200; m.send('tick', 3);
+        m.send('warp', 0); m.clock += 100; m.send('padhit', 8);
+    });
+    return rec;
+}
+function closeEnough(a, b, where) {
+    if (typeof a === 'number' && typeof b === 'number') {
+        assert.ok(Math.abs(a - b) < 1e-6, where + ': ' + a + ' != ' + b);
+    } else if (Array.isArray(a)) {
+        assert.ok(Array.isArray(b) && a.length === b.length, where + ': Länge ' + JSON.stringify(a) + ' / ' + JSON.stringify(b));
+        for (var k = 0; k < a.length; k++) closeEnough(a[k], b[k], where);
+    } else assert.strictEqual(a, b, where);
+}
+function goldenRun(loader) {
+    var m = load(SRC);
+    startDevice(m);
+    loader(m);
+    return goldenScenario(m);
+}
+t('Golden: Track-Bank klingt wie in 3.0 (Ausgänge 0, 2, 3, playing)', function () {
+    var want = JSON.parse(fs.readFileSync(GOLDEN, 'utf8')), got = goldenRun(goldenLoad);
+    assert.strictEqual(got.length, want.length);
+    for (var k = 0; k < want.length; k++) {
+        var w = want[k], g = got[k];
+        assert.strictEqual(g[0], w[0]);
+        for (var n = 0; n < Math.max(w[1].length, g[1].length); n++) closeEnough(g[1][n], w[1][n], w[0] + ' #' + n);
+    }
 });
 
 var bad = 0;
