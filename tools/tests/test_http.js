@@ -161,13 +161,15 @@ t('SSE: retry, hello, lib, device, cache beim Verbinden; beats erst mit aktiver 
   const a = events();
   await a.wait((ev) => ev === 'cache', 'cache');
   await sleep(60);
-  assert.deepStrictEqual(a.events.map((e) => e[0]), ['retry', 'hello', 'lib', 'device', 'cache']);
+  // Nur der Anfang zählt: Das Entprellen (150 ms) schneidet auf schnellen Rechnern schon während des Verbindens, danach kommen job und lib
+  const order = (x, n) => x.events.map((e) => e[0]).filter((e) => e !== 'job').slice(0, n);
+  assert.deepStrictEqual(order(a, 5), ['retry', 'hello', 'lib', 'device', 'cache']);
   assert.strictEqual(a.events[0][1], 1500);
   assert.deepStrictEqual(a.last('hello'), { port, session: 0, track: '' });
   const lib = a.last('lib');
   assert.strictEqual(lib.state, 'ok');
   assert.strictEqual(lib.by, 'test');
-  // Bank 1 und 3 schneidet das Entprellen 500 ms nach create: Auf langsamen Rechnern ist das vor dem Verbinden schon passiert
+  // Bank 1 und 3 schneidet das Entprellen 150 ms nach create: Auf langsamen Rechnern ist das vor dem Verbinden schon passiert
   assert.deepStrictEqual(lib.banks.map((b) => [b.id, b.name, b.video, b.snip === 'ok' && b.id !== ids[1] ? 'stale' : b.snip, b.wav]),
     [[ids[0], 'Eins', V1, 'stale', true], [ids[1], 'Zwei', V2, 'ok', false], [ids[2], 'Drei', V1, 'stale', true]]);
   assert.deepStrictEqual(lib.banks[0].starts, STARTS);
@@ -187,7 +189,7 @@ t('SSE: retry, hello, lib, device, cache beim Verbinden; beats erst mit aktiver 
 
   const c = events();
   await c.wait((ev) => ev === 'beats', 'beats beim Verbinden');
-  assert.deepStrictEqual(c.events.map((e) => e[0]), ['retry', 'hello', 'lib', 'device', 'cache', 'beats']);
+  assert.deepStrictEqual(order(c, 6), ['retry', 'hello', 'lib', 'device', 'cache', 'beats']);
   done();
 });
 
