@@ -100,7 +100,8 @@ t('padana pro Pad für zwei Videos: bpm, cent, Fenster ± 4 Schläge, off auf di
   node.libChange('setpad', { id, pad: 1, video: X, start: 6000, info: { title: 'X' } }, 't');
   node.libChange('setpad', { id, pad: 3, video: X, start: 50000 }, 't');   // nur 10 s bis zum Ende
   const out = await deviceOut(node, max, id);
-  assert.deepStrictEqual(out[1], ['bank', id, 2, 8000, 6000, 0, 50000, ...Array(12).fill(0), 16000, 16000, 0, 10000, ...Array(12).fill(0), path.join(node.SNIP_DIR, `${id}.wav`)]);
+  // neue Bank liegt in der Ablage: Nummer 0
+  assert.deepStrictEqual(out[1], ['bank', id, 0, 8000, 6000, 0, 50000, ...Array(12).fill(0), 16000, 16000, 0, 10000, ...Array(12).fill(0), path.join(node.SNIP_DIR, `${id}.wav`)]);
   const pa = padana(out);
   assert.deepStrictEqual(pa.map((p) => p.i), [0, 1, 3], 'leere Plätze: kein padana');
   assert.deepStrictEqual(out.filter((m) => m[0] === 'padinfo').map((m) => m[1]), [0, 1, 3]);

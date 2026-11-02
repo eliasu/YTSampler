@@ -340,6 +340,34 @@ t('Prev/Next: Enden, über 128, 350 ms Ruhe', function () {
     assert.notStrictEqual(m.on(2, 'status').pop()[2], 'nicht ladbar', 'nach 2 s wieder die normale Zeile');
 });
 
+t('Ablage-Bank (Nummer 0): Anzeige „-“, Regler bleibt; Prev/Next und Regler zurück auf die Bühne', function () {
+    var m = load(SRC);
+    startDevice(m);
+    m.values.bank = 3;
+    m.send('libstate', 5, 3, 'ok');
+    sendBank(m, 7, 3, 100, '/x/7.wav');
+    m.take(); m.named = [];
+    sendBank(m, 9, 0, 100, '/x/9.wav');            // Ablage-Bank aus dem Editor
+    assert.deepStrictEqual(m.on(2, 'shownr').pop(), [2, 'shownr', '-']);
+    assert.deepStrictEqual(m.named, [], 'Regler bleibt auf 3');
+    ['banknext', 'bankprev'].forEach(function (b) {
+        m.take(); m.ctx.peekNr = 0;
+        m.send(b);
+        assert.deepStrictEqual(m.on(1, 'bankpeek'), [[1, 'bankpeek', 3]], b + ' von „-“: Bank am Regler');
+    });
+    m.fire(m.ctx.selTask);
+    m.take(); m.ctx.peekNr = 0;
+    m.send('banknum', 4);
+    assert.deepStrictEqual(m.on(1, 'bankpeek'), [[1, 'bankpeek', 4]], 'Regler: Bank seines Werts');
+    m.fire(m.ctx.selTask);
+    // aktive Bühnen-Bank wandert in die Ablage: libstate mit Nummer 0
+    sendBank(m, 7, 3, 100, '/x/7.wav');
+    m.take();
+    m.send('libstate', 4, 0, 'ok');
+    assert.strictEqual(m.ctx.B.nr, 0);
+    assert.deepStrictEqual(m.on(2, 'shownr').pop(), [2, 'shownr', '-']);
+});
+
 t('Tempo pro Pad: Warp ohne Beats festes Verhältnis, mit Beats folgt das Raster, ohne padana kein Tempo', function () {
     var m = load(SRC);
     startDevice(m);

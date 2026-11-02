@@ -165,22 +165,58 @@ t('Vorgänge: rename, duplicate, move, setstart, setstarts, swap, tempo', () => 
   let r = readLib(node);
   assert.deepStrictEqual(r.banks.map((b) => b.id), [1, 4, 3]);
   assert.strictEqual(r.banks[1].name, 'Funk (Kopie)');
+  assert.strictEqual(r.banks[1].stage, false, 'Kopie landet in der Ablage');
   assert.strictEqual(r.nextId, 5);
-  node.libChange('move', { id: 3, to: 1 });
+  // move: Platz innerhalb des eigenen Bereichs (Bühne 1, 3; Ablage 4)
+  assert.deepStrictEqual(node.libChange('move', { id: 3, to: 1 }), { at: 1 });
   assert.deepStrictEqual(readLib(node).banks.map((b) => b.id), [3, 1, 4]);
-  node.libChange('move', { id: 3, to: 3 });
-  assert.deepStrictEqual(readLib(node).banks.map((b) => b.id), [1, 4, 3]);
+  node.libChange('move', { id: 3, to: 2 });
+  assert.deepStrictEqual(readLib(node).banks.map((b) => b.id), [1, 3, 4]);
+  throwsCode(() => node.libChange('move', { id: 3, to: 3 }), 'badreq');
   node.libChange('setstart', { id: 4, pad: 15, ms: 777 });
-  assert.strictEqual(readLib(node).banks[1].pads[15].start, 777);
+  assert.strictEqual(readLib(node).banks[2].pads[15].start, 777);
   assert.strictEqual(readLib(node).banks[0].pads[15].start, 1015);
   node.libChange('setstarts', { id: 4, starts: S(9) });
-  assert.deepStrictEqual(starts(readLib(node).banks[1]), S(9));
+  assert.deepStrictEqual(starts(readLib(node).banks[2]), S(9));
   node.libChange('swap', { id: 4, a: 0, b: 5 });
   r = readLib(node);
-  assert.strictEqual(r.banks[1].pads[0].start, 9005); assert.strictEqual(r.banks[1].pads[5].start, 9000);
+  assert.strictEqual(r.banks[2].pads[0].start, 9005); assert.strictEqual(r.banks[2].pads[5].start, 9000);
   assert.deepStrictEqual(node.libChange('tempo', { video: 'BBBBBBBBBBB', bpm: 120.04 }), { bpm: 120 });
   assert.strictEqual(readLib(node).videos.BBBBBBBBBBB.bpm, 120);
   assert.strictEqual(readLib(node).rev, 3 + 8);
+});
+
+t('stage: Bühne/Ablage umschalten, at im Bereich, fehlendes Feld = Bühne, Undo-Weg zurück', () => {
+  const { node } = loadNode(home(VALID()));   // Bänke 1, 3 ohne stage -> Bühne
+  const ids = () => readLib(node).banks.map((b) => b.id + (b.stage === false ? 'a' : ''));
+  node.libChange('newmix', {});              // 4 in die Ablage
+  node.libChange('newmix', {});              // 5
+  assert.deepStrictEqual(ids(), ['1', '3', '4a', '5a']);
+  assert.deepStrictEqual(node.libChange('stage', { id: 5, on: true }), { at: 3 });   // ans Ende der Bühne
+  assert.deepStrictEqual(ids(), ['1', '3', '5', '4a']);
+  assert.ok(!('stage' in readLib(node).banks[2]), 'Bühne: Feld fällt weg');
+  assert.deepStrictEqual(node.libChange('stage', { id: 4, on: true, at: 1 }), { at: 1 });
+  assert.deepStrictEqual(ids(), ['4', '1', '3', '5']);
+  assert.deepStrictEqual(node.libChange('stage', { id: 1, on: false }), { at: 1 });   // Ablage war leer
+  assert.deepStrictEqual(ids(), ['4', '3', '5', '1a']);
+  node.libChange('stage', { id: 3, on: false, at: 1 });
+  assert.deepStrictEqual(ids(), ['4', '5', '3a', '1a']);
+  node.libChange('stage', { id: 4, on: false, at: 99 });   // hinter dem Ende: ans Ende
+  node.libChange('stage', { id: 5, on: false });
+  assert.deepStrictEqual(ids(), ['3a', '1a', '4a', '5a']);
+  node.libChange('stage', { id: 1, on: true, at: 5 });     // Bühne leer: an den Anfang
+  assert.deepStrictEqual(ids(), ['1', '3a', '4a', '5a']);
+  node.libChange('move', { id: 5, to: 1 });                 // move bleibt im Bereich
+  assert.deepStrictEqual(ids(), ['1', '5a', '3a', '4a']);
+  for (const a of [{ id: 1, on: 1 }, { id: 1 }, { id: 1, on: true, at: 0 }, { id: 1, on: true, at: 1.5 }]) throwsCode(() => node.libChange('stage', a), 'badreq');
+  throwsCode(() => node.libChange('stage', { id: 99, on: true }), 'nobank');
+  // delete/restore: Ablage-Bank kommt in die Ablage zurück
+  const { removed } = node.libChange('delete', { id: 3 });
+  assert.strictEqual(removed.bank.stage, false);
+  node.libChange('restore', removed);
+  assert.deepStrictEqual(ids(), ['1', '5a', '3a', '4a']);
+  // stage ist ein unbekanntes Feld für ältere Versionen: format bleibt 2
+  assert.strictEqual(readLib(node).format, 2);
 });
 
 t('Fehlercodes: nobank, badreq; Datei bleibt dann gleich', () => {
@@ -231,7 +267,7 @@ t('newmix, setpad (mit info, null), Leeres: setstart badreq, setstarts/swap; del
   const { node } = loadNode(home(VALID()));
   assert.deepStrictEqual(node.libChange('newmix', {}), { id: 4 });
   let r = readLib(node);
-  assert.deepStrictEqual(r.banks[2], { id: 4, name: 'Neue Bank', pads: Array(16).fill(null) });
+  assert.deepStrictEqual(r.banks[2], { id: 4, name: 'Neue Bank', pads: Array(16).fill(null), stage: false });
   node.libChange('setpad', { id: 4, pad: 0, video: 'AAAAAAAAAAA', start: 1000 });
   node.libChange('setpad', { id: 4, pad: 1, video: 'CCCCCCCCCCC', start: 500, info: { title: 'C', bpm: 88 } });
   r = readLib(node);

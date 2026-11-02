@@ -660,7 +660,7 @@ function libstate(n, nr, state) {
     if (state === "ok") {
         var was = muted;
         muted = 0;
-        if (B && nr > 0) { B.nr = nr; setNamed("bank", "set", Math.min(nr, 128)); }
+        if (B) { B.nr = nr; if (nr > 0) setNamed("bank", "set", Math.min(nr, 128)); }   // 0 = Ablage: „-“, Regler bleibt
         if (was && st.bankId > 0) {                // Bibliothek wieder lesbar
             status("Lade letzten Stand …");
             outlet(1, "bankopen", st.bankId);
@@ -698,7 +698,8 @@ function banknext() { bankstep(1); }
 function bankstep(d) {
     if (!ready() || bankCount <= 0) return;
     var cur = peekNr > 0 ? peekNr : (B ? B.nr : 0);
-    var t = clamp(cur + d, 1, bankCount);              // bleibt an den Enden stehen, auch über 128
+    // von „-“ (Ablage-Bank, nichts geladen): Prev und Next holen die Bühnen-Bank, auf der der Regler steht
+    var t = cur > 0 ? clamp(cur + d, 1, bankCount) : clamp(bankTarget(), 1, bankCount);   // bleibt an den Enden stehen, auch über 128
     if (t === cur) return;
     setNamed("bank", "set", Math.min(t, 128));
     peekTo(t);

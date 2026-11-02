@@ -176,7 +176,7 @@ t('SSE: retry, hello, lib, device, cache beim Verbinden; beats erst mit aktiver 
   assert.deepStrictEqual(lib.banks.map((b) => [b.id, b.name, b.mix, b.snip === 'ok' && b.id !== ids[1] ? 'stale' : b.snip, b.wav]),
     [[ids[0], 'Eins', false, 'stale', true], [ids[1], 'Zwei', false, 'ok', false], [ids[2], 'Drei', false, 'stale', true]]);
   assert.deepStrictEqual(lib.banks[0].pads, PADS(V1));
-  assert.deepStrictEqual(Object.keys(lib.banks[0]), ['id', 'name', 'pads', 'mix', 'snip', 'wav']);
+  assert.deepStrictEqual(Object.keys(lib.banks[0]), ['id', 'name', 'pads', 'mix', 'stage', 'snip', 'wav']);
   // dur aus dem Cache, ohne WAV aus der Snippet-.json
   assert.deepStrictEqual(lib.videos, { [V1]: { title: 'Titel ' + V1, wav: true, dur: DUR }, [V2]: { title: 'Titel ' + V2, wav: false, dur: DUR } });
   assert.deepStrictEqual(Object.keys(lib.cache), ['bytes', 'warn']);
@@ -300,20 +300,26 @@ t('rename, move, duplicate, delete, restore: Antworten, by/rev in lib, Nachricht
   assert.deepStrictEqual(on('bank'), [], 'verschieben lädt nichts');
   assert.strictEqual((await cmd({ cmd: 'move', id: ids[0], to: 4 })).code, 'badreq');
 
-  // duplicate: Kopie direkt dahinter, Snippets kopiert, Kopie aktiv
+  // duplicate: Kopie direkt dahinter in der Ablage, Snippets kopiert, Kopie aktiv mit Nummer 0
   max.out = [];
   const d = await cmd({ client: 'c1', cmd: 'duplicate', id: ids[0] });
   assert.ok(d.ok && d.id === 4);
   assert.deepStrictEqual(node.libNow.lib.banks.map((b) => b.id), [ids[1], ids[2], ids[0], 4]);
   assert.ok(fs.existsSync(path.join(node.SNIP_DIR, '4.wav')));
-  assert.deepStrictEqual(bankArgs(on('bank')[0]).id, 4);
+  assert.deepStrictEqual([bankArgs(on('bank')[0]).id, bankArgs(on('bank')[0]).nr], [4, 0]);
   assert.deepStrictEqual(on('bankname')[0], ['bankname', 4, 'Neu Name (Kopie)']);
-  await a.wait((ev, d2) => ev === 'lib' && d2.banks.length === 4 && d2.banks[3].snip === 'ok', 'Kopie snip ok');
+  await a.wait((ev, d2) => ev === 'lib' && d2.banks.length === 4 && d2.banks[3].snip === 'ok' && d2.banks[3].stage === false, 'Kopie snip ok, Ablage');
 
-  // delete der aktiven (letzten) Bank: die davor wird aktiv
+  // delete der aktiven Ablage-Bank: bankgone, [js] lädt die Bank am Regler
   max.out = [];
   const del = await cmd({ client: 'c1', cmd: 'delete', id: 4 });
-  assert.deepStrictEqual(del.removed, { bank: { id: 4, name: 'Neu; Name (Kopie)', pads: PADS(V1) }, at: 4, videos: { [V1]: { title: 'Titel ' + V1 } } });
+  assert.deepStrictEqual(del.removed, { bank: { id: 4, name: 'Neu; Name (Kopie)', pads: PADS(V1), stage: false }, at: 4, videos: { [V1]: { title: 'Titel ' + V1 } } });
+  assert.deepStrictEqual([on('bank'), on('bankgone')], [[], [['bankgone', 4]]]);
+  // delete der aktiven (letzten) Bühnen-Bank: die davor wird aktiv
+  const d3 = await cmd({ cmd: 'duplicate', id: ids[1] });
+  await cmd({ cmd: 'stage', id: d3.id, on: true });
+  max.out = [];
+  await cmd({ cmd: 'delete', id: d3.id });
   assert.strictEqual(bankArgs(on('bank')[0]).id, ids[0]);
   // delete der aktiven Bank in der Mitte: Nachrücker auf demselben Platz
   await cmd({ cmd: 'move', id: ids[0], to: 2 });
@@ -567,7 +573,7 @@ t('newmix, setpad (mit/ohne info, null), leerer Platz badreq, device.video und b
   const r = await cmd({ client: 'c1', cmd: 'newmix' });
   assert.deepStrictEqual(r, { ok: true, id: 4 });
   const mb = bankArgs(on('bank')[0]);
-  assert.deepStrictEqual([mb.id, mb.nr, mb.starts, mb.lens], [4, 4, Array(16).fill(0), Array(16).fill(0)]);
+  assert.deepStrictEqual([mb.id, mb.nr, mb.starts, mb.lens], [4, 0, Array(16).fill(0), Array(16).fill(0)]);   // neue Bank: Ablage
   await a.wait((ev, d) => ev === 'lib' && d.banks.length === 4 && d.banks[3].mix === true && d.banks[3].wav === true, 'Mix-Bank im lib');
   assert.deepStrictEqual(a.last('lib').banks[3].pads, Array(16).fill(null));
   await until(() => on('analysisready').length, 'analysisready leer');
@@ -625,6 +631,55 @@ t('newmix, setpad (mit/ohne info, null), leerer Platz badreq, device.video und b
   fs.unlinkSync(path.join(node.CACHE, `${V3}.wav`));
   await cmd({ cmd: 'select', id: 4 });
   await until(() => node.hasWav(V2) && node.hasWav(V3), 'alle Videos der Bank im Cache');
+  done();
+});
+
+t('Bühne/Ablage: stage, Nummern nur auf der Bühne (bank, libstate, bankpeek, banksel, bankload, device), Nachrücker von der Bühne', async () => {
+  const { node, max, ids, on, cmd, events, done } = await setup();
+  const h = max.handlers;
+  const a = events();
+  await a.wait((ev) => ev === 'cache');
+  // Bank 2 in die Ablage: Bühne = Eins, Drei
+  assert.deepStrictEqual(await cmd({ client: 'c1', cmd: 'stage', id: ids[1], on: false }), { ok: true, at: 1 });
+  await a.wait((ev, d) => ev === 'lib' && d.banks.map((b) => b.stage).join() === 'true,true,false', 'lib mit stage, Ablage hinten');
+  assert.strictEqual((await cmd({ cmd: 'stage', id: ids[0], on: 'ja' })).code, 'badreq');
+  max.out = [];
+  h.bankpeek(2);
+  assert.deepStrictEqual(on('bankpeek'), [['bankpeek', 2, 2, 'Drei']]);
+  h.banksel(2);
+  assert.deepStrictEqual([bankArgs(on('bank')[0]).id, bankArgs(on('bank')[0]).nr], [ids[2], 2]);
+  max.out = [];
+  h.banksel(3);
+  h.bankload(9);
+  assert.deepStrictEqual(on('bank').map((m) => bankArgs(m).id), [ids[2]], 'banksel 3: nichts, bankload klammert auf die Bühne');
+  // aktive Bank in die Ablage: libstate mit Nummer 0, device.nr 0
+  max.out = [];
+  await cmd({ cmd: 'stage', id: ids[2], on: false });
+  assert.deepStrictEqual(on('libstate').pop(), ['libstate', 1, 0, 'ok']);
+  h.bankstate(ids[2], 0, 0, 0, ...Array(32).fill(0));
+  await a.wait((ev, d) => ev === 'device' && d.bankId === ids[2] && d.nr === 0, 'device nr 0');
+  // Ablage-Bank per ID (Set merkt sich die ID): lädt, Nummer 0
+  max.out = [];
+  h.bankopen(ids[1]);
+  assert.deepStrictEqual([bankArgs(on('bank')[0]).id, bankArgs(on('bank')[0]).nr], [ids[1], 0]);
+  // zurück auf die Bühne an Platz 1: Nummern verschieben sich
+  max.out = [];
+  assert.deepStrictEqual(await cmd({ cmd: 'stage', id: ids[2], on: true, at: 1 }), { ok: true, at: 1 });
+  h.bankpeek(1); h.bankpeek(2);
+  assert.deepStrictEqual(on('bankpeek').map((m) => m[3]), ['Drei', 'Eins']);
+  // Bühne Drei, Eins; Ablage Zwei. Aktive Bühnen-Bank Drei löschen: Nachrücker Eins (nicht die Ablage-Bank dazwischen)
+  await cmd({ cmd: 'move', id: ids[1], to: 1 });
+  h.banksel(1);
+  max.out = [];
+  await cmd({ cmd: 'delete', id: ids[2] });
+  assert.deepStrictEqual([bankArgs(on('bank')[0]).id, bankArgs(on('bank')[0]).nr], [ids[0], 1]);
+  // letzte Bühnen-Bank löschen, nur Ablage bleibt: bankgone, libstate 0
+  max.out = [];
+  await cmd({ cmd: 'delete', id: ids[0] });
+  assert.deepStrictEqual([on('bank'), on('bankgone'), on('libstate').pop()], [[], [['bankgone', ids[0]]], ['libstate', 0, 0, 'ok']]);
+  max.out = [];
+  h.bankload(1);
+  assert.deepStrictEqual(on('bank'), [], 'Bühne leer: bankload lädt nichts');
   done();
 });
 

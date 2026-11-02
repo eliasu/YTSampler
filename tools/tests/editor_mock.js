@@ -15,7 +15,7 @@ const ERR = {
   playonly: 'Track fehlt – nur spielbar', nosnip: 'Snippets fehlen – Bank nicht ladbar', idtaken: 'Bank existiert schon',
   notempo: 'Kein Tempo erkannt', cachebusy: 'Downloads oder Schnitte laufen – danach noch einmal', superseded: 'Neuere Suche läuft', badreq: 'Ungültiger Befehl',
 };
-const WRITE = ['rename', 'duplicate', 'delete', 'move', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'fillpads', 'newmix', 'setpad', 'tempo', 'tempook', 'fetch', 'fetchall'];
+const WRITE = ['rename', 'duplicate', 'delete', 'move', 'stage', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'fillpads', 'newmix', 'setpad', 'tempo', 'tempook', 'fetch', 'fetchall'];
 
 // Videos: id → [Titel, Analyse-BPM, Dauer s]
 const VIDEOS = {
@@ -87,7 +87,7 @@ function createMock(opts = {}) {
   // device.video = Video des gewählten Pads (Spec 3.2), '-' bei leerem Platz
   function devFor(b) {
     const sel = m.dev ? m.dev.sel : 0, pad = b && b.pads[sel];
-    return { bankId: b ? b.id : 0, nr: b ? m.lib.banks.indexOf(b) + 1 : 0, video: pad ? pad.video : '-', sel,
+    return { bankId: b ? b.id : 0, nr: b ? stageOf().indexOf(b) + 1 : 0, video: pad ? pad.video : '-', sel,
       starts: b ? b.pads.map((p) => (p ? p.start : 0)) : [], spans: b ? spanOf(b) : [], params: m.params ? { ...m.params } : null };
   }
   m.scenario = function (name) {
@@ -100,12 +100,23 @@ function createMock(opts = {}) {
     broadcastAll();
   };
   const byId = (id) => m.lib.banks.find((b) => b.id === id);
+  // Bühne/Ablage wie Node: stage false = Ablage, fehlt = Bühne. Nummern zählen nur die Bühne
+  const onStage = (b) => b.stage !== false;
+  const stageOf = (on = true) => m.lib.banks.filter((b) => onStage(b) === on);
+  function stageTo(b, on, at) {
+    m.lib.banks.splice(m.lib.banks.indexOf(b), 1);
+    if (on) delete b.stage; else b.stage = false;
+    const sec = stageOf(on), pos = Math.min(at == null ? Infinity : at, sec.length + 1);
+    const k = pos <= sec.length ? m.lib.banks.indexOf(sec[pos - 1]) : sec.length ? m.lib.banks.indexOf(sec[sec.length - 1]) + 1 : on ? 0 : m.lib.banks.length;
+    m.lib.banks.splice(k, 0, b);
+    return pos;
+  }
   const bankWav = (b) => videosOf(b).every((v) => m.lib.videos[v] && m.lib.videos[v].wav);
   // ein videos-Eintrag lebt, solange ein Pad ihn benutzt
   // videos-Einträge ohne Pad bleiben wie bei Node bis zum Start (Flow-Nachtrag)
   function libMsg(by) {
     const { rev, state, error, banks, videos } = m.lib;
-    return { rev, by, state, error, cache: cacheMsg(), banks: banks.map((b) => ({ ...b, mix: isMix(b), wav: bankWav(b) })), videos };
+    return { rev, by, state, error, cache: cacheMsg(), banks: banks.map((b) => ({ ...b, mix: isMix(b), stage: onStage(b), wav: bankWav(b) })), videos };
   }
   m.cacheBytes = opts.cacheBytes != null ? opts.cacheBytes : 4.2e9;
   function cacheMsg() { const bytes = m.cacheBytes; return { bytes, warn: bytes >= 1e10 }; }
@@ -148,7 +159,7 @@ function createMock(opts = {}) {
   function cmd(q) {
     const c = q.cmd, b = q.id != null ? byId(q.id) : null;
     if (WRITE.includes(c) && (m.lib.state === 'kaputt' || m.lib.state === 'neuer')) return fail(m.lib.state === 'kaputt' ? 'libbroken' : 'libnewer');
-    if (['select', 'rename', 'duplicate', 'delete', 'move', 'setstart', 'setstarts', 'swap', 'roll', 'setpad', 'fillpads'].includes(c) && !b) return fail(q.id == null ? 'badreq' : 'nobank');
+    if (['select', 'rename', 'duplicate', 'delete', 'move', 'stage', 'setstart', 'setstarts', 'swap', 'roll', 'setpad', 'fillpads'].includes(c) && !b) return fail(q.id == null ? 'badreq' : 'nobank');
     const pad = b && isPad(q.pad) ? b.pads[q.pad] : null, padWav = pad && m.lib.videos[pad.video].wav;
     const known = (video, start) => m.lib.banks.some((x) => x.pads.some((p) => p && p.video === video && p.start === start)); // Quelle ohne WAV (Spec 2.2)
     switch (c) {
@@ -159,22 +170,27 @@ function createMock(opts = {}) {
         if (typeof q.name !== 'string') return fail('badreq');
         b.name = q.name.trim().slice(0, 100); changed(q.client); return { ok: true };
       case 'duplicate': {
-        const k = { ...b, id: m.lib.nextId++, name: b.name + ' (Kopie)', pads: b.pads.map((p) => p && { ...p }) };
+        const k = { ...b, id: m.lib.nextId++, name: b.name + ' (Kopie)', pads: b.pads.map((p) => p && { ...p }), stage: false };
         m.lib.banks.splice(m.lib.banks.indexOf(b) + 1, 0, k); changed(q.client); activate(k); return { ok: true, id: k.id };
       }
       case 'delete': {
-        const at = m.lib.banks.indexOf(b) + 1, videos = {};
+        const at = m.lib.banks.indexOf(b) + 1, k = stageOf().indexOf(b), videos = {};
         for (const v of videosOf(b)) { const e = m.lib.videos[v]; videos[v] = { title: e.title }; if (e.bpm) videos[v].bpm = e.bpm; }
         m.lib.banks.splice(at - 1, 1);
         if (!m.lib.banks.length) m.lib.state = 'leer';
         changed(q.client);
-        if (m.dev.bankId === b.id) activate(m.lib.banks[Math.min(at - 1, m.lib.banks.length - 1)] || null); else syncDev();
+        // Nachrücker von der Bühne; Ablage-Bank: [js] lädt die Bank am Regler, hier grob die erste der Bühne
+        if (m.dev.bankId === b.id) { const L = stageOf(); activate((k >= 0 ? L[k] || L[k - 1] : L[0]) || null); } else syncDev();
         const { snip, ...bank } = b;
         return { ok: true, removed: { bank, at, videos } };
       }
       case 'move': {
-        if (!Number.isInteger(q.to) || q.to < 1 || q.to > m.lib.banks.length) return fail('badreq');
-        m.lib.banks.splice(m.lib.banks.indexOf(b), 1); m.lib.banks.splice(q.to - 1, 0, b); changed(q.client); syncDev(); return { ok: true };
+        if (!Number.isInteger(q.to) || q.to < 1 || q.to > stageOf(onStage(b)).length) return fail('badreq');
+        const at = stageTo(b, onStage(b), q.to); changed(q.client); syncDev(); return { ok: true, at };
+      }
+      case 'stage': {
+        if (typeof q.on !== 'boolean' || (q.at !== undefined && !(Number.isInteger(q.at) && q.at >= 1))) return fail('badreq');
+        const at = stageTo(b, q.on, q.at); changed(q.client); syncDev(); return { ok: true, at };
       }
       case 'restore': {
         const r = q.bank; if (!r || !Number.isInteger(r.id) || !Number.isInteger(q.at)) return fail('badreq');
@@ -214,7 +230,7 @@ function createMock(opts = {}) {
         b.pads[q.pad] = { video: q.video, start: q.start }; changed(q.client); syncDev(); return { ok: true };
       }
       case 'newmix': {
-        const k = { id: m.lib.nextId++, name: 'Neue Bank', pads: Array(16).fill(null), snip: 'ok' };
+        const k = { id: m.lib.nextId++, name: 'Neue Bank', pads: Array(16).fill(null), snip: 'ok', stage: false };
         m.lib.banks.push(k); m.lib.state = 'ok'; changed(q.client); activate(k); return { ok: true, id: k.id };
       }
       case 'hit': case 'up': {

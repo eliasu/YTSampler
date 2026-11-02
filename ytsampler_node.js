@@ -812,6 +812,8 @@ const isPad = (v) => isInt(v, 0) && v < 16;
 const isStarts = (a) => Array.isArray(a) && a.length === 16 && a.every((v) => isInt(v, 0));
 const emptyLib = () => ({ format: 2, rev: 0, nextId: 1, banks: [], videos: {} });
 const libState = (lib) => (lib.banks.length ? 'ok' : 'leer');
+// Bühne/Ablage: stage false = Ablage, fehlt = Bühne (so stehen alte Bänke auf der Bühne, format bleibt 2)
+const onStage = (b) => b.stage !== false;
 // Pad = {video, start} oder null (leerer Platz). Videos einer Bank, ohne Doppelte, in Pad-Reihenfolge
 const padVideos = (b) => [...new Set(b.pads.filter(Boolean).map((p) => p.video))];
 const isPadList = (a) => Array.isArray(a) && a.length === 16
@@ -949,7 +951,7 @@ const LIB = {
   // Neue Bank: 16 leere Plätze am Ende (Flow-Nachtrag: jede neue Bank startet leer)
   newmix(lib) {
     const id = lib.nextId++;
-    lib.banks.push({ id, name: 'Neue Bank', pads: Array(16).fill(null) });
+    lib.banks.push({ id, name: 'Neue Bank', pads: Array(16).fill(null), stage: false });
     return { id };
   },
   // Pad kopieren (video + start) oder Platz leeren (video null). Unbekanntes Video braucht info {title, bpm?}
@@ -980,6 +982,7 @@ const LIB = {
     const copy = JSON.parse(JSON.stringify(lib.banks[i]));
     copy.id = lib.nextId++;
     copy.name += ' (Kopie)';
+    copy.stage = false;   // neue Bänke landen in der Ablage
     lib.banks.splice(i + 1, 0, copy);
     return { id: copy.id };
   },
@@ -991,10 +994,24 @@ const LIB = {
     for (const v of padVideos(bank)) videos[v] = videoEntry(lib.videos[v]);
     return { removed: { bank, at: i + 1, videos } };
   },
+  // to = Platz innerhalb des eigenen Bereichs (Bühne bzw. Ablage)
   move(lib, { id, to }) {
+    const on = onStage(lib.banks[bankIndex(lib, id)]);
+    need(isInt(to, 1) && to <= lib.banks.filter((b) => onStage(b) === on).length);
+    return LIB.stage(lib, { id, on, at: to });
+  },
+  // auf die Bühne (on true) oder in die Ablage, an Platz at des Bereichs (fehlt: ans Ende) -> {at}
+  stage(lib, { id, on, at }) {
     const i = bankIndex(lib, id);
-    need(isInt(to, 1) && to <= lib.banks.length);
-    lib.banks.splice(to - 1, 0, lib.banks.splice(i, 1)[0]);
+    need(typeof on === 'boolean' && (at === undefined || isInt(at, 1)));
+    const b = lib.banks.splice(i, 1)[0];
+    if (on) delete b.stage; else b.stage = false;
+    const sec = lib.banks.filter((x) => onStage(x) === on);
+    const pos = Math.min(at === undefined ? Infinity : at, sec.length + 1);
+    const k = pos <= sec.length ? lib.banks.indexOf(sec[pos - 1])
+      : sec.length ? lib.banks.indexOf(sec[sec.length - 1]) + 1 : on ? 0 : lib.banks.length;
+    lib.banks.splice(k, 0, b);
+    return { at: pos };
   },
   // Undo von delete: alte ID, nextId bleibt
   restore(lib, { bank, at, videos }) {
@@ -1538,7 +1555,9 @@ const ANALYSIS_MS = 4000;  // Analysefenster pro Pad ab Start (padinfo)
 
 const libBroken = () => libErr(libNow.state === 'neuer' ? 'libnewer' : 'libbroken');
 const bankById = (id) => (libNow.lib ? libNow.lib.banks.find((b) => b.id === id) : null);
-const bankNr = (id) => (libNow.lib ? libNow.lib.banks.findIndex((b) => b.id === id) + 1 : 0);
+// Nummern 1…n zählen nur die Bühne, Ablage = 0 (Device zeigt „-“)
+const stageBanks = () => (libNow.lib ? libNow.lib.banks.filter(onStage) : []);
+const bankNr = (id) => stageBanks().findIndex((b) => b.id === id) + 1;
 const readText = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return ''; } };
 
 // Bank ins Device: bankname, bank <id> <nr> <s×16> <l×16> <pfad…>, danach die Analyse pro Pad (Mix-Spec 3.3).
@@ -1621,7 +1640,7 @@ function onActiveSnip() {
 }
 
 function sendLibstate() {
-  Max.outlet('libstate', libNow.lib ? libNow.lib.banks.length : 0, bankNr(activeId), libNow.state);
+  Max.outlet('libstate', stageBanks().length, bankNr(activeId), libNow.state);
 }
 // Tempo-Korrektur im Editor: padana für alle geladenen Pads mit diesem Video noch einmal
 const bpmToDevice = (v) => { if (activeId) loaded.pads.forEach((p, i) => { if (p && p.video === v) sendPadana(i); }); };
@@ -1652,11 +1671,11 @@ Max.addHandler('bankstate', (id, sel, mode, rev, ...sw) => {
   edDirty('device'); edDirty('beats');
 });
 Max.addHandler('bankpeek', (nr) => {
-  const b = libNow.lib && libNow.lib.banks[Math.floor(nr) - 1];
-  Max.outlet('bankpeek', Math.floor(nr), libNow.lib ? libNow.lib.banks.length : 0, clean(b ? b.name : ''));
+  const L = stageBanks(), b = L[Math.floor(nr) - 1];
+  Max.outlet('bankpeek', Math.floor(nr), L.length, clean(b ? b.name : ''));
 });
 Max.addHandler('banksel', (nr) => {
-  const b = libNow.lib && libNow.lib.banks[Math.floor(nr) - 1];
+  const b = stageBanks()[Math.floor(nr) - 1];
   if (b) trySend(b);   // über der letzten Bank: nichts
 });
 // Button „Editor“ im Device: Editor dieses Devices im Standardbrowser öffnen
@@ -1665,9 +1684,9 @@ Max.addHandler('openeditor', () => {
   const p = spawn('open', [`http://localhost:${webPort}/editor`], { env: ENV });
   p.on('error', () => status('Browser lässt sich nicht öffnen'));
 });
-// Device ohne Bank (Spec 3.0 4.5): wie banksel, aber hinter der letzten Bank die letzte. Leer/kaputt: nichts.
+// Device ohne Bank (Spec 3.0 4.5): wie banksel, aber hinter der letzten Bank die letzte. Bühne leer/kaputt: nichts.
 Max.addHandler('bankload', (nr) => {
-  const L = libNow.lib ? libNow.lib.banks : [];
+  const L = stageBanks();
   if (!L.length) return;
   trySend(L[Math.min(Math.max(1, Math.floor(nr) || 1), L.length) - 1]);
 });
@@ -1811,14 +1830,17 @@ const CMD = {
     trySend(bankById(r.id));
     return r;
   },
+  // aktive Bühnen-Bank: Nachrücker von der Bühne. Aktive Ablage-Bank oder Bühne leer: bankgone, [js] lädt die Bank am Regler
   delete(q, by) {
-    const was = q.id === activeId;
+    const was = q.id === activeId, k = bankNr(q.id) - 1;
     const r = libChange('delete', { id: q.id }, by);
-    const L = libNow.lib.banks, next = L[r.removed.at - 1] || L[r.removed.at - 2];
-    if (was && next) trySend(next);   // keiner mehr: libstate leer ging schon raus
+    const L = stageBanks(), next = k >= 0 && (L[k] || L[k - 1]);
+    if (was && next) trySend(next);
+    else if (was && libNow.lib.banks.length) Max.outlet('bankgone', q.id);   // Bibliothek leer: libstate leer ging schon raus
     return r;
   },
-  move: (q, by) => { libChange('move', { id: q.id, to: q.to }, by); },
+  move: (q, by) => libChange('move', { id: q.id, to: q.to }, by),
+  stage: (q, by) => libChange('stage', { id: q.id, on: q.on, at: q.at }, by),
   restore: (q, by) => { libChange('restore', { bank: q.bank, at: q.at, videos: q.videos }, by); },
   setstart(q, by) {
     const { p } = libPad(q);
@@ -1929,7 +1951,7 @@ const ED = {
     const L = libNow.lib;
     const m = { rev: L ? L.rev : 0, by: libBy, state: libNow.state, cache: cacheSize(), banks: [], videos: {} };
     if (!L) { m.error = `${ERR[libNow.state === 'neuer' ? 'libnewer' : 'libbroken']}: ${libNow.error}`; return m; }
-    m.banks = L.banks.map((b) => ({ id: b.id, name: b.name, pads: b.pads, mix: isMix(b), ...snipStatus(b) }));
+    m.banks = L.banks.map((b) => ({ id: b.id, name: b.name, pads: b.pads, mix: isMix(b), stage: onStage(b), ...snipStatus(b) }));
     // Songdauer: aus dem Cache, sonst aus einer Snippet-.json
     const durs = {};
     for (const b of L.banks) {
