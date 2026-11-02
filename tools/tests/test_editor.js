@@ -66,7 +66,7 @@ t('Layout: Liste, 4×4 mit Pad 1 unten links, Marker, Kopfzeile, Fuß', async ()
   assert(/nur spielbar/.test(r.list) && /nicht ladbar/.test(r.list) && /Track laden/.test(r.list) && /Video nicht verfügbar/.test(r.list));
   assert(/Herbie Hancock – Rockit · 97 BPM/.test(r.list));
   assert.strictEqual(r.cache, 'Cache 4,2 GB'); assert.strictEqual(r.fetchall, '');
-  assert(/Länge\s*vom Device/.test(r.insp) && /Neues Snippet/.test(r.insp) && /Anspielen/.test(r.insp) && /½×/.test(r.insp) && /2×/.test(r.insp));
+  assert(/^Pad 1\d:\d\d\.\d\d/.test(r.insp) && /Neues Snippet/.test(r.insp) && /Anspielen/.test(r.insp) && /½×/.test(r.insp) && /2×/.test(r.insp));
   assert(!/Tempo stimmt/.test(r.insp), 'bestätigtes Tempo zeigt kein „Tempo stimmt“');
   assert.strictEqual(r.side, '280px');
   assert.deepStrictEqual(b.errors, []);
@@ -183,12 +183,15 @@ t('Undo/Redo: duplizieren, neue Bank, löschen (Toast mit Rückgängig)', async 
   await b.type('Cymande'); await b.key('Enter', 'Enter', 13);
   await b.waitFor(`document.querySelectorAll('#results img').length === 1`);
   assert(await b.eval(`$('results').querySelector('img').src === 'https://i.ytimg.com/vi/Cy5BraBra00/mqdefault.jpg' && /6:12/.test($('results').textContent)`));
-  await b.click('#results li');
-  await waitLog((x) => x.cmd === 'newbank' && x.video === 'Cy5BraBra00');
-  await b.waitFor(`S.dev.bankId === 14 && $('undo').title.startsWith('Rückgängig: Neue Bank „Cymande – Bra“')`);
-  m.log = []; await undoKey(b); assert.strictEqual((await waitLog((x) => x.cmd === 'delete')).id, 14);
-  m.log = []; await redoKey(b); assert.strictEqual((await waitLog((x) => x.cmd === 'restore')).bank.id, 14);
-  await waitLog((x) => x.cmd === 'select' && x.id === 14); await b.waitFor('S.dev.bankId === 14 && !histBusy');
+  await b.click('#results li .t');
+  const fp = await waitLog((x) => x.cmd === 'fillpads' && x.video === 'Cy5BraBra00');
+  assert.deepStrictEqual([fp.id, fp.pads], [13, [0]], 'Treffer anklicken = gewähltes Pad, keine neue Bank');
+  await b.waitFor(`S.dev.bankId === 13 && $('undo').title.startsWith('Rückgängig: Pad 1 aus „Cymande – Bra“')`);
+  assert.strictEqual(await b.eval(`S.lib.banks.length`), 8);
+  m.log = []; await undoKey(b);
+  assert.deepStrictEqual((await waitLog((x) => x.cmd === 'setpad')).video, 'Rk7tQ2mLp0A', 'Undo bringt das alte Pad zurück');
+  m.log = []; await redoKey(b); assert.strictEqual((await waitLog((x) => x.cmd === 'setpad')).video, 'Cy5BraBra00');
+  await b.waitFor('!histBusy');
 
   // erst wenn die Liste neu gezeichnet ist: sonst trifft der Klick noch das Löschen-Icon der vorigen Bank (14)
   await b.click('#banklist li:nth-child(1)'); await b.waitFor(`S.dev.bankId === 7 && document.querySelector('#banklist li.on').dataset.id === '7'`);
@@ -405,7 +408,9 @@ t('Bibliothek kaputt/neuer: Fehlerleiste, Schreiben gesperrt', async () => {
   await open('neuer');
   assert.strictEqual(await b.eval(`$('errbar').textContent`), 'Bibliothek aus neuerer Version');
   await open('leer');
-  assert(await b.eval(`/Noch keine Bank/.test($('banklist').textContent) && /Bibliothek leer/.test($('navname').textContent) && !$('opensearch').disabled`));
+  assert(await b.eval(`/Noch keine Bank/.test($('banklist').textContent) && /Bibliothek leer/.test($('navname').textContent) && $('opensearch').disabled && /Neue Bank/.test($('blank').textContent)`));
+  m.log = []; await b.click('#banklist li.empty button'); await waitLog((x) => x.cmd === 'newmix');
+  await b.waitFor(`!$('opensearch').disabled && document.querySelectorAll('.pad.empty').length === 16`);
 });
 
 t('kein Device: ausgegraut, verbindet sich selbst neu; anderes Device leert die Historie', async () => {
@@ -532,17 +537,13 @@ t('Fortschritt in Prozent, begrenzt auf 0–100, Phase als Text', async () => {
   job({ phase: 'download', progress: 2800 }); await b.waitFor(`/lädt 100 %/.test($('wavemsg').textContent)`);
   job({ phase: 'download', progress: -5 }); await b.waitFor(`/lädt 0 %/.test($('wavemsg').textContent)`);
   job({ phase: 'convert', progress: 100 }); await b.waitFor(`/konvertiert/.test($('wavemsg').textContent)`);
-  // neue Bank: Fortschritt der Attrappe kommt wie bei Node in Prozent
+  // Track aufs Pad: Ladezustand am Pad in Prozent, zwei gleichzeitig mit eigenem Fortschritt
   await open('normal');
-  await b.key('k', 'KeyK', 75, CTRL); await b.type('Cymande'); await b.key('Enter', 'Enter', 13);
-  await b.waitFor(`document.querySelectorAll('#results li img').length === 1`); await b.click('#results li');
-  await b.waitFor(`/Neue Bank · lädt (25|50|75) %/.test($('banklist').textContent)`);
-  const seen = await b.eval(`$('banklist').textContent.match(/lädt (\\d+) %/)[1]`); assert(+seen <= 100, seen);
-  await b.waitFor(`!S.newbanks.length && S.dev.bankId === 13`, 4000);
-  // zwei neue Bänke gleichzeitig: zwei ausgegraute Zeilen mit eigenem Fortschritt
-  await b.eval(`newBank('Cy5BraBra00', 'Erste'); newBank('Cy5BraBra00', 'Zweite')`);
-  await b.waitFor(`document.querySelectorAll('#banklist li.pending').length === 2 && /Erste/.test($('banklist').textContent) && /Zweite/.test($('banklist').textContent)`);
-  await b.waitFor(`!S.newbanks.length && !document.querySelector('#banklist li.pending')`, 4000);
+  await b.eval(`fillVideo('Cy5BraBra00', 'Erste', [3]); fillVideo('Bj8Nautilus', 'Zweite', [6])`);
+  await b.waitFor(`/lädt (25|50|75) %/.test($('pad3').querySelector('.s').textContent) && $('pad3').classList.contains('loading') && $('pad6').classList.contains('loading')`);
+  const seen = await b.eval(`$('pad3').querySelector('.s').textContent.match(/lädt (\\d+) %/)[1]`); assert(+seen <= 100, seen);
+  assert.strictEqual(await b.eval(`$('pad6').querySelector('.vt').textContent`), 'Zweite');
+  await b.waitFor(`!S.fills.length && !document.querySelector('.pad.loading')`, 4000);
 });
 
 t('Bank wechseln mit ↑/↓ und ◀ ▶', async () => {
@@ -559,12 +560,12 @@ t('Bank wechseln mit ↑/↓ und ◀ ▶', async () => {
 const markers = () => b.eval(`[...document.querySelectorAll('.mk')].map((x) => +x.dataset.pad)`);
 const post = (q) => b.eval(`fetch('/cmd', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: ${JSON.stringify(JSON.stringify(q))} }).then((r) => r.json())`);
 
-t('Mix: Zeichen in der Liste, Waveform folgt dem Pad, Marker nur fürs eigene Video', async () => {
+t('Bank aus mehreren Tracks: „n Tracks“ ohne Mix-Zeichen, Waveform folgt dem Pad, Marker nur fürs eigene Video', async () => {
   await open('mix');
   const r = await b.eval(`({ on: document.querySelector('#banklist li.on .name').textContent, mixTags: document.querySelectorAll('#banklist .tag.mix').length,
     first: document.querySelector('#banklist li:nth-child(1) .name').textContent, vt0: $('pad0').querySelector('.vt').textContent, vt4: $('pad4').querySelector('.vt').textContent,
     title4: $('pad4').title, empty: [...document.querySelectorAll('.pad.empty')].map((x) => +x.id.slice(3)).sort((a, c) => a - c) })`);
-  assert(/^MixMix Funk4 Tracks/.test(r.on), r.on); assert.strictEqual(r.mixTags, 1);
+  assert(/^Mix Funk4 Tracks/.test(r.on), r.on); assert.strictEqual(r.mixTags, 0);
   assert(/^Rockit ScratchesHerbie Hancock – Rockit · 97 BPM/.test(r.first), r.first);
   assert.strictEqual(r.vt0, 'Herbie Hancock – Rockit'); assert.strictEqual(r.vt4, 'Can – Vitamin C'); assert(r.title4.startsWith('Can – Vitamin C · '));
   assert.deepStrictEqual(r.empty, [9, 11, 14, 15]);
@@ -591,11 +592,11 @@ t('Mix: Zeichen in der Liste, Waveform folgt dem Pad, Marker nur fürs eigene Vi
   await b.waitFor(`/Leerer Platz/.test($('wavemsg').textContent) && S.dev.video === '-'`);
   const e = await b.eval(`({ insp: $('insp').textContent, s: $('pad9').querySelector('.s').textContent, roll: getComputedStyle($('pad9').querySelector('.roll')).display,
     clr: getComputedStyle($('pad9').querySelector('.clr')).display, mk: document.querySelectorAll('.mk').length, dev: S.dev.video })`);
-  assert.deepStrictEqual(e, { insp: 'AusgewähltPad 10Platzleer', s: 'leer', roll: 'none', clr: 'none', mk: 0, dev: '-' });
+  assert.deepStrictEqual(e, { insp: 'Pad 10leer', s: 'leer', roll: 'none', clr: 'none', mk: 0, dev: '-' });
   assert.deepStrictEqual(b.errors, []);
 });
 
-t('Quellleiste: Bank wählen (gemerkt), Pad auf Platz ziehen → setpad, Undo/Redo, einklappen', async () => {
+t('Quell-Grid: rechts 4×4 (Pad 1 unten links), Bank wählen (gemerkt), Pad auf Platz ziehen → setpad, Undo/Redo', async () => {
   await b.eval(`localStorage.clear()`);
   await open('mix');
   const opts = await b.eval(`[...$('srcsel').options].map((o) => o.textContent)`);
@@ -603,6 +604,9 @@ t('Quellleiste: Bank wählen (gemerkt), Pad auf Platz ziehen → setpad, Undo/Re
   assert.strictEqual(opts[0], '1  Rockit Scratches');
   await b.eval(`$('srcsel').value = '3'; $('srcsel').dispatchEvent(new Event('change'))`);
   await b.waitFor(`document.querySelectorAll('#srcpads .st').length === 16 && $('srcpads').querySelector('.st').title.startsWith('Can – Vitamin C · ')`);
+  const g = await b.eval(`(() => { const q = (k) => $('srcpads').querySelector('.st[data-pad="' + k + '"]').getBoundingClientRect(), gr = $('grid').getBoundingClientRect(), sp = $('srcpads').getBoundingClientRect(), ins = $('insp').getBoundingClientRect();
+    return { right: sp.left > gr.right, below: ins.top >= sp.bottom - 1, bl: q(0).left <= q(15).left && q(0).top > q(15).top, row: Math.abs(q(1).top - q(0).top) < 1 && q(4).top < q(0).top }; })()`);
+  assert.deepStrictEqual(g, { right: true, below: true, bl: true, row: true });
   const cs = (await b.eval('S.lib.banks[1].pads'))[2].start;
   m.log = []; await b.eval(dnd('#srcpads .st[data-pad="2"]', '#pad9'));
   assert.deepStrictEqual(await waitLog((x) => x.cmd === 'setpad'), { client: last().client, cmd: 'setpad', id: 13, pad: 9, video: 'Cv1tAm1nC0x', start: cs, info: { title: 'Can – Vitamin C' } });
@@ -616,16 +620,12 @@ t('Quellleiste: Bank wählen (gemerkt), Pad auf Platz ziehen → setpad, Undo/Re
   m.log = []; await b.eval(dnd('#srcpads .st[data-pad="0"]', '#pad0')); await waitLog((x) => x.cmd === 'setpad' && x.pad === 0);
   m.log = []; await undoKey(b);
   assert.deepStrictEqual(await waitLog((x) => x.cmd === 'setpad'), { client: last().client, cmd: 'setpad', id: 13, pad: 0, video: 'Rk7tQ2mLp0A', start: old.start, info: { title: 'Herbie Hancock – Rockit', bpm: 97 } });
-  // Quelle gemerkt, einklappen gemerkt
+  // Quelle gemerkt
   await open('mix');
   assert.strictEqual(await b.eval(`$('srcsel').value`), '3');
-  await b.click('#srctoggle'); await b.waitFor(`getComputedStyle($('srcpads')).display === 'none'`);
-  await open('mix');
-  assert.strictEqual(await b.eval(`getComputedStyle($('srcpads')).display`), 'none');
-  await b.click('#srctoggle'); await b.waitFor(`getComputedStyle($('srcpads')).display === 'grid'`);
-  // Mix-Bank als Quelle: „Mix“ in der Auswahl, leere Plätze nicht ziehbar
+  // Bank mit leeren Plätzen als Quelle: kein „Mix“ in der Auswahl, leere Plätze nicht ziehbar
   await b.click('#banklist li:nth-child(1)'); await b.waitFor(`S.dev.bankId === 7 && !!$('srcsel').querySelector('option[value="13"]')`);
-  assert(/8  Mix Funk  · Mix/.test(await b.eval(`[...$('srcsel').options].map((o) => o.textContent).join('|')`)));
+  assert(/\|8  Mix Funk$/.test(await b.eval(`[...$('srcsel').options].map((o) => o.textContent).join('|')`)));
   await b.eval(`$('srcsel').value = '13'; $('srcsel').dispatchEvent(new Event('change'))`);
   await b.waitFor(`$('srcpads').querySelector('.st[data-pad="9"]').classList.contains('empty')`);
   assert.strictEqual(await b.eval(`$('srcpads').querySelector('.st[data-pad="9"]').draggable`), false);
@@ -662,13 +662,13 @@ t('Icon „leeren“: setpad mit null, auch ohne WAV, Undo mit info nach Wegfall
   assert.deepStrictEqual(b.errors, []);
 });
 
-t('Neue Mix-Bank: Knopf, 16 leere Plätze, Undo = delete, Redo = restore, füllen', async () => {
+t('Neue Bank: Knopf, 16 leere Plätze, „leer“, Undo = delete, Redo = restore, füllen', async () => {
   await open('normal');
   assert.strictEqual(await b.eval(`$('pad0').querySelector('.vt').textContent`), '', 'Track-Bank ohne Titel am Pad');
-  m.log = []; await b.click('#newmix'); await waitLog((x) => x.cmd === 'newmix');
+  m.log = []; await b.click('#newbank'); await waitLog((x) => x.cmd === 'newmix');
   await b.waitFor(`S.dev.bankId === 13 && document.querySelectorAll('.pad.empty').length === 16 && /Leerer Platz/.test($('wavemsg').textContent)`);
-  assert(/^MixMix-Bank0 Tracks/.test(await b.eval(`document.querySelector('#banklist li.on .name').textContent`)));
-  await b.waitFor(`$('undo').title === 'Rückgängig: Neue Mix-Bank (⌘Z)'`);
+  assert.strictEqual(await b.eval(`document.querySelector('#banklist li.on .name').textContent`), 'Neue Bankleer');
+  await b.waitFor(`$('undo').title === 'Rückgängig: Neue Bank (⌘Z)'`);
   m.log = []; await undoKey(b); assert.strictEqual((await waitLog((x) => x.cmd === 'delete')).id, 13);
   m.log = []; await redoKey(b);
   const rs = await waitLog((x) => x.cmd === 'restore');
@@ -677,7 +677,49 @@ t('Neue Mix-Bank: Knopf, 16 leere Plätze, Undo = delete, Redo = restore, fülle
   // aus der Quelle (Standard: erste andere Bank) füllen
   m.log = []; await b.eval(dnd('#srcpads .st[data-pad="5"]', '#pad0'));
   assert.strictEqual((await waitLog((x) => x.cmd === 'setpad')).video, 'Rk7tQ2mLp0A');
-  await b.waitFor(`/1 Track/.test(document.querySelector('#banklist li.on .sub').textContent) && document.querySelectorAll('.mk').length === 1`);
+  await b.waitFor(`document.querySelector('#banklist li.on .sub').textContent === 'Herbie Hancock – Rockit · 97 BPM' && document.querySelectorAll('.mk').length === 1`);
+  assert.deepStrictEqual(b.errors, []);
+});
+
+t('Suche → Pad: Treffer aufs Pad ziehen (überschreibt, Ladezustand), „Leere Plätze füllen“, Undo/Redo, Liste „n Tracks“', async () => {
+  await open('normal');
+  await b.click('#newbank'); await b.waitFor(`S.dev.bankId === 13 && document.querySelectorAll('.pad.empty').length === 16`);
+  await b.key('k', 'KeyK', 75, CTRL); await b.type('Cymande'); await b.key('Enter', 'Enter', 13);
+  await b.waitFor(`!!$('results').querySelector('.fill') && !$('results').querySelector('.fill').disabled`);
+  // ziehen auf Pad 6
+  m.log = []; await b.eval(dnd('#results li', '#pad5'));
+  assert.deepStrictEqual(await waitLog((x) => x.cmd === 'fillpads'), { client: last().client, cmd: 'fillpads', id: 13, video: 'Cy5BraBra00', pads: [5], tag: last().tag });
+  await b.waitFor(`$('pad5').classList.contains('loading') && S.sel === 5`);
+  // Platz lädt: Ziehen darauf wird abgelehnt
+  m.log = []; await b.eval(dnd('#srcpads .st[data-pad="0"]', '#pad5')); await sleep(80);
+  assert(!m.log.some((x) => x.cmd === 'setpad'), 'kein setpad auf ladenden Platz');
+  await b.waitFor(`!$('pad5').classList.contains('loading') && !$('pad5').classList.contains('empty') && $('undo').title === 'Rückgängig: Pad 6 aus „Cymande – Bra“ (⌘Z)'`, 4000);
+  assert.strictEqual(await b.eval(`document.querySelector('#banklist li.on .sub').textContent`), 'Cymande – Bra');
+  // leere Plätze füllen
+  await b.key('k', 'KeyK', 75, CTRL); await b.waitFor(`document.querySelectorAll('#results li').length === 1`);
+  await b.eval(`$('q').value = 'Nautilus'; runSearch()`); await b.waitFor(`/Nautilus/.test($('results').textContent) && !!$('results').querySelector('.fill')`); await sleep(300);
+  m.log = []; await b.click('#results li .fill');
+  const fe = await waitLog((x) => x.cmd === 'fillpads');
+  assert.deepStrictEqual([fe.video, fe.pads], ['Bj8Nautilus', [0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]]);
+  assert(!m.log.some((x) => x.cmd === 'select'), 'keine neue Bank');
+  await b.waitFor(`document.querySelectorAll('.pad.loading').length === 15`);
+  await b.waitFor(`!document.querySelector('.pad.loading') && !document.querySelector('.pad.empty') && $('undo').title === 'Rückgängig: 15 Plätze aus „Bob James – Nautilus“ (⌘Z)'`, 4000);
+  assert.strictEqual(await b.eval(`document.querySelector('#banklist li.on .sub').textContent`), '2 Tracks');
+  assert.strictEqual(await b.eval(`$('pad0').querySelector('.vt').textContent`), 'Bob James – Nautilus', 'mehrere Tracks: Titel am Pad');
+  const starts = (await b.eval('S.lib.banks[7].pads')).filter((p) => p.video === 'Bj8Nautilus').map((p) => p.start);
+  assert.strictEqual(new Set(starts).size, 15); assert.deepStrictEqual(starts, [...starts].sort((x, y) => x - y));
+  await b.waitFor(`$('results').querySelector('.fill') === null || $('results').querySelector('.fill').disabled`);
+  // Undo leert die 15 Plätze, Redo setzt dieselben Starts
+  m.log = []; await undoKey(b);
+  await b.waitFor(`document.querySelectorAll('.pad.empty').length === 15 && !histBusy`);
+  assert.strictEqual(m.log.filter((x) => x.cmd === 'setpad' && x.video === null).length, 15);
+  m.log = []; await redoKey(b);
+  await b.waitFor(`!document.querySelector('.pad.empty') && !histBusy`);
+  assert.deepStrictEqual(m.log.filter((x) => x.cmd === 'setpad').map((x) => x.start), starts);
+  // Undo der Überschreibung von Pad 6 mit gelöschtem Video: info aus done
+  m.log = []; await undoKey(b); await b.waitFor('!histBusy');
+  m.log = []; await undoKey(b);
+  assert.deepStrictEqual(await waitLog((x) => x.cmd === 'setpad'), { client: last().client, cmd: 'setpad', id: 13, pad: 5, video: null });
   assert.deepStrictEqual(b.errors, []);
 });
 
@@ -689,7 +731,10 @@ t('Screenshots', async () => {
   await open('mix'); await b.click('#pad4'); await sleep(300); await b.shot('editor-mix');
   await b.click('#pad9'); await sleep(250); await b.shot('editor-leerer-platz');
   await b.click('#banklist li:nth-child(1)'); await b.waitFor(`S.dev.bankId === 7 && !!$('srcsel').querySelector('option[value="13"]')`);
-  await b.eval(`$('srcsel').value = '13'; $('srcsel').dispatchEvent(new Event('change'))`); await sleep(300); await b.shot('editor-quellleiste');
+  await b.eval(`$('srcsel').value = '13'; $('srcsel').dispatchEvent(new Event('change'))`); await sleep(300); await b.shot('editor-quell-grid');
+  await open('normal'); await b.click('#newbank'); await b.waitFor(`S.dev.bankId === 13`); await sleep(300); await b.shot('editor-neue-bank-leer');
+  await b.key('k', 'KeyK', 75, CTRL); await b.type('a'); await b.key('Enter', 'Enter', 13);
+  await b.waitFor(`document.querySelectorAll('#results li img').length > 1`); await sleep(400); await b.shot('editor-suche-leere-plaetze-fuellen');
   await b.eval(`localStorage.clear()`);
   await open('leer'); await b.shot('editor-leer');
   await open('kaputt'); await b.shot('editor-kaputt');

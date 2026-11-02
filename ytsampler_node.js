@@ -937,7 +937,7 @@ const roundBpm = (bpm) => { need(typeof bpm === 'number' && bpm >= 30 && bpm <= 
 
 // Vorgänge: (lib, Felder) -> Antwortfelder. Ändern lib, werfen libErr. Alle nennen IDs, keine Plätze.
 const LIB = {
-  // newbank: Bank am Ende, ein schon bekanntes Video behält Titel und bpm
+  // Bank aus einem Video am Ende (Tests, Migration), ein schon bekanntes Video behält Titel und bpm
   create(lib, { video, title, name, starts }) {
     need(typeof video === 'string' && video !== '' && isStarts(starts));
     if (!has(lib.videos, video)) lib.videos[video] = { title: String(title || '') };
@@ -945,10 +945,10 @@ const LIB = {
     lib.banks.push({ id, name: bankName(name === undefined ? lib.videos[video].title : name), pads: starts.map((start) => ({ video, start })) });
     return { id };
   },
-  // Neue Mix-Bank: 16 leere Plätze am Ende (M1)
+  // Neue Bank: 16 leere Plätze am Ende (Flow-Nachtrag: jede neue Bank startet leer)
   newmix(lib) {
     const id = lib.nextId++;
-    lib.banks.push({ id, name: 'Mix-Bank', pads: Array(16).fill(null) });
+    lib.banks.push({ id, name: 'Neue Bank', pads: Array(16).fill(null) });
     return { id };
   },
   // Pad kopieren (video + start) oder Platz leeren (video null). Unbekanntes Video braucht info {title, bpm?}
@@ -962,6 +962,11 @@ const LIB = {
       lib.videos[video] = videoEntry(info);
     }
     lib.banks[i].pads[pad] = { video, start };
+  },
+  // fillpads: mehrere Plätze aus einem Video in einem Schritt
+  fill(lib, { id, pads, video, starts, info }) {
+    need(Array.isArray(pads) && Array.isArray(starts) && pads.length === starts.length);
+    pads.forEach((pad, k) => LIB.setpad(lib, { id, pad, video, start: starts[k], info }));
   },
   rename(lib, { id, name }) {
     need(typeof name === 'string');
@@ -1357,24 +1362,24 @@ function roller(v) {
 }
 // roll: ein Pad neu, belegt = die 16 Starts der Bank (auch der eigene, damit sich etwas ändert)
 const rollStart = (v, taken) => roller(v)(taken);
-// newbank: 16 Starts, aufsteigend
-function rollBank(v) {
+// fillpads: n Starts, aufsteigend, keiner aus taken und keiner doppelt
+function rollBank(v, n = 16, taken = []) {
   const r = roller(v), s = [];
-  for (let i = 0; i < 16; i++) s.push(r(s));
+  for (let i = 0; i < n; i++) s.push(r([...taken, ...s]));
   return s.sort((x, y) => x - y);
 }
 
 // =====================================================================
-// Downloads im Editor-Weg (Spec 3.1). kind: select | fetch | newbank | fetchall.
+// Downloads im Editor-Weg (Spec 3.1). kind: select | fetch | pads | fetchall.
 // Bis ED_PAR Downloads laufen gleichzeitig, der Rest wartet (Phase „queue“). Reihenfolge der Warteschlange:
-// select/fetch vor newbank vor fetchall. Sind alle Plätze belegt, bricht ein neues select/fetch den laufenden
+// select/fetch vor pads vor fetchall. Sind alle Plätze belegt, bricht ein neues select/fetch den laufenden
 // mit der niedrigsten Stufe ab (unter select/fetch den ältesten), ebenso jeder Wunsch höherer Stufe;
-// der abgebrochene wartet dann wieder. Unter select/fetch gewinnt der neueste, newbank und fetchall der Reihe nach.
+// der abgebrochene wartet dann wieder. Unter select/fetch gewinnt der neueste, pads und fetchall der Reihe nach.
 // Fehlschlag setzt videoFail, fetchall überspringt solche Videos.
-// onPhase (optional, newBank): Fortschritt geht an den Aufrufer statt als job kind fetch.
+// onPhase (optional, fillPads): Fortschritt geht an den Aufrufer statt als job kind fetch.
 // Achtung Aufrufer: fetchVideo-Promise immer mit catch, sonst beendet ein Fehlschlag den Node-Prozess.
 // =====================================================================
-const FETCH_PRIO = { select: 0, fetch: 0, newbank: 1, fetchall: 2 };
+const FETCH_PRIO = { select: 0, fetch: 0, pads: 1, fetchall: 2 };
 const ED_PAR = 3;
 const edQueue = [], edJobs = [];
 let edSeq = 0;
@@ -1412,7 +1417,7 @@ async function edRun(e) {
   try {
     const info = await download(e.video, e, (ph, p) => { if (!e.aborted) edPhase(e, ph, p); });
     drop();
-    if (e.waiters.some((w) => !w.onPhase)) libEvents.emit('job', { kind: 'fetch', video: e.video, phase: 'done', progress: 100, left: edQueue.length });   // newbank meldet selbst weiter
+    if (e.waiters.some((w) => !w.onPhase)) libEvents.emit('job', { kind: 'fetch', video: e.video, phase: 'done', progress: 100, left: edQueue.length });   // fillpads meldet selbst weiter
     libEvents.emit('cache', cacheSize());
     libEvents.emit('status');
     snipRefresh(e.video);
@@ -1442,32 +1447,28 @@ function fetchAll() {
   return { todo: todo.length };
 }
 
-// newbank (Spec 3.3): Track laden → Analyse → 16 Starts würfeln → Bank am Ende → schneiden. -> Bank-ID.
-// Aktiv machen (bank … an [js]) macht der Aufrufer. Wirft libErr (loadfail, libbroken, …).
-// tag (vom Editor) kommt in jedem job zurück: so findet jede ausgegraute Zeile ihren Fortschritt.
-// Geladen wird parallel, angelegt in der Reihenfolge der Aufrufe (nbChain).
-let nbChain = Promise.resolve();
-async function newBank(video, by, tag) {
-  const job = (phase, progress, bankId) => libEvents.emit('job', { kind: 'newbank', video, tag, bankId, phase, progress, left: edQueue.length });
-  const turn = nbChain;
-  let next;
-  nbChain = new Promise((r) => { next = r; });
+// fillpads (Flow-Nachtrag): Track laden → Analyse → pro Platz würfeln (Taktanfang, keine Stille, kein Start doppelt
+// mit den übrigen Pads dieses Videos) → Plätze überschreiben. Schneiden und neu Laden macht libChange wie bei setpad.
+// Fortschritt als job {kind: 'pads', tag, id, video, pads, phase, progress}; done bringt before/after (Pad-Einträge der
+// Plätze vorher/nachher) und videos (Titel/bpm dazu) fürs Undo. Wirft libErr (loadfail, nobank, libbroken, …).
+async function fillPads(q, by) {
+  const job = (phase, progress, extra) => libEvents.emit('job', { kind: 'pads', tag: q.tag, id: q.id, video: q.video, pads: q.pads, phase, progress, left: edQueue.length, ...extra });
   try {
-    const info = (hasWav(video) && readJson(path.join(CACHE, `${video}.json`))) || await fetchVideo(video, 'newbank', job);
-    await turn;
+    const info = (hasWav(q.video) && readJson(path.join(CACHE, `${q.video}.json`))) || await fetchVideo(q.video, 'pads', job);
     job('analyse', 0);
     await new Promise((r) => setTimeout(r, 0));
-    const starts = rollBank(video);
-    const { id } = libChange('create', { video, title: info.raw || info.title, starts }, by);
-    job('cut', 0, id);
-    cutSnippets(libNow.lib.banks.find((b) => b.id === id));
-    job('done', 100, id);
-    return id;
+    const b = libBank(q.id);
+    const taken = b.pads.filter((p, k) => p && p.video === q.video && !q.pads.includes(k)).map((p) => p.start);
+    const starts = rollBank(q.video, q.pads.length, taken);
+    const before = q.pads.map((k) => (b.pads[k] ? { ...b.pads[k] } : null));
+    const videos = {};
+    for (const p of before) if (p && has(libNow.lib.videos, p.video)) videos[p.video] = videoEntry(libNow.lib.videos[p.video]);
+    libChange('fill', { id: q.id, pads: q.pads, video: q.video, starts, info: { title: info.raw || info.title || q.video } }, by);
+    videos[q.video] = videoEntry(libNow.lib.videos[q.video]);
+    job('done', 100, { before, after: starts.map((start) => ({ video: q.video, start })), videos });
   } catch (e) {
     job('fail', 0);
     throw e;
-  } finally {
-    next();
   }
 }
 
@@ -1561,7 +1562,7 @@ async function sendAnalysis(name) {
     const cents = Math.round(a.tuning * 100);
     const tempoTxt = a.bpm ? ` · ${a.bpm} BPM${a.bpmConf < 0.3 ? ' (unsicher)' : ''}` : '';
     status(`Bereit: ${name}${tempoTxt} · Stimmung ${cents >= 0 ? '+' : ''}${cents} ct`);
-  } else status(`Bereit: ${name} · Mix aus ${vids.length} Tracks`);
+  } else status(`Bereit: ${name} · ${vids.length ? vids.length + (vids.length === 1 ? ' Track' : ' Tracks') : 'leer'}`);
 }
 const trySend = (b) => { try { sendBank(b); } catch (e) { Max.post(`YT Sampler: Bank ${b.id} nicht geladen: ${e.message}`); } };
 
@@ -1736,6 +1737,15 @@ const CMD = {
     trySend(bankById(r.id));
     return r;
   },
+  // Track aus der Suche auf Plätze (ein Platz oder alle leeren): {} sofort, Rest per job kind pads
+  fillpads(q, by) {
+    need(isVideo(q.video) && Array.isArray(q.pads) && q.pads.length >= 1 && q.pads.every(isPad) && new Set(q.pads).size === q.pads.length
+      && (q.tag === undefined || (typeof q.tag === 'string' && /^[\w-]{1,40}$/.test(q.tag))));
+    libBank(q.id);
+    fillPads(q, by).catch((e) => {
+      if (e.code !== 'loadfail') edEmit('msg', { level: 'error', code: e.code || 'cutfail', text: e.text || e.message });   // loadfail meldet der Download selbst
+    });
+  },
   // Pad kopieren oder leeren (video null). Ohne Quelle zum Schneiden playonly, dann bleibt alles, wie es ist.
   setpad(q, by) {
     const b = libBank(q.id);
@@ -1793,13 +1803,6 @@ const CMD = {
     Max.outlet('param', q.name, q.value);
   },
   search: (q) => edSearch(q.q),
-  newbank(q, by) {
-    need(isVideo(q.video) && (q.tag === undefined || (typeof q.tag === 'string' && /^[\w-]{1,40}$/.test(q.tag))));
-    if (!libNow.lib) throw libBroken();
-    newBank(q.video, by, q.tag).then((id) => sendBank(bankById(id))).catch((e) => {
-      if (e.code !== 'loadfail') edEmit('msg', { level: 'error', code: e.code || 'cutfail', text: e.text || e.message });   // loadfail meldet der Download selbst
-    });
-  },
   tempo(q, by) {
     libChange('tempo', { video: q.video, bpm: q.bpm }, by);
     bpmToDevice(q.video);
@@ -2031,6 +2034,6 @@ module.exports = {
   errMsg, DATA, LOCAL, CACHE, SESSIONS, LIB_FILE, LIB_LOCK, BACKUP_DIR, ERR, LIB, libErr, libParse, libRead, libChange, libBackup, libEvents, get libNow() { return libNow; },
   AN, SNIP_DIR, SNIP_MS, computeAnalysis, tempoFromOnset, saveAnalysis, readAnalysis, getAnalysis, trackBeats, silentRanges,
   hasWav, readSnip, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, cacheSize, videoFail,
-  beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, newBank, get anaMap() { return anaMap; },
+  beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, fillPads, get anaMap() { return anaMap; },
   parseSearchPage, runCmd, peaks, get webPort() { return webPort; }, get activeId() { return activeId; },
 };

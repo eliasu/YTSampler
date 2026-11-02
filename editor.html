@@ -38,7 +38,6 @@
   .tag { font-size:10.5px; font-weight:500; padding:0 5px; border-radius:4px; border:1px solid var(--line2); color:var(--dim); white-space:nowrap; }
   .tag.bad { color:var(--danger); border-color:#5a2a2a; }
   .tag.busy { color:var(--sel); border-color:#1f4a5e; }
-  .tag.mix { color:var(--acc); border-color:#5a4416; margin-right:6px; vertical-align:1px; }
 
   /* Gerüst */
   #app { display:grid; grid-template-rows:52px auto 1fr; height:100vh; }
@@ -165,26 +164,28 @@
   .pad.empty { background:none; border-style:dashed; }
   .pad.empty .bar { display:none; }
   .pad.empty .n { color:var(--faint); }
-  /* Quellleiste: Pads einer anderen Bank, auf Plätze ziehen (Kopie) */
-  #src { flex:none; display:flex; align-items:center; gap:8px; margin-top:10px; padding-top:8px; border-top:1px solid var(--line); min-height:34px; }
-  #srctoggle { cursor:pointer; user-select:none; white-space:nowrap; }
-  #srcsel { font:inherit; font-size:12px; color:var(--text); background:var(--bg); border:1px solid var(--line2); border-radius:7px; padding:3px 6px; outline:none; width:170px; flex:none; }
+  .pad.loading { border-style:dashed; border-color:var(--sel); }
+  .pad.loading .s { color:var(--sel); }
+  /* rechts neben den Pads: Quell-Grid (Pads einer anderen Bank, auf Plätze ziehen = Kopie), darunter das gewählte Pad */
+  #aside { flex:1; min-width:190px; display:flex; flex-direction:column; gap:10px; min-height:0; }
+  #src { flex:1; min-height:110px; display:flex; flex-direction:column; gap:6px; }
+  #srchead { display:flex; align-items:center; gap:8px; }
+  #srcsel { font:inherit; font-size:12px; color:var(--text); background:var(--bg); border:1px solid var(--line2); border-radius:7px; padding:3px 6px; outline:none; flex:1; min-width:0; }
   #srcsel:focus { border-color:var(--sel); }
-  #srcpads { flex:1; min-width:0; display:grid; grid-template-columns:repeat(16, minmax(0, 1fr)); gap:3px; }
-  .st { background:var(--raise); border:1px solid var(--line2); border-radius:5px; padding:2px 3px; font-size:10px; line-height:1.25; color:var(--dim); cursor:grab; user-select:none; overflow:hidden; white-space:nowrap; text-align:center; }
-  .st b { display:block; font-size:11px; font-weight:600; color:var(--text); }
+  #srcbox { flex:1; min-height:0; container-type:size; }
+  #srcpads { width:min(100cqw, 100cqh); height:min(100cqw, 100cqh); display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); grid-template-rows:repeat(4, minmax(0, 1fr)); gap:4px; }
+  .st { background:var(--raise); border:1px solid var(--line2); border-radius:6px; padding:2px 4px; font-size:10.5px; line-height:1.25; color:var(--dim); cursor:grab; user-select:none; overflow:hidden; white-space:nowrap; display:flex; flex-direction:column; justify-content:center; align-items:center; }
+  .st b { font-size:11.5px; font-weight:600; color:var(--text); }
   .st.empty { opacity:.35; cursor:default; border-style:dashed; }
   .st.off { cursor:default; }
-  #src.closed #srcsel, #src.closed #srcpads { display:none; }
-  #insp { flex:1; min-width:190px; display:flex; flex-direction:column; gap:6px; overflow:auto; }
-  #insp .big { font-size:24px; font-weight:600; letter-spacing:-.02em; }
-  #insp .row { display:flex; justify-content:space-between; gap:10px; color:var(--dim); border-bottom:1px solid var(--line); padding:4px 0; }
+  #insp { flex:none; display:flex; flex-direction:column; gap:5px; }
+  #insp .big { font-size:15px; font-weight:600; }
+  #insp .big span { font-weight:400; color:var(--dim); margin-left:6px; }
+  #insp .row { display:flex; justify-content:space-between; gap:10px; color:var(--dim); border-bottom:1px solid var(--line); padding:2px 0 4px; }
   #insp .row b { color:var(--text); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
-  #insp .btns { display:flex; gap:8px; flex-wrap:wrap; }
+  #insp .btns { display:flex; gap:6px; flex-wrap:wrap; }
   #tempo { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
-  #tempo input { width:78px; padding:5px 8px; }
-  #drop { position:absolute; inset:-4px; border:2px dashed var(--sel); border-radius:12px; background:rgba(92,200,255,.08); display:none; align-items:center; justify-content:center; font-size:15px; font-weight:500; z-index:5; pointer-events:none; }
-  #pads.dropping #drop { display:flex; }
+  #tempo input { width:72px; padding:4px 7px; }
 
   /* Slide-in Suche */
   #shade { position:fixed; inset:0; background:rgba(0,0,0,.45); opacity:0; pointer-events:none; transition:opacity .2s; z-index:20; }
@@ -200,6 +201,7 @@
   #results li:hover { background:var(--raise); }
   #results img { width:96px; height:54px; object-fit:cover; border-radius:5px; background:var(--raise); }
   #results .t { font-weight:500; } #results .m { color:var(--dim); font-size:12px; display:flex; gap:6px; align-items:center; margin-top:3px; }
+  #results .fill { margin-left:auto; }
   #results .info { cursor:default; color:var(--dim); grid-template-columns:1fr; border-color:transparent; }
 
   /* Toast, kein Device */
@@ -250,7 +252,7 @@
       <div id="sidehead"><span class="lbl">Bibliothek</span><span class="hint num" id="count"></span></div>
       <ul id="banklist"></ul>
       <div id="sidefoot">
-        <div class="btns"><button class="small" id="newmix" title="Bank mit 16 leeren Plätzen, aus der Quellleiste füllen">Neue Mix-Bank</button><button class="small" id="fetchall">Alle nachladen</button></div>
+        <div class="btns"><button class="small" id="newbank" title="Bank mit 16 leeren Plätzen am Ende, aus der Suche oder dem Quell-Grid füllen">Neue Bank</button><button class="small" id="fetchall">Alle nachladen</button></div>
         <span class="hint num" id="cachesize"></span>
       </div>
     </aside>
@@ -290,12 +292,13 @@
         </div>
         <div id="padarea">
           <div id="grid"></div>
-          <div id="insp"></div>
-          <div id="drop">Loslassen: neue Bank aus diesem Video</div>
-        </div>
-        <div id="src">
-          <span class="lbl" id="srctoggle" title="Quellleiste ein/aus · Pads einer anderen Bank auf Plätze ziehen (Kopie)">▾ Quelle</span><select id="srcsel" aria-label="Quellbank"></select>
-          <div id="srcpads"></div>
+          <div id="aside">
+            <div id="src">
+              <div id="srchead"><span class="lbl" title="Pads einer anderen Bank auf Plätze ziehen (Kopie)">Quelle</span><select id="srcsel" aria-label="Quellbank"></select></div>
+              <div id="srcbox"><div id="srcpads"></div></div>
+            </div>
+            <div id="insp"></div>
+          </div>
         </div>
       </section>
       <div id="blank"><div id="blankmsg"></div></div>
@@ -307,7 +310,7 @@
 <aside id="panel">
   <div class="h"><b>Video suchen</b><button class="ghost" id="closesearch" title="Schließen (Esc)"><svg class="i"><use href="#i-x"/></svg></button></div>
   <input id="q" placeholder="Suchbegriff oder YouTube-URL …" autocomplete="off">
-  <div class="hint">Treffer anklicken oder auf die Pads ziehen: wird eine neue Bank am Ende der Bibliothek.</div>
+  <div class="hint">Treffer anklicken: kommt auf das gewählte Pad. Auf ein Pad ziehen: kommt dorthin. „Leere Plätze füllen“: alle leeren Plätze der Bank. Die Stelle im Track wird gewürfelt.</div>
   <ul id="results"></ul>
 </aside>
 <div id="toast"></div>
@@ -320,7 +323,7 @@ const CLIENT = Math.random().toString(36).slice(2, 10);
 const HIST_MAX = 100, LAYOUT_KEY = 'ytsampler.editor.layout';
 const S = {
   conn: false, hello: null, lib: null, dev: null, beats: null, cache: null,
-  jobs: {}, newbanks: [], sel: 0, zoom: 1, peaks: new Map(), play: null, drag: null,
+  jobs: {}, fills: [], sel: 0, zoom: 1, peaks: new Map(), play: null, drag: null,
 };
 
 // ---------- Hilfen ----------
@@ -344,7 +347,7 @@ let savedT;
 function flashSaved() { $('saved').textContent = 'gespeichert ✓'; clearTimeout(savedT); savedT = setTimeout(() => { $('saved').textContent = 'automatisch gespeichert'; }, 900); }
 
 // ---------- Befehle ----------
-const WRITE = new Set(['rename', 'duplicate', 'delete', 'move', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'newbank', 'newmix', 'setpad', 'tempo', 'tempook', 'fetch', 'fetchall']);
+const WRITE = new Set(['rename', 'duplicate', 'delete', 'move', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'fillpads', 'newmix', 'setpad', 'tempo', 'tempook', 'fetch', 'fetchall']);
 async function cmd(name, fields = {}, quiet = false) {
   let r;
   try {
@@ -421,14 +424,23 @@ function startsStep(label, id, before, after) {
   return { label, undo: onBank(id, () => ['setstarts', { id, starts: before }]), redo: onBank(id, () => ['setstarts', { id, starts: after }]) };
 }
 // setpad mit info, damit Undo auch geht, wenn das Video inzwischen aus der Bibliothek gefallen ist. Jetzt festhalten, nicht beim Undo
-function padArgs(id, pad, p) {
+function padArgs(id, pad, p, videos) {
   if (!p) return { id, pad, video: null };
-  const e = vinfo(p.video), info = { title: e.title || p.video }; if (e.bpm) info.bpm = e.bpm;
+  const e = (videos && videos[p.video]) || vinfo(p.video), info = { title: e.title || p.video }; if (e.bpm) info.bpm = e.bpm;
   return { id, pad, video: p.video, start: p.start, info };
 }
 function padStep(label, id, pad, before, after) {
   const u = padArgs(id, pad, before), r = padArgs(id, pad, after);
   return { label, undo: onBank(id, () => ['setpad', u]), redo: onBank(id, () => ['setpad', r]) };
+}
+// Track aus der Suche auf Plätze: Undo/Redo = setpad pro Platz, videos (Titel/bpm) kommt von Node mit done
+function fillStep(label, id, pads, before, after, videos) {
+  const seq = (list) => async () => {
+    let r = await selectBank(id);
+    for (let k = 0; r.ok && k < pads.length; k++) r = await cmd('setpad', padArgs(id, pads[k], list[k], videos));
+    return r;
+  };
+  return { label, undo: seq(before), redo: seq(after) };
 }
 
 // ---------- Aktionen ----------
@@ -450,6 +462,7 @@ async function swap(a, c) {
 // Pad aus der Quellleiste kopieren (Spec 5.4), ein belegter Platz wird ersetzt
 async function copyPad(src, k, i) {
   const b = curBank(), np = src && src.pads[k]; if (!b || !np || !writable()) return;
+  if (loadingPad(i)) { toast('Pad ' + (i + 1) + ' lädt gerade', { err: true }); return; }
   const old = b.pads[i], id = b.id, nv = { video: np.video, start: np.start }, label = 'Pad ' + (i + 1) + ' aus ' + src.name;
   const step = padStep(label, id, i, old, nv);                                      // vor dem Befehl: info des alten Videos
   const r = await cmd('setpad', padArgs(id, i, nv));
@@ -462,9 +475,9 @@ async function clearPad(i) {
   const r = await cmd('setpad', { id, pad: i, video: null });
   if (r.ok) pushStep(step);
 }
-async function newMix() {
+async function newEmptyBank() {
   const r = await cmd('newmix');
-  if (r.ok) { pushStep(creationStep('Neue Mix-Bank', r.id)); toast('Neue Mix-Bank angelegt'); }
+  if (r.ok) { pushStep(creationStep('Neue Bank', r.id)); toast('Neue Bank angelegt'); }
 }
 async function rename(b, name) {
   name = name.trim().slice(0, 100);
@@ -486,15 +499,20 @@ async function move(b, to) {
   const r = await cmd('move', { id, to });
   if (r.ok) pushStep({ label: 'Bank „' + b.name + '“ verschoben', undo: onBank(id, () => ['move', { id, to: from }]), redo: onBank(id, () => ['move', { id, to }]) });
 }
-newBank.n = 0;
-async function newBank(video, title) {
+// Plätze, die gerade einen Track aus der Suche bekommen (job kind pads, pro Klick ein tag)
+const loadingPad = (i, id = S.dev && S.dev.bankId) => S.fills.some((f) => f.id === id && f.pads.includes(i));
+const fillOf = (i, id) => S.fills.find((f) => f.id === id && f.pads.includes(i));
+const emptyPads = (b) => (b ? [...Array(16).keys()].filter((i) => !b.pads[i] && !loadingPad(i, b.id)) : []);
+fillVideo.n = 0;
+async function fillVideo(video, title, pads) {
+  const b = curBank(); if (!b || !writable()) return;
+  if (!pads.length) { toast('Keine leeren Plätze', { err: true }); return; }
+  if (pads.some((i) => loadingPad(i))) { toast('Pad lädt gerade', { err: true }); return; }
   closeSearch();
-  // eigene ausgegraute Zeile pro Klick, Node schickt den tag in jedem job zurück
-  const nb = { tag: CLIENT + '-' + (++newBank.n), video, title, phase: 'queue', progress: 0 };
-  S.newbanks.push(nb); render();
-  const r = await cmd('newbank', { video, tag: nb.tag });
-  if (r.ok) toast('Lädt „' + title + '“ …');
-  else { S.newbanks = S.newbanks.filter((x) => x !== nb); render(); }
+  const f = { tag: CLIENT + '-' + (++fillVideo.n), id: b.id, video, title, pads, phase: 'queue', progress: 0 };
+  S.fills.push(f); render();
+  const r = await cmd('fillpads', { id: b.id, video, pads, tag: f.tag });
+  if (!r.ok) { S.fills = S.fills.filter((x) => x !== f); render(); }
 }
 let holding = -1;
 // Pads per Tastatur, nach physischer Lage (KeyboardEvent.code) wie das 4×4, Pad 1 unten links. Beschriftung für deutsche Tastatur
@@ -520,7 +538,7 @@ function renderHeader() {
   $('prev').disabled = !S.conn || n === 0 || i === 0;
   $('next').disabled = !S.conn || n === 0 || i === n - 1;
   $('conntext').textContent = S.conn && S.hello ? 'steuert: ' + (S.hello.track || 'YT Sampler') : 'kein Device';
-  $('opensearch').disabled = !writable();
+  $('opensearch').disabled = !writable() || !curBank();
   const broken = S.lib && (S.lib.state === 'kaputt' || S.lib.state === 'neuer');
   document.body.classList.toggle('broken', !!broken);
   $('errbar').textContent = broken ? (S.lib.error || (S.lib.state === 'neuer' ? 'Bibliothek aus neuerer Version' : 'Bibliothek kaputt – Speichern gesperrt')) : '';
@@ -533,28 +551,27 @@ function renderList() {
   if (editing != null || (S.drag && S.drag.kind === 'bank')) return; // Umbenennen oder Ziehen läuft
   const ul = $('banklist'), w = writable(), cb = curBank();
   // nur neu bauen, wenn sich etwas geändert hat: sonst gehen Klicks verloren, die auf ein play-Event fallen
-  const sig = JSON.stringify([S.lib, S.jobs, S.newbanks, cb && cb.id, w, S.cache, S.beats && S.beats.bpm]);
+  const sig = JSON.stringify([S.lib, S.jobs, cb && cb.id, w, S.cache, S.beats && S.beats.bpm]);
   if (sig === renderList.sig) return;
   renderList.sig = sig;
   ul.innerHTML = '';
   $('count').textContent = banks().length || '';
-  if (!banks().length && !S.newbanks.length) {
+  if (!banks().length) {
     const li = document.createElement('li'); li.className = 'empty';
-    li.innerHTML = S.lib && (S.lib.state === 'kaputt' || S.lib.state === 'neuer') ? 'Bibliothek nicht lesbar' : 'Noch keine Bank.<br><button class="small" style="margin-top:8px">Video suchen</button>';
-    const sb = li.querySelector('button'); if (sb) { sb.disabled = !w; sb.onclick = openSearch; }
+    li.innerHTML = S.lib && (S.lib.state === 'kaputt' || S.lib.state === 'neuer') ? 'Bibliothek nicht lesbar' : 'Noch keine Bank.<br><button class="small" style="margin-top:8px">Neue Bank</button>';
+    const sb = li.querySelector('button'); if (sb) { sb.disabled = !w; sb.onclick = newEmptyBank; }
     ul.appendChild(li);
   }
   banks().forEach((b, i) => {
-    const li = document.createElement('li'), vids = bankVideos(b), v0 = vids[0], bpm = !b.mix && videoBpm(v0).bpm;
+    const li = document.createElement('li'), vids = bankVideos(b), v0 = vids[0], bpm = vids.length === 1 && videoBpm(v0).bpm;
     li.dataset.id = b.id; li.draggable = w; if (b === cb) li.className = 'on';
     li.innerHTML = '<span class="nr num">' + (i + 1) + '</span><span class="name"></span><span class="acts">'
       + '<button class="ghost ren" title="Umbenennen">' + icon('edit') + '</button>'
       + '<button class="ghost dup" title="Duplizieren">' + icon('copy') + '</button>'
       + '<button class="ghost del" title="Löschen">' + icon('trash') + '</button></span>';
     const n = li.querySelector('.name'); n.textContent = b.name || '(ohne Namen)';
-    if (b.mix) n.insertAdjacentHTML('afterbegin', '<span class="tag mix">Mix</span>');
     const sub = document.createElement('span'); sub.className = 'sub';
-    sub.textContent = b.mix ? vids.length + (vids.length === 1 ? ' Track' : ' Tracks') : vtitle(v0) + (bpm ? ' · ' + fmtBpm(bpm) + ' BPM' : ''); n.appendChild(sub);
+    sub.textContent = !vids.length ? 'leer' : vids.length > 1 ? vids.length + ' Tracks' : vtitle(v0) + (bpm ? ' · ' + fmtBpm(bpm) + ' BPM' : ''); n.appendChild(sub);
     const marks = [], job = vids.map((x) => S.jobs['fetch:' + x]).find(Boolean), missing = vids.filter((x) => !vinfo(x).wav);
     if (!b.wav && b.snip === 'missing') marks.push('<span class="tag bad">nicht ladbar</span>');
     else if (!b.wav) marks.push('<span class="tag">nur spielbar</span>');
@@ -581,15 +598,9 @@ function renderList() {
     };
     ul.appendChild(li);
   });
-  S.newbanks.forEach((nb, i) => {
-    const li = document.createElement('li'); li.className = 'pending';
-    li.innerHTML = '<span class="nr num">' + (banks().length + 1 + i) + '</span><span class="name"></span><span></span>';
-    li.querySelector('.name').innerHTML = esc(nb.title) + '<span class="sub">Neue Bank · ' + jobText(nb) + '</span>';
-    ul.appendChild(li);
-  });
   $('fetchall').style.display = banks().some((b) => !b.wav) ? '' : 'none';
   $('fetchall').disabled = !w;
-  $('newmix').disabled = !w;
+  $('newbank').disabled = !w;
   const c = S.cache || (S.lib && S.lib.cache);
   $('cachesize').textContent = c ? (c.warn ? 'Cache über 10 GB – im Finder aufräumen' : 'Cache ' + fmtGB(c.bytes)) : '';
   $('cachesize').className = 'hint num' + (c && c.warn ? ' warn' : '');
@@ -678,7 +689,9 @@ function renderWave() {
   inner.querySelectorAll('.mk').forEach((m) => m.remove());
   if (!vw) return;
   if (!vw.pad) { // leerer Platz: nichts zu zeigen
-    msg.className = 'on'; msg.innerHTML = '<b>Leerer Platz</b><span>Pad aus der Quellleiste hierher ziehen</span>';
+    const f = fillOf(S.sel, vw.bank.id);
+    msg.className = 'on'; msg.innerHTML = f ? '<b>' + esc(f.title) + '</b><span class="tag busy">' + jobText(f) + '</span>'
+      : '<b>Leerer Platz</b><span>Track aus der Suche (⌘K) oder Pad aus dem Quell-Grid hierher ziehen</span>';
     $('wavehint').innerHTML = ''; $('slice').style.display = 'none'; drawWave(); return;
   }
   const p = peaksFor(vw.video, vw.wav), mz = maxZoom();
@@ -782,12 +795,13 @@ for (let row = 3; row >= 0; row--) for (let col = 0; col < 4; col++) {
   p.querySelector('.clr').onclick = () => clearPad(i);
   p.ondragstart = (e) => { S.drag = { kind: 'pad', i }; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'Pad ' + (i + 1)); };
   p.ondragend = () => { S.drag = null; };
-  const takes = () => S.drag && (S.drag.kind === 'pad' || (S.drag.kind === 'src' && writable()));      // Pad tauschen oder aus der Quellleiste
-  p.ondragover = (e) => { if (!takes()) return; e.preventDefault(); e.dataTransfer.dropEffect = S.drag.kind === 'src' ? 'copy' : 'move'; p.classList.add('over'); };
+  const takes = () => S.drag && (S.drag.kind === 'pad' || ((S.drag.kind === 'src' || S.drag.kind === 'video') && writable()));   // tauschen, aus dem Quell-Grid, aus der Suche
+  p.ondragover = (e) => { if (!takes()) return; e.preventDefault(); e.dataTransfer.dropEffect = S.drag.kind === 'pad' ? 'move' : 'copy'; p.classList.add('over'); };
   p.ondragleave = () => p.classList.remove('over');
   p.ondrop = (e) => {
     if (!takes()) return; e.preventDefault(); e.stopPropagation(); p.classList.remove('over');
-    const d = S.drag; S.drag = null; if (d.kind === 'pad') swap(d.i, i); else copyPad(bankById(d.id), d.pad, i);
+    const d = S.drag; S.drag = null;
+    if (d.kind === 'pad') swap(d.i, i); else if (d.kind === 'video') { S.sel = i; fillVideo(d.id, d.title, [i]); } else copyPad(bankById(d.id), d.pad, i);
   };
   $('grid').appendChild(p);
 }
@@ -795,36 +809,35 @@ function renderPads() {
   const vw = view();
   if (!vw) { $('insp').innerHTML = ''; renderPads.sig = null; return; }
   const swappable = writable() && !!vw.bank;
-  $('padhint').textContent = 'Klick oder Taste spielt · auf anderes Pad ziehen tauscht · aus der Quelle ziehen kopiert';
+  $('padhint').textContent = 'Klick oder Taste spielt · auf anderes Pad ziehen tauscht · aus Quelle oder Suche ziehen setzt ein';
+  const many = bankVideos(vw.bank).length > 1, nEmpty = emptyPads(vw.bank).length;
+  document.querySelectorAll('#results .fill').forEach((x) => { x.disabled = !nEmpty || !writable(); });
   for (let i = 0; i < 16; i++) {
-    const p = $('pad' + i), pd = vw.bank.pads[i], e = pd ? vinfo(pd.video) : {}, dur = e.dur;
-    p.classList.toggle('sel', i === S.sel); p.classList.toggle('empty', !pd); p.draggable = swappable;
+    const p = $('pad' + i), pd = vw.bank.pads[i], e = pd ? vinfo(pd.video) : {}, dur = e.dur, f = fillOf(i, vw.bank.id);
+    p.classList.toggle('sel', i === S.sel); p.classList.toggle('empty', !pd); p.classList.toggle('loading', !!f); p.draggable = swappable;
     // Lage im eigenen Track, ohne Dauer kein Balken
     p.querySelector('.bar').style.visibility = dur ? '' : 'hidden';
     if (dur) p.querySelector('.bar i').style.left = Math.min(100, pd.start / dur * 100) + '%';
-    p.querySelector('.s').textContent = pd ? fmt(pd.start) : 'leer';
-    p.querySelector('.vt').textContent = pd && vw.bank.mix ? vtitle(pd.video) : '';
-    p.title = (pd && vw.bank.mix ? vtitle(pd.video) + ' · ' : '') + 'Taste ' + PAD_LABEL[i];
+    p.querySelector('.s').textContent = f ? jobText(f) : pd ? fmt(pd.start) : 'leer';
+    p.querySelector('.vt').textContent = f ? f.title : pd && many ? vtitle(pd.video) : '';
+    p.title = (f ? f.title + ' lädt · ' : pd && many ? vtitle(pd.video) + ' · ' : '') + 'Taste ' + PAD_LABEL[i];
     p.querySelector('.roll').style.display = pd && e.wav && writable() ? '' : 'none';
     p.querySelector('.clr').style.display = pd && writable() ? '' : 'none';
   }
   if (document.activeElement === $('bpm')) return; // Tempo wird gerade getippt
   if (!vw.pad) {
     const sig = JSON.stringify(['leer', S.sel]); if (sig === renderPads.sig) return; renderPads.sig = sig;
-    $('insp').innerHTML = '<span class="lbl">Ausgewählt</span><div class="big">Pad ' + (S.sel + 1) + '</div><div class="row"><span>Platz</span><b>leer</b></div>';
+    $('insp').innerHTML = '<div class="big">Pad ' + (S.sel + 1) + '<span>leer</span></div>';
     return;
   }
   const v = vw.video, vt = vtitle(v), tb = videoBpm(v), tempoOn = !!vw.bank && writable();
   const sig = JSON.stringify([v, vt, tb, tempoOn, vw.edit, S.sel, vw.pad.start]);
   if (sig === renderPads.sig) return;
   renderPads.sig = sig;
-  $('insp').innerHTML = '<span class="lbl">Ausgewählt</span><div class="big">Pad ' + (S.sel + 1) + '</div>'
-    + '<div class="row"><span>Start</span><b class="num">' + fmt(vw.pad.start) + '</b></div>'
-    + '<div class="row"><span>Länge</span><b>vom Device</b></div>'
-    + '<div class="row"><span>Video</span><b id="inspvideo"></b></div>'
-    + '<div class="btns"><button id="rollbtn">' + icon('dice') + ' Neues Snippet</button><button id="hitbtn">Anspielen</button></div>'
-    + '<span class="lbl" style="margin-top:6px">Tempo</span>'
-    + '<div id="tempo"><input id="bpm" type="number" min="30" max="300" step="0.1" class="num"><button class="small" id="half">½×</button><button class="small" id="double">2×</button>'
+  $('insp').innerHTML = '<div class="big">Pad ' + (S.sel + 1) + '<span class="num">' + fmt(vw.pad.start) + '</span></div>'
+    + '<div class="row"><b id="inspvideo"></b></div>'
+    + '<div class="btns"><button class="small" id="rollbtn">' + icon('dice') + ' Neues Snippet</button><button class="small" id="hitbtn">Anspielen</button></div>'
+    + '<div id="tempo"><span class="lbl">Tempo</span><input id="bpm" type="number" min="30" max="300" step="0.1" class="num"><button class="small" id="half">½×</button><button class="small" id="double">2×</button>'
     + (tb.confirmed ? '' : '<button class="small" id="tempook">Tempo stimmt</button>') + '</div>'
     + (!tb.confirmed && tb.bpm ? '<span class="hint">Tempo aus der Analyse, nicht bestätigt</span>' : '');
   $('inspvideo').textContent = vt + (tb.bpm ? ' · ' + fmtBpm(tb.bpm) + ' BPM' : '');
@@ -842,22 +855,21 @@ function renderPads() {
   const ok = $('tempook'); if (ok) { ok.disabled = !tempoOn; ok.onclick = () => cmd('tempook', { video: v }); }
 }
 
-// ---------- Quellleiste (Spec 5.4) ----------
+// ---------- Quell-Grid (Flow-Nachtrag): 4×4 wie die eigenen Pads, Pad 1 unten links ----------
 function renderSrc() {
   const cb = curBank(), w = writable(), others = banks().filter((x) => x !== cb);
   const src = others.find((x) => x.id === layout.srcId) || others[0] || null;
-  const sig = JSON.stringify([others.map((x) => [x.id, x.name, x.mix]), src, w, layout.srcClosed, S.lib && S.lib.videos]);
+  const sig = JSON.stringify([others.map((x) => [x.id, x.name]), src, w, S.lib && S.lib.videos]);
   if (sig === renderSrc.sig) return;
   renderSrc.sig = sig;
-  $('src').classList.toggle('closed', !!layout.srcClosed);
-  $('srctoggle').textContent = (layout.srcClosed ? '▸' : '▾') + ' Quelle';
   const sel = $('srcsel'); sel.innerHTML = '';
-  others.forEach((x) => sel.add(new Option((banks().indexOf(x) + 1) + '  ' + x.name + (x.mix ? '  · Mix' : ''), x.id)));
+  others.forEach((x) => sel.add(new Option((banks().indexOf(x) + 1) + '  ' + x.name, x.id)));
   sel.disabled = !others.length; if (src) sel.value = src.id;
   const box = $('srcpads'); box.innerHTML = '';
   if (!src) { box.innerHTML = '<span class="hint" style="grid-column:1/-1">Keine andere Bank</span>'; return; }
-  src.pads.forEach((p, k) => {
-    const d = document.createElement('div'); d.className = 'st num' + (p ? (w ? '' : ' off') : ' empty'); d.dataset.pad = k;
+  for (let row = 3; row >= 0; row--) for (let col = 0; col < 4; col++) {
+    const k = row * 4 + col, p = src.pads[k], d = document.createElement('div');
+    d.className = 'st num' + (p ? (w ? '' : ' off') : ' empty'); d.dataset.pad = k;
     d.innerHTML = '<b>' + (k + 1) + '</b>' + (p ? fmtDur(p.start / 1000) : 'leer');
     if (p) {
       d.title = vtitle(p.video) + ' · ' + fmt(p.start); d.draggable = w;
@@ -865,10 +877,9 @@ function renderSrc() {
       d.ondragend = () => { S.drag = null; };
     }
     box.appendChild(d);
-  });
+  }
 }
 $('srcsel').onchange = () => { if (!$('srcsel').value) return; layout.srcId = +$('srcsel').value; saveLayout(); $('srcsel').blur(); render(); };
-$('srctoggle').onclick = () => { layout.srcClosed = !layout.srcClosed; saveLayout(); render(); };
 
 // ---------- Device-Regler (Spec 3.0, 5.1) ----------
 // Ein Zustand: die echten Live-Parameter aus device.params. Bedienung schickt /cmd param, die Anzeige folgt dem Echo.
@@ -954,7 +965,7 @@ function animPlay() {
 }
 
 // ---------- Suche (Slide-in) ----------
-function openSearch() { if (!writable()) return; document.body.classList.add('search'); $('q').focus(); $('q').select(); if (!$('results').children.length && $('q').value) runSearch(); }
+function openSearch() { if (!writable() || !curBank()) return; document.body.classList.add('search'); $('q').focus(); $('q').select(); if (!$('results').children.length && $('q').value) runSearch(); }
 function closeSearch() { document.body.classList.remove('search', 'dragging'); }
 $('opensearch').onclick = openSearch; $('closesearch').onclick = closeSearch; $('shade').onclick = closeSearch;
 let searchT;
@@ -970,18 +981,17 @@ async function runSearch() {
   ul.innerHTML = r.results.length ? '' : '<li class="info">Keine Treffer</li>';
   r.results.forEach((x) => {
     const li = document.createElement('li'); li.draggable = true;
-    li.innerHTML = '<img loading="lazy" alt=""><div><div class="t"></div><div class="m num">' + fmtDur(x.dur) + (x.long ? '<span class="tag">nur 10 min</span>' : '') + '</div></div>';
+    li.innerHTML = '<img loading="lazy" alt=""><div><div class="t"></div><div class="m num">' + fmtDur(x.dur) + (x.long ? '<span class="tag">nur 10 min</span>' : '')
+      + '<button class="small fill" title="Alle leeren Plätze der Bank mit Stellen aus diesem Track füllen">Leere Plätze füllen</button></div></div>';
     li.querySelector('img').src = 'https://i.ytimg.com/vi/' + encodeURIComponent(x.id) + '/mqdefault.jpg';
     li.querySelector('.t').textContent = x.title;
-    li.onclick = () => newBank(x.id, x.title);
-    li.ondragstart = (e) => { S.drag = { kind: 'video', id: x.id, title: x.title }; e.dataTransfer.setData('text/plain', x.title); setTimeout(() => document.body.classList.add('dragging'), 0); };
-    li.ondragend = () => { S.drag = null; document.body.classList.remove('dragging'); $('pads').classList.remove('dropping'); };
+    li.onclick = (e) => { if (!e.target.closest('button')) fillVideo(x.id, x.title, [S.sel]); };
+    li.querySelector('.fill').onclick = () => fillVideo(x.id, x.title, emptyPads(curBank()));
+    li.ondragstart = (e) => { S.drag = { kind: 'video', id: x.id, title: x.title }; e.dataTransfer.setData('text/plain', x.title); setTimeout(() => { if (S.drag) document.body.classList.add('dragging'); }, 0); };
+    li.ondragend = () => { S.drag = null; document.body.classList.remove('dragging'); };
     ul.appendChild(li);
   });
 }
-$('pads').ondragover = (e) => { if (S.drag && S.drag.kind === 'video') { e.preventDefault(); $('pads').classList.add('dropping'); } };
-$('pads').ondragleave = (e) => { if (!$('pads').contains(e.relatedTarget)) $('pads').classList.remove('dropping'); };
-$('pads').ondrop = (e) => { if (S.drag && S.drag.kind === 'video') { e.preventDefault(); const d = S.drag; S.drag = null; $('pads').classList.remove('dropping'); newBank(d.id, d.title); } };
 // Ablage außerhalb der Pads/Liste: kein Navigieren des Browsers
 document.addEventListener('dragover', (e) => { if (S.drag && S.drag.kind === 'video') e.preventDefault(); });
 document.addEventListener('drop', (e) => e.preventDefault());
@@ -1012,7 +1022,7 @@ applyLayout();
 function step(d) { const n = banks().length; if (!n) return; const i = curIdx(), j = i < 0 ? 0 : Math.max(0, Math.min(n - 1, i + d)); if (j !== i) selectBank(banks()[j].id); }
 $('prev').onclick = () => step(-1); $('next').onclick = () => step(1);
 $('undo').onclick = undo; $('redo').onclick = redo;
-$('newmix').onclick = newMix;
+$('newbank').onclick = newEmptyBank;
 $('fetchall').onclick = async () => { const r = await cmd('fetchall'); if (r.ok) toast(r.todo ? r.todo + ' Tracks werden geladen' : 'Nichts nachzuladen'); };
 document.addEventListener('keydown', (e) => {
   const ae = document.activeElement, mod = e.metaKey || e.ctrlKey, inField = ae.tagName === 'TEXTAREA' || (ae.tagName === 'INPUT' && ae.type !== 'range');
@@ -1038,7 +1048,7 @@ function render() {
   document.body.classList.toggle('blank', !vw);
   const L = S.lib;
   $('blankmsg').innerHTML = !L ? '' : L.state === 'kaputt' || L.state === 'neuer' ? '<b>' + esc(L.state === 'neuer' ? 'Bibliothek aus neuerer Version' : 'Bibliothek kaputt') + '</b><span>Speichern ist gesperrt, bis die Datei wieder lesbar ist.</span>'
-    : !banks().length ? '<b>Bibliothek leer</b><span>Mit „Video suchen“ (⌘K) die erste Bank anlegen.</span>' : '<span>Keine Bank aktiv</span>';
+    : !banks().length ? '<b>Bibliothek leer</b><span>Mit „Neue Bank“ links unten die erste Bank anlegen.</span>' : '<span>Keine Bank aktiv</span>';
   if (S.sel > 15) S.sel = 0;
   // ohne Bank stehen die Regler unter der Meldung, sonst in der Pad-Karte
   const home = vw ? $('pads') : $('blank'), c = $('ctl');
@@ -1077,11 +1087,15 @@ function connect() {
   on('msg', (m) => toast(m.text, { err: m.level === 'error' }));
   on('job', (j) => {
     const key = j.kind + ':' + (j.video || j.bankId);
-    const nb = j.kind === 'newbank' && S.newbanks.find((x) => x.tag === j.tag);
-    if (nb) {
-      nb.progress = j.progress || 0; nb.phase = j.phase;
-      if (j.phase === 'done' || j.phase === 'fail') S.newbanks = S.newbanks.filter((x) => x !== nb);   // fail meldet msg
-      if (j.phase === 'done' && j.bankId) { pushStep(creationStep('Neue Bank „' + nb.title + '“', j.bankId)); toast('Neue Bank angelegt'); }
+    if (j.kind === 'pads') {
+      const f = S.fills.find((x) => x.tag === j.tag); if (!f) return;
+      f.progress = j.progress || 0; f.phase = j.phase;
+      if (j.phase === 'done' || j.phase === 'fail') S.fills = S.fills.filter((x) => x !== f);   // fail meldet msg
+      if (j.phase === 'done') {
+        const label = (f.pads.length === 1 ? 'Pad ' + (f.pads[0] + 1) : f.pads.length + ' Plätze') + ' aus „' + f.title + '“';
+        pushStep(fillStep(label, f.id, f.pads, j.before, j.after, j.videos)); toast(label);
+      }
+      return;
     }
     if (j.phase === 'done' || j.phase === 'fail') delete S.jobs[key]; else S.jobs[key] = j;
   });

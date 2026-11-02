@@ -2,7 +2,7 @@
 // Bibliothek, Device und Downloads nur im Speicher. Nie auf 8765–8770, dort läuft das echte Device.
 //   node tools/tests/editor_mock.js [port] [szenario]     → http://localhost:<port>/editor
 // Szenario umschalten im Browser: /mock/normal, /mock/nurspielbar, /mock/nichtsgeladen, /mock/leer,
-// /mock/kaputt, /mock/neuer, /mock/mix (aktive Mix-Bank), /mock/down (kein Device), /mock/up.
+// /mock/kaputt, /mock/neuer, /mock/mix (aktive Bank aus mehreren Tracks), /mock/down (kein Device), /mock/up.
 // Bibliothek im format 2 (Mix-Spec 2.1/3.2): banks[].pads = {video, start} | null, lib meldet mix/wav pro Bank, videos.wav/dur.
 // Device-Regler (Spec 3.0, 3.2/3.3): device.params, /cmd param stellt den Wert und schickt device zurück.
 const http = require('http');
@@ -15,7 +15,7 @@ const ERR = {
   playonly: 'Track fehlt – nur spielbar', nosnip: 'Snippets fehlen – Bank nicht ladbar', idtaken: 'Bank existiert schon',
   notempo: 'Kein Tempo erkannt', superseded: 'Neuere Suche läuft', badreq: 'Ungültiger Befehl',
 };
-const WRITE = ['rename', 'duplicate', 'delete', 'move', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'newbank', 'newmix', 'setpad', 'tempo', 'tempook', 'fetch', 'fetchall'];
+const WRITE = ['rename', 'duplicate', 'delete', 'move', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'fillpads', 'newmix', 'setpad', 'tempo', 'tempook', 'fetch', 'fetchall'];
 
 // Videos: id → [Titel, Analyse-BPM, Dauer s]
 const VIDEOS = {
@@ -147,7 +147,7 @@ function createMock(opts = {}) {
   function cmd(q) {
     const c = q.cmd, b = q.id != null ? byId(q.id) : null;
     if (WRITE.includes(c) && (m.lib.state === 'kaputt' || m.lib.state === 'neuer')) return fail(m.lib.state === 'kaputt' ? 'libbroken' : 'libnewer');
-    if (['select', 'rename', 'duplicate', 'delete', 'move', 'setstart', 'setstarts', 'swap', 'roll', 'setpad'].includes(c) && !b) return fail(q.id == null ? 'badreq' : 'nobank');
+    if (['select', 'rename', 'duplicate', 'delete', 'move', 'setstart', 'setstarts', 'swap', 'roll', 'setpad', 'fillpads'].includes(c) && !b) return fail(q.id == null ? 'badreq' : 'nobank');
     const pad = b && isPad(q.pad) ? b.pads[q.pad] : null, padWav = pad && m.lib.videos[pad.video].wav;
     const known = (video, start) => m.lib.banks.some((x) => x.pads.some((p) => p && p.video === video && p.start === start)); // Quelle ohne WAV (Spec 2.2)
     switch (c) {
@@ -213,7 +213,7 @@ function createMock(opts = {}) {
         b.pads[q.pad] = { video: q.video, start: q.start }; dropOrphans(); changed(q.client); syncDev(); return { ok: true };
       }
       case 'newmix': {
-        const k = { id: m.lib.nextId++, name: 'Mix-Bank', pads: Array(16).fill(null), snip: 'ok' };
+        const k = { id: m.lib.nextId++, name: 'Neue Bank', pads: Array(16).fill(null), snip: 'ok' };
         m.lib.banks.push(k); m.lib.state = 'ok'; changed(q.client); activate(k); return { ok: true, id: k.id };
       }
       case 'hit': case 'up': {
@@ -232,13 +232,21 @@ function createMock(opts = {}) {
           r({ ok: true, results: POOL.filter((p) => !s || p[1].toLowerCase().includes(s) || s.length < 3).map((p) => ({ id: p[0], title: p[1], dur: p[3], long: p[3] > 600 })) });
         }, m.slowSearch || 200));
       }
-      case 'newbank': {
-        const v = q.video; if (!VIDEOS[v]) return fail('badreq');
-        job('newbank', { video: v, tag: q.tag }, () => {
-          const k = { id: m.lib.nextId++, name: VIDEOS[v][0], pads: padsOf(v, makeStarts(v, m.lib.nextId)), snip: 'ok' };
+      case 'fillpads': { // Track aus der Suche auf Plätze, gewürfelt auf Taktanfänge, done mit before/after/videos fürs Undo
+        const v = q.video;
+        if (!VIDEOS[v] || !Array.isArray(q.pads) || !q.pads.length || !q.pads.every(isPad) || new Set(q.pads).size !== q.pads.length) return fail('badreq');
+        job('pads', { video: v, tag: q.tag, id: b.id, pads: q.pads }, () => {
+          const taken = b.pads.filter((p, k) => p && p.video === v && !q.pads.includes(k)).map((p) => p.start);
+          const free = bars(v).filter((t) => !taken.includes(t)), starts = [];
+          while (starts.length < q.pads.length) { const t = free.splice(Math.floor(Math.random() * free.length), 1)[0]; starts.push(t); }
+          starts.sort((x, y) => x - y);
+          const before = q.pads.map((k) => b.pads[k] && { ...b.pads[k] }), videos = {};
+          for (const p of before) if (p) { const e = m.lib.videos[p.video]; videos[p.video] = { title: e.title }; if (e.bpm) videos[p.video].bpm = e.bpm; }
           if (!m.lib.videos[v]) m.lib.videos[v] = videoEntry(v);
-          m.lib.banks.push(k); m.lib.state = 'ok'; changed(q.client); activate(k);
-          return { bankId: k.id };
+          q.pads.forEach((k, n) => { b.pads[k] = { video: v, start: starts[n] }; });
+          dropOrphans(); changed(q.client); syncDev();
+          videos[v] = { title: m.lib.videos[v].title };
+          return { before, after: starts.map((start) => ({ video: v, start })), videos };
         });
         return { ok: true };
       }

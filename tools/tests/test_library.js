@@ -231,7 +231,7 @@ t('newmix, setpad (mit info, null), Leeres: setstart badreq, setstarts/swap; del
   const { node } = loadNode(home(VALID()));
   assert.deepStrictEqual(node.libChange('newmix', {}), { id: 4 });
   let r = readLib(node);
-  assert.deepStrictEqual(r.banks[2], { id: 4, name: 'Mix-Bank', pads: Array(16).fill(null) });
+  assert.deepStrictEqual(r.banks[2], { id: 4, name: 'Neue Bank', pads: Array(16).fill(null) });
   node.libChange('setpad', { id: 4, pad: 0, video: 'AAAAAAAAAAA', start: 1000 });
   node.libChange('setpad', { id: 4, pad: 1, video: 'CCCCCCCCCCC', start: 500, info: { title: 'C', bpm: 88 } });
   r = readLib(node);

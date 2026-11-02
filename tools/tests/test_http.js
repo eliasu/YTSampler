@@ -450,28 +450,34 @@ t('search: Treffer ohne Dauer fallen weg, long über 10 min, neue Suche bricht a
   done();
 });
 
-t('newbank: {} sofort, job bis done mit bankId, Bank am Ende wird aktiv; fetch und fetchall', async () => {
+t('fillpads: {} sofort, job pads bis done, aktive Bank neu geschnitten und geladen; Prüfung; fetch und fetchall', async () => {
   const { node, max, on, cmd, events, done } = await setup();
   const a = events();
-  assert.deepStrictEqual(await cmd({ client: 'c1', cmd: 'newbank', video: V3 }), { ok: true });
-  await a.wait((ev, d) => ev === 'job' && d.kind === 'newbank' && d.phase === 'done', 'newbank done');
-  const j = a.of('job').filter((x) => x.kind === 'newbank').pop();
-  assert.strictEqual(j.bankId, 4);
-  assert.ok(a.of('job').some((x) => x.kind === 'newbank' && x.phase === 'download'));
-  await until(() => on('bank').length, 'bank');
-  const b = bankArgs(on('bank')[0]);
-  assert.deepStrictEqual([b.id, b.nr], [4, 4]);
-  assert.deepStrictEqual(node.libNow.lib.banks[3].pads.map((p) => p.video), Array(16).fill(V3));
-  assert.deepStrictEqual(b.starts, b.starts.slice().sort((x, y) => x - y));
-  assert.strictEqual(node.libNow.lib.banks[3].name, `Titel; ${V3}`);
+  const { id } = await cmd({ client: 'c1', cmd: 'newmix' });
+  assert.strictEqual(id, 4);
+  await until(() => on('bank').some((m) => m[1] === 4), 'leere Bank aktiv');
+  max.out = [];
+  assert.deepStrictEqual(await cmd({ client: 'c1', cmd: 'fillpads', id, video: V3, pads: [0, 2, 5], tag: 'k1' }), { ok: true });
+  await a.wait((ev, d) => ev === 'job' && d.kind === 'pads' && d.phase === 'done', 'pads done');
+  const j = a.of('job').filter((x) => x.kind === 'pads').pop();
+  assert.deepStrictEqual([j.id, j.tag, j.pads, j.before], [4, 'k1', [0, 2, 5], [null, null, null]]);
+  assert.ok(a.of('job').some((x) => x.kind === 'pads' && x.phase === 'download'));
+  const bk = node.libNow.lib.banks[3];
+  assert.deepStrictEqual(j.after, [0, 2, 5].map((k) => bk.pads[k]));
+  assert.deepStrictEqual(bk.pads.map((p) => (p ? p.video : null)), [V3, null, V3, null, null, V3, ...Array(10).fill(null)]);
+  await until(() => { const l = on('bank').pop(); return l && bankArgs(l).lens[5] > 0; }, 'neu geschnitten und geladen');
   await a.wait((ev, d) => ev === 'lib' && d.banks.length === 4 && d.by === 'c1');
-  assert.strictEqual((await cmd({ cmd: 'newbank', video: 'kurz' })).code, 'badreq');
-  assert.strictEqual((await cmd({ cmd: 'newbank', video: V3, tag: 'a b' })).code, 'badreq');
+  for (const bad of [{ video: 'kurz', pads: [0] }, { video: V3, pads: [] }, { video: V3, pads: [16] }, { video: V3, pads: [1, 1] }, { video: V3, pads: [1], tag: 'a b' }]) {
+    assert.strictEqual((await cmd({ cmd: 'fillpads', id, ...bad })).code, 'badreq', JSON.stringify(bad));
+  }
+  assert.strictEqual((await cmd({ cmd: 'fillpads', id: 99, video: V3, pads: [1] })).code, 'nobank');
+  assert.strictEqual((await cmd({ cmd: 'newbank', video: V3 })).code, 'badreq', 'newbank gibt es nicht mehr');
 
   // gescheiterter Download: msg loadfail, fail im lib
   const F = 'FAILFAILFAI';
-  await cmd({ cmd: 'newbank', video: F });
+  await cmd({ cmd: 'fillpads', id, video: F, pads: [1] });
   await a.wait((ev, d) => ev === 'msg' && d.code === 'loadfail', 'loadfail');
+  await a.wait((ev, d) => ev === 'job' && d.kind === 'pads' && d.video === F && d.phase === 'fail', 'Ladezustand weg');
   assert.strictEqual(a.of('msg').length, 1, 'nur eine Meldung');
 
   fs.unlinkSync(path.join(node.CACHE, `${V1}.wav`));
@@ -500,7 +506,7 @@ t('kaputte Bibliothek: schreibend libbroken, hit/up gehen, [js] libstate kaputt;
   assert.match(a.last('lib').error, /^Bibliothek kaputt – Speichern gesperrt: /);
   assert.deepStrictEqual(a.last('lib').banks, []);
   assert.deepStrictEqual(on('libstate').pop(), ['libstate', 0, 0, 'kaputt']);
-  assert.strictEqual((await cmd({ cmd: 'newbank', video: V3 })).code, 'libbroken');
+  assert.strictEqual((await cmd({ cmd: 'fillpads', id: ids[0], video: V3, pads: [0] })).code, 'libbroken');
   fs.writeFileSync(node.LIB_FILE, JSON.stringify({ format: 3 }));
   await a.wait((ev, d) => ev === 'lib' && d.state === 'neuer');
   assert.strictEqual((await cmd({ cmd: 'swap', id: ids[0], a: 0, b: 1 })).code, 'libnewer');
