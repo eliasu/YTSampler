@@ -9,20 +9,20 @@ Einer von 16 Plätzen, auf dem ein Ausschnitt eines Tracks liegt, bestimmt durch
 _Avoid_: Slot, Slice (für den Platz selbst)
 
 **Bank**:
-Ein kuratierter Satz aus 16 Plätzen. Jedes Pad bringt seinen Track mit, ein Platz darf leer sein.
-_Avoid_: Favorit, Sample-Set, Sample Pack, Preset
+Ein kuratierter Satz aus 16 Plätzen. Jedes Pad bringt seinen Track mit, ein Platz darf leer sein. Es gibt nur diese eine Art: Ob die Pads aus einem oder mehreren Tracks kommen, ändert nichts. Eine neue Bank startet leer.
+_Avoid_: Favorit, Sample-Set, Sample Pack, Preset, Track-Bank, Mix-Bank, Kit
 
-**Track-Bank**:
-Eine Bank, deren 16 Pads alle aus demselben Track kommen.
-_Avoid_: normale Bank
+**Quell-Grid**:
+Das 4×4-Raster rechts neben den Pads im Editor, das die Pads einer anderen Bank zeigt, in derselben Anordnung (Pad 1 unten links). Von dort zieht man Pads auf Plätze. Gezogen wird eine Kopie, spätere Änderungen an der Quelle wirken nicht.
+_Avoid_: Quellleiste, Browser, Pool
 
-**Mix-Bank**:
-Eine Bank mit Pads aus mehreren Tracks oder mit leeren Plätzen. Kein eigener Typ: Das Device spielt sie wie jede Bank.
-_Avoid_: Kit, Playlist
+**Füllen**:
+Einen Track aus der Suche auf Plätze bringen: auf ein Pad ziehen oder anklicken (ein Platz) oder „Leere Plätze füllen“ (alle leeren Plätze der Bank). Die Stelle im Track wird gewürfelt.
+_Avoid_: Bank aus Video anlegen
 
-**Quellleiste**:
-Die Leiste unter den Pads im Editor, die die Pads einer anderen Bank zeigt. Von dort zieht man Pads auf Plätze. Gezogen wird eine Kopie, spätere Änderungen an der Quelle wirken nicht.
-_Avoid_: Browser, Pool
+**Ablage**:
+Audio eines Pads, das geleert oder überschrieben wurde, damit Rückgängig auch ohne Cache geht. Wird erst beim Start aufgeräumt, wenn keine Bank das Pad mehr hat.
+_Avoid_: Papierkorb
 
 **Snippet**:
 Der gespeicherte Audioausschnitt eines Pads ab seinem Startpunkt, mehr als das spielt das Pad nie.

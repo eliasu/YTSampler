@@ -794,6 +794,7 @@ const ERR = {
   superseded: 'Neuere Suche läuft',
   searchfail: 'Suche fehlgeschlagen',
   loadfail: 'Download fehlgeschlagen',
+  cachebusy: 'Downloads oder Schnitte laufen – danach noch einmal',
   badreq: 'Ungültiger Befehl',
 };
 // Fehler mit .code und .text, z. B. libErr('writefail', 'Platte voll') -> "Speichern fehlgeschlagen: Platte voll"
@@ -815,7 +816,7 @@ const libState = (lib) => (lib.banks.length ? 'ok' : 'leer');
 const padVideos = (b) => [...new Set(b.pads.filter(Boolean).map((p) => p.video))];
 const isPadList = (a) => Array.isArray(a) && a.length === 16
   && a.every((p) => p === null || (isObj(p) && typeof p.video === 'string' && p.video !== '' && isInt(p.start, 0)));
-// Track-Bank: 16 belegte Pads aus einem Video, sonst Mix-Bank (Mix-Spec 2.1)
+// mix (SSE lib): nicht 16 belegte Pads aus einem Video. Nur abgeleitet, der Editor unterscheidet seit Spec 10 nicht mehr
 const isMix = (b) => !(b.pads.every(Boolean) && padVideos(b).length === 1);
 const videoEntry = (v) => { const e = { title: v.title }; if (typeof v.bpm === 'number') e.bpm = v.bpm; return e; };
 
@@ -919,7 +920,7 @@ function libWrite(lib) {
   } catch (e) { throw libErr('writefail', clean(e.message).slice(0, 80)); }
 }
 
-// videos-Eintrag lebt nur, solange ein Pad ihn benutzt
+// videos-Eintrag ohne Pad: bleibt während der Sitzung (Undo), fällt erst beim Start weg (keepCleanup)
 function dropOrphans(lib) {
   const used = new Set(lib.banks.flatMap(padVideos));
   for (const v of Object.keys(lib.videos)) if (!used.has(v)) delete lib.videos[v];
@@ -937,7 +938,7 @@ const roundBpm = (bpm) => { need(typeof bpm === 'number' && bpm >= 30 && bpm <= 
 
 // Vorgänge: (lib, Felder) -> Antwortfelder. Ändern lib, werfen libErr. Alle nennen IDs, keine Plätze.
 const LIB = {
-  // newbank: Bank am Ende, ein schon bekanntes Video behält Titel und bpm
+  // Bank aus einem Video am Ende (Tests, Migration), ein schon bekanntes Video behält Titel und bpm
   create(lib, { video, title, name, starts }) {
     need(typeof video === 'string' && video !== '' && isStarts(starts));
     if (!has(lib.videos, video)) lib.videos[video] = { title: String(title || '') };
@@ -945,10 +946,10 @@ const LIB = {
     lib.banks.push({ id, name: bankName(name === undefined ? lib.videos[video].title : name), pads: starts.map((start) => ({ video, start })) });
     return { id };
   },
-  // Neue Mix-Bank: 16 leere Plätze am Ende (M1)
+  // Neue Bank: 16 leere Plätze am Ende (Flow-Nachtrag: jede neue Bank startet leer)
   newmix(lib) {
     const id = lib.nextId++;
-    lib.banks.push({ id, name: 'Mix-Bank', pads: Array(16).fill(null) });
+    lib.banks.push({ id, name: 'Neue Bank', pads: Array(16).fill(null) });
     return { id };
   },
   // Pad kopieren (video + start) oder Platz leeren (video null). Unbekanntes Video braucht info {title, bpm?}
@@ -962,6 +963,13 @@ const LIB = {
       lib.videos[video] = videoEntry(info);
     }
     lib.banks[i].pads[pad] = { video, start };
+  },
+  // beim Start: videos-Einträge ohne Pad weg
+  prune(lib) { dropOrphans(lib); },
+  // fillpads: mehrere Plätze aus einem Video in einem Schritt
+  fill(lib, { id, pads, video, starts, info }) {
+    need(Array.isArray(pads) && Array.isArray(starts) && pads.length === starts.length);
+    pads.forEach((pad, k) => LIB.setpad(lib, { id, pad, video, start: starts[k], info }));
   },
   rename(lib, { id, name }) {
     need(typeof name === 'string');
@@ -1043,7 +1051,6 @@ function libChange(op, args, by) {
     // libNow bleibt: libWatch merkt den Wechsel und meldet ihn an [js] und Editor
     if (!r.lib) throw libErr(r.state === 'neuer' ? 'libnewer' : 'libbroken');
     res = LIB[op](r.lib, args) || {};
-    dropOrphans(r.lib);
     r.lib.rev++;
     libWrite(r.lib);
     libNow = { state: libState(r.lib), lib: r.lib, error: '', text: null };
@@ -1152,7 +1159,51 @@ function findSlot(p, bankId, memo) {
     const k = m ? m.j.pads.findIndex((q) => samePad(p, q)) : -1;
     if (k >= 0) return { id, k, ...m };
   }
+  // Ablage (geleerte/überschriebene Pads, Flow-Nachtrag): ein Fach pro {video, start}
+  const kb = keepBase(p), kj = kb && readJson(kb + '.json');
+  if (isObj(kj) && isInt(kj.len, 0)) {
+    try { return { file: kb + '.wav', k: 0, j: { lens: [kj.len], durs: typeof kj.dur === 'number' ? { [p.video]: kj.dur } : {} }, w: wavInfo(kb + '.wav') }; } catch (e) { /* WAV fehlt */ }
+  }
   return null;
+}
+
+// Ablage D/snippets/keep/<video>_<start>.wav (+ .json {len, dur}): Audio eines Pads, das geleert oder überschrieben
+// wird. So geht Undo auch ohne ganzen Track im Cache. Aufgeräumt nur beim Start (keepCleanup).
+const KEEP_DIR = path.join(SNIP_DIR, 'keep');
+const keepBase = (p) => (/^[\w-]{11}$/.test(p.video) ? path.join(KEEP_DIR, `${p.video}_${p.start}`) : null);
+function keepPad(p, bankId) {
+  const kb = p && keepBase(p);
+  if (!kb || fs.existsSync(kb + '.json')) return;
+  const tmp = path.join(KEEP_DIR, `keep.${process.pid}.tmp`);
+  try {
+    const src = snipSource({ id: bankId, pads: [p, ...Array(15).fill(null)] });
+    if (!src) return;   // keine Quelle: dann ging es vorher auch nicht
+    const [file, pos, bytes] = src.slots[0], buf = Buffer.alloc(SLOT_BYTES);
+    const fd = fs.openSync(file, 'r');
+    try { fs.readSync(fd, buf, 0, bytes, pos); } finally { fs.closeSync(fd); }
+    fs.mkdirSync(KEEP_DIR, { recursive: true });
+    fs.writeFileSync(tmp, Buffer.concat([wavHeader(SLOT_BYTES), buf]));
+    fs.renameSync(tmp, kb + '.wav');
+    fs.writeFileSync(tmp, JSON.stringify({ len: src.lens[0], dur: src.durs[p.video] }));
+    fs.renameSync(tmp, kb + '.json');
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (e2) { /* weg */ }
+    Max.post(`YT Sampler: Pad nicht abgelegt: ${e.message}`);
+  }
+}
+
+// Beim Start: Ablage, Analysen in D (.chroma) und videos-Einträge, die kein Pad irgendeiner Bank mehr braucht.
+// Der Cache in L bleibt, Snippets gelöschter Bänke regelt snipCleanup (7 Tage).
+function keepCleanup() {
+  if (!libNow.lib) return;
+  const pads = libNow.lib.banks.flatMap((b) => b.pads.filter(Boolean));
+  const used = new Set(pads.map((p) => p.video)), keep = new Set(pads.map((p) => `${p.video}_${p.start}`));
+  const rm = (f) => { try { fs.unlinkSync(f); } catch (e) { /* weg */ } };
+  let names = [];
+  try { names = fs.readdirSync(KEEP_DIR); } catch (e) { /* keine Ablage */ }
+  for (const n of names) { const m = /^(.+_\d+)\.(wav|json)$/.exec(n); if (m && !keep.has(m[1])) rm(path.join(KEEP_DIR, n)); }
+  for (const n of fs.readdirSync(SNIP_DIR)) { const m = /^(.+)\.chroma$/.exec(n); if (m && !used.has(m[1])) rm(path.join(SNIP_DIR, n)); }
+  if (Object.keys(libNow.lib.videos).some((v) => !used.has(v))) libChange('prune', {}, 'start');
 }
 // Gibt es für ein Pad eine Quelle zum Schneiden (ganze WAV oder ein passendes Fach)?
 const padSource = (p, bankId, memo = new Map()) => hasWav(p.video) || !!findSlot(p, bankId, memo);
@@ -1182,7 +1233,7 @@ function snipSource(bank) {
     if (!s) return null;
     if (!has(durs, p.video) && typeof s.j.durs[p.video] === 'number') durs[p.video] = s.j.durs[p.video];
     lens.push(s.j.lens[s.k]);
-    slots.push([snipWav(s.id), s.w.offset + s.k * SLOT_BYTES, Math.max(0, Math.min(SLOT_BYTES, s.w.dataSize - s.k * SLOT_BYTES))]);
+    slots.push([s.file || snipWav(s.id), s.w.offset + s.k * SLOT_BYTES, Math.max(0, Math.min(SLOT_BYTES, s.w.dataSize - s.k * SLOT_BYTES))]);
   }
   return { slots, lens, durs, whole: [...whole.keys()] };
 }
@@ -1357,24 +1408,24 @@ function roller(v) {
 }
 // roll: ein Pad neu, belegt = die 16 Starts der Bank (auch der eigene, damit sich etwas ändert)
 const rollStart = (v, taken) => roller(v)(taken);
-// newbank: 16 Starts, aufsteigend
-function rollBank(v) {
+// fillpads: n Starts, aufsteigend, keiner aus taken und keiner doppelt
+function rollBank(v, n = 16, taken = []) {
   const r = roller(v), s = [];
-  for (let i = 0; i < 16; i++) s.push(r(s));
+  for (let i = 0; i < n; i++) s.push(r([...taken, ...s]));
   return s.sort((x, y) => x - y);
 }
 
 // =====================================================================
-// Downloads im Editor-Weg (Spec 3.1). kind: select | fetch | newbank | fetchall.
+// Downloads im Editor-Weg (Spec 3.1). kind: select | fetch | pads | fetchall.
 // Bis ED_PAR Downloads laufen gleichzeitig, der Rest wartet (Phase „queue“). Reihenfolge der Warteschlange:
-// select/fetch vor newbank vor fetchall. Sind alle Plätze belegt, bricht ein neues select/fetch den laufenden
+// select/fetch vor pads vor fetchall. Sind alle Plätze belegt, bricht ein neues select/fetch den laufenden
 // mit der niedrigsten Stufe ab (unter select/fetch den ältesten), ebenso jeder Wunsch höherer Stufe;
-// der abgebrochene wartet dann wieder. Unter select/fetch gewinnt der neueste, newbank und fetchall der Reihe nach.
+// der abgebrochene wartet dann wieder. Unter select/fetch gewinnt der neueste, pads und fetchall der Reihe nach.
 // Fehlschlag setzt videoFail, fetchall überspringt solche Videos.
-// onPhase (optional, newBank): Fortschritt geht an den Aufrufer statt als job kind fetch.
+// onPhase (optional, fillPads): Fortschritt geht an den Aufrufer statt als job kind fetch.
 // Achtung Aufrufer: fetchVideo-Promise immer mit catch, sonst beendet ein Fehlschlag den Node-Prozess.
 // =====================================================================
-const FETCH_PRIO = { select: 0, fetch: 0, newbank: 1, fetchall: 2 };
+const FETCH_PRIO = { select: 0, fetch: 0, pads: 1, fetchall: 2 };
 const ED_PAR = 3;
 const edQueue = [], edJobs = [];
 let edSeq = 0;
@@ -1412,7 +1463,7 @@ async function edRun(e) {
   try {
     const info = await download(e.video, e, (ph, p) => { if (!e.aborted) edPhase(e, ph, p); });
     drop();
-    if (e.waiters.some((w) => !w.onPhase)) libEvents.emit('job', { kind: 'fetch', video: e.video, phase: 'done', progress: 100, left: edQueue.length });   // newbank meldet selbst weiter
+    if (e.waiters.some((w) => !w.onPhase)) libEvents.emit('job', { kind: 'fetch', video: e.video, phase: 'done', progress: 100, left: edQueue.length });   // fillpads meldet selbst weiter
     libEvents.emit('cache', cacheSize());
     libEvents.emit('status');
     snipRefresh(e.video);
@@ -1442,32 +1493,29 @@ function fetchAll() {
   return { todo: todo.length };
 }
 
-// newbank (Spec 3.3): Track laden → Analyse → 16 Starts würfeln → Bank am Ende → schneiden. -> Bank-ID.
-// Aktiv machen (bank … an [js]) macht der Aufrufer. Wirft libErr (loadfail, libbroken, …).
-// tag (vom Editor) kommt in jedem job zurück: so findet jede ausgegraute Zeile ihren Fortschritt.
-// Geladen wird parallel, angelegt in der Reihenfolge der Aufrufe (nbChain).
-let nbChain = Promise.resolve();
-async function newBank(video, by, tag) {
-  const job = (phase, progress, bankId) => libEvents.emit('job', { kind: 'newbank', video, tag, bankId, phase, progress, left: edQueue.length });
-  const turn = nbChain;
-  let next;
-  nbChain = new Promise((r) => { next = r; });
+// fillpads (Flow-Nachtrag): Track laden → Analyse → pro Platz würfeln (Taktanfang, keine Stille, kein Start doppelt
+// mit den übrigen Pads dieses Videos) → Plätze überschreiben. Schneiden und neu Laden macht libChange wie bei setpad.
+// Fortschritt als job {kind: 'pads', tag, id, video, pads, phase, progress}; done bringt before/after (Pad-Einträge der
+// Plätze vorher/nachher) und videos (Titel/bpm dazu) fürs Undo. Wirft libErr (loadfail, nobank, libbroken, …).
+async function fillPads(q, by) {
+  const job = (phase, progress, extra) => libEvents.emit('job', { kind: 'pads', tag: q.tag, id: q.id, video: q.video, pads: q.pads, phase, progress, left: edQueue.length, ...extra });
   try {
-    const info = (hasWav(video) && readJson(path.join(CACHE, `${video}.json`))) || await fetchVideo(video, 'newbank', job);
-    await turn;
+    const info = (hasWav(q.video) && readJson(path.join(CACHE, `${q.video}.json`))) || await fetchVideo(q.video, 'pads', job);
     job('analyse', 0);
     await new Promise((r) => setTimeout(r, 0));
-    const starts = rollBank(video);
-    const { id } = libChange('create', { video, title: info.raw || info.title, starts }, by);
-    job('cut', 0, id);
-    cutSnippets(libNow.lib.banks.find((b) => b.id === id));
-    job('done', 100, id);
-    return id;
+    const b = libBank(q.id);
+    const taken = b.pads.filter((p, k) => p && p.video === q.video && !q.pads.includes(k)).map((p) => p.start);
+    const starts = rollBank(q.video, q.pads.length, taken);
+    const before = q.pads.map((k) => (b.pads[k] ? { ...b.pads[k] } : null));
+    const videos = {};
+    for (const p of before) if (p && has(libNow.lib.videos, p.video)) videos[p.video] = videoEntry(libNow.lib.videos[p.video]);
+    before.forEach((p) => keepPad(p, q.id));
+    libChange('fill', { id: q.id, pads: q.pads, video: q.video, starts, info: { title: info.raw || info.title || q.video } }, by);
+    videos[q.video] = videoEntry(libNow.lib.videos[q.video]);
+    job('done', 100, { before, after: starts.map((start) => ({ video: q.video, start })), videos });
   } catch (e) {
     job('fail', 0);
     throw e;
-  } finally {
-    next();
   }
 }
 
@@ -1561,7 +1609,7 @@ async function sendAnalysis(name) {
     const cents = Math.round(a.tuning * 100);
     const tempoTxt = a.bpm ? ` · ${a.bpm} BPM${a.bpmConf < 0.3 ? ' (unsicher)' : ''}` : '';
     status(`Bereit: ${name}${tempoTxt} · Stimmung ${cents >= 0 ? '+' : ''}${cents} ct`);
-  } else status(`Bereit: ${name} · Mix aus ${vids.length} Tracks`);
+  } else status(`Bereit: ${name} · ${vids.length ? vids.length + (vids.length === 1 ? ' Track' : ' Tracks') : 'leer'}`);
 }
 const trySend = (b) => { try { sendBank(b); } catch (e) { Max.post(`YT Sampler: Bank ${b.id} nicht geladen: ${e.message}`); } };
 
@@ -1736,11 +1784,21 @@ const CMD = {
     trySend(bankById(r.id));
     return r;
   },
+  // Track aus der Suche auf Plätze (ein Platz oder alle leeren): {} sofort, Rest per job kind pads
+  fillpads(q, by) {
+    need(isVideo(q.video) && Array.isArray(q.pads) && q.pads.length >= 1 && q.pads.every(isPad) && new Set(q.pads).size === q.pads.length
+      && (q.tag === undefined || (typeof q.tag === 'string' && /^[\w-]{1,40}$/.test(q.tag))));
+    libBank(q.id);
+    fillPads(q, by).catch((e) => {
+      if (e.code !== 'loadfail') edEmit('msg', { level: 'error', code: e.code || 'cutfail', text: e.text || e.message });   // loadfail meldet der Download selbst
+    });
+  },
   // Pad kopieren oder leeren (video null). Ohne Quelle zum Schneiden playonly, dann bleibt alles, wie es ist.
   setpad(q, by) {
     const b = libBank(q.id);
     need(isPad(q.pad) && (q.video === null || (isVideo(q.video) && isInt(q.start, 0))));
     if (q.video !== null && !padSource({ video: q.video, start: q.start }, b.id)) throw libErr('playonly');
+    if (!samePad(b.pads[q.pad], q.video === null ? null : { video: q.video, start: q.start })) keepPad(b.pads[q.pad], b.id);
     libChange('setpad', { id: q.id, pad: q.pad, video: q.video, start: q.start, info: q.info }, by);
   },
   rename(q, by) {
@@ -1793,13 +1851,6 @@ const CMD = {
     Max.outlet('param', q.name, q.value);
   },
   search: (q) => edSearch(q.q),
-  newbank(q, by) {
-    need(isVideo(q.video) && (q.tag === undefined || (typeof q.tag === 'string' && /^[\w-]{1,40}$/.test(q.tag))));
-    if (!libNow.lib) throw libBroken();
-    newBank(q.video, by, q.tag).then((id) => sendBank(bankById(id))).catch((e) => {
-      if (e.code !== 'loadfail') edEmit('msg', { level: 'error', code: e.code || 'cutfail', text: e.text || e.message });   // loadfail meldet der Download selbst
-    });
-  },
   tempo(q, by) {
     libChange('tempo', { video: q.video, bpm: q.bpm }, by);
     bpmToDevice(q.video);
@@ -1818,6 +1869,21 @@ const CMD = {
     if (!hasWav(q.video)) fetchVideo(q.video, 'fetch').catch(() => { /* steht in videoFail */ });
   },
   fetchall: () => fetchAll(),
+  // Knopf „Cache leeren“: ganze Tracks in L/cache (.wav, .json, .chroma). Nie etwas in D. Gesperrt, solange geladen
+  // oder geschnitten wird. -> {freed} in Byte
+  clearcache() {
+    if (edJobs.length || edQueue.length || snipCutting || snipTimers.size) throw libErr('cachebusy');
+    let freed = 0;
+    for (const n of fs.readdirSync(CACHE)) {
+      if (!/\.(wav|json|chroma)$/.test(n)) continue;
+      const f = path.join(CACHE, n);
+      try { freed += fs.statSync(f).size; fs.unlinkSync(f); } catch (e) { /* weg */ }
+    }
+    beatStore.clear();
+    libEvents.emit('cache', cacheSize());
+    libEvents.emit('status');
+    return { freed };
+  },
 };
 
 async function runCmd(q) {
@@ -2012,7 +2078,7 @@ startWeb(WEB_PORT, 5);
 
 try { libBackup(); } catch (e) { Max.post(`YT Sampler: Sicherung fehlgeschlagen: ${e.message}`); }
 libWatch();
-try { snipCleanup(); } catch (e) { Max.post(`YT Sampler: Aufräumen fehlgeschlagen: ${e.message}`); }
+try { snipCleanup(); keepCleanup(); } catch (e) { Max.post(`YT Sampler: Aufräumen fehlgeschlagen: ${e.message}`); }
 
 // Startcheck; Session vom Device anfordern
 if (DATA_SETUP.error) status(DATA_SETUP.error);
@@ -2030,7 +2096,7 @@ Max.outlet('needsession');
 module.exports = {
   errMsg, DATA, LOCAL, CACHE, SESSIONS, LIB_FILE, LIB_LOCK, BACKUP_DIR, ERR, LIB, libErr, libParse, libRead, libChange, libBackup, libEvents, get libNow() { return libNow; },
   AN, SNIP_DIR, SNIP_MS, computeAnalysis, tempoFromOnset, saveAnalysis, readAnalysis, getAnalysis, trackBeats, silentRanges,
-  hasWav, readSnip, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, cacheSize, videoFail,
-  beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, newBank, get anaMap() { return anaMap; },
+  hasWav, readSnip, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, keepCleanup, KEEP_DIR, cacheSize, videoFail,
+  beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, fillPads, get anaMap() { return anaMap; },
   parseSearchPage, runCmd, peaks, get webPort() { return webPort; }, get activeId() { return activeId; },
 };

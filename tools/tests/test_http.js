@@ -325,7 +325,7 @@ t('rename, move, duplicate, delete, restore: Antworten, by/rev in lib, Nachricht
   const del2 = await cmd({ client: 'c1', cmd: 'delete', id: ids[1] });
   assert.deepStrictEqual(on('bank'), []);
   assert.deepStrictEqual(del2.removed.videos, { [V2]: { title: 'Titel ' + V2 } });
-  assert.deepStrictEqual(Object.keys(node.libNow.lib.videos), [V1], 'verwaister videos-Eintrag weg');
+  assert.deepStrictEqual(Object.keys(node.libNow.lib.videos), [V1, V2], 'verwaister videos-Eintrag bleibt bis zum Start');
   // restore: alte ID, videos zurück; vergebene ID → idtaken
   assert.deepStrictEqual(await cmd({ client: 'c1', cmd: 'restore', ...del2.removed }), { ok: true });
   assert.deepStrictEqual(node.libNow.lib.banks.map((b) => b.id), [ids[1], ids[2]]);
@@ -450,28 +450,34 @@ t('search: Treffer ohne Dauer fallen weg, long über 10 min, neue Suche bricht a
   done();
 });
 
-t('newbank: {} sofort, job bis done mit bankId, Bank am Ende wird aktiv; fetch und fetchall', async () => {
+t('fillpads: {} sofort, job pads bis done, aktive Bank neu geschnitten und geladen; Prüfung; fetch und fetchall', async () => {
   const { node, max, on, cmd, events, done } = await setup();
   const a = events();
-  assert.deepStrictEqual(await cmd({ client: 'c1', cmd: 'newbank', video: V3 }), { ok: true });
-  await a.wait((ev, d) => ev === 'job' && d.kind === 'newbank' && d.phase === 'done', 'newbank done');
-  const j = a.of('job').filter((x) => x.kind === 'newbank').pop();
-  assert.strictEqual(j.bankId, 4);
-  assert.ok(a.of('job').some((x) => x.kind === 'newbank' && x.phase === 'download'));
-  await until(() => on('bank').length, 'bank');
-  const b = bankArgs(on('bank')[0]);
-  assert.deepStrictEqual([b.id, b.nr], [4, 4]);
-  assert.deepStrictEqual(node.libNow.lib.banks[3].pads.map((p) => p.video), Array(16).fill(V3));
-  assert.deepStrictEqual(b.starts, b.starts.slice().sort((x, y) => x - y));
-  assert.strictEqual(node.libNow.lib.banks[3].name, `Titel; ${V3}`);
+  const { id } = await cmd({ client: 'c1', cmd: 'newmix' });
+  assert.strictEqual(id, 4);
+  await until(() => on('bank').some((m) => m[1] === 4), 'leere Bank aktiv');
+  max.out = [];
+  assert.deepStrictEqual(await cmd({ client: 'c1', cmd: 'fillpads', id, video: V3, pads: [0, 2, 5], tag: 'k1' }), { ok: true });
+  await a.wait((ev, d) => ev === 'job' && d.kind === 'pads' && d.phase === 'done', 'pads done');
+  const j = a.of('job').filter((x) => x.kind === 'pads').pop();
+  assert.deepStrictEqual([j.id, j.tag, j.pads, j.before], [4, 'k1', [0, 2, 5], [null, null, null]]);
+  assert.ok(a.of('job').some((x) => x.kind === 'pads' && x.phase === 'download'));
+  const bk = node.libNow.lib.banks[3];
+  assert.deepStrictEqual(j.after, [0, 2, 5].map((k) => bk.pads[k]));
+  assert.deepStrictEqual(bk.pads.map((p) => (p ? p.video : null)), [V3, null, V3, null, null, V3, ...Array(10).fill(null)]);
+  await until(() => { const l = on('bank').pop(); return l && bankArgs(l).lens[5] > 0; }, 'neu geschnitten und geladen');
   await a.wait((ev, d) => ev === 'lib' && d.banks.length === 4 && d.by === 'c1');
-  assert.strictEqual((await cmd({ cmd: 'newbank', video: 'kurz' })).code, 'badreq');
-  assert.strictEqual((await cmd({ cmd: 'newbank', video: V3, tag: 'a b' })).code, 'badreq');
+  for (const bad of [{ video: 'kurz', pads: [0] }, { video: V3, pads: [] }, { video: V3, pads: [16] }, { video: V3, pads: [1, 1] }, { video: V3, pads: [1], tag: 'a b' }]) {
+    assert.strictEqual((await cmd({ cmd: 'fillpads', id, ...bad })).code, 'badreq', JSON.stringify(bad));
+  }
+  assert.strictEqual((await cmd({ cmd: 'fillpads', id: 99, video: V3, pads: [1] })).code, 'nobank');
+  assert.strictEqual((await cmd({ cmd: 'newbank', video: V3 })).code, 'badreq', 'newbank gibt es nicht mehr');
 
   // gescheiterter Download: msg loadfail, fail im lib
   const F = 'FAILFAILFAI';
-  await cmd({ cmd: 'newbank', video: F });
+  await cmd({ cmd: 'fillpads', id, video: F, pads: [1] });
   await a.wait((ev, d) => ev === 'msg' && d.code === 'loadfail', 'loadfail');
+  await a.wait((ev, d) => ev === 'job' && d.kind === 'pads' && d.video === F && d.phase === 'fail', 'Ladezustand weg');
   assert.strictEqual(a.of('msg').length, 1, 'nur eine Meldung');
 
   fs.unlinkSync(path.join(node.CACHE, `${V1}.wav`));
@@ -500,7 +506,7 @@ t('kaputte Bibliothek: schreibend libbroken, hit/up gehen, [js] libstate kaputt;
   assert.match(a.last('lib').error, /^Bibliothek kaputt – Speichern gesperrt: /);
   assert.deepStrictEqual(a.last('lib').banks, []);
   assert.deepStrictEqual(on('libstate').pop(), ['libstate', 0, 0, 'kaputt']);
-  assert.strictEqual((await cmd({ cmd: 'newbank', video: V3 })).code, 'libbroken');
+  assert.strictEqual((await cmd({ cmd: 'fillpads', id: ids[0], video: V3, pads: [0] })).code, 'libbroken');
   fs.writeFileSync(node.LIB_FILE, JSON.stringify({ format: 3 }));
   await a.wait((ev, d) => ev === 'lib' && d.state === 'neuer');
   assert.strictEqual((await cmd({ cmd: 'swap', id: ids[0], a: 0, b: 1 })).code, 'libnewer');
@@ -611,7 +617,7 @@ t('newmix, setpad (mit/ohne info, null), leerer Platz badreq, device.video und b
   // delete/restore mit mehreren Videos; V3 lebt nur in der Mix-Bank
   const del = await cmd({ cmd: 'delete', id: 4 });
   assert.deepStrictEqual(del.removed.videos, { [V2]: { title: 'Titel ' + V2 }, [V3]: { title: 'Drei', bpm: 90 } });
-  assert.ok(!(V3 in node.libNow.lib.videos));
+  assert.ok(V3 in node.libNow.lib.videos, 'bleibt bis zum Start');
   assert.deepStrictEqual(await cmd({ cmd: 'restore', ...del.removed }), { ok: true });
   assert.deepStrictEqual(node.libNow.lib.banks[3], del.removed.bank);
   assert.deepStrictEqual(node.libNow.lib.videos[V3], { title: 'Drei', bpm: 90 });
@@ -630,6 +636,31 @@ t('session: libstate vor state, hello mit Session-Nummer', async () => {
   const sel = max.out.map((m) => m[0]);
   assert.ok(sel.indexOf('libstate') >= 0 && sel.indexOf('libstate') < sel.indexOf('statenone'), sel.join());
   await a.wait((ev, d) => ev === 'hello' && d.session === 4711);
+  done();
+});
+
+t('clearcache: löscht nur L/cache (.wav/.json/.chroma), D bleibt, Bänke spielen weiter; gesperrt bei Download', async () => {
+  const { node, ids, cmd, events, done } = await setup('400');
+  const a = events();
+  await sleep(300);   // Schneiden aus setup entprellt
+  await cmd({ cmd: 'select', id: ids[0] });
+  fs.writeFileSync(path.join(node.CACHE, 'notiz.txt'), 'x');
+  const dBefore = fs.readdirSync(node.SNIP_DIR).sort();
+  assert.ok(dBefore.includes(`${V1}.chroma`) && fs.readdirSync(node.CACHE).some((n) => n.endsWith('.chroma')));
+  // laufender Download: gesperrt
+  await cmd({ cmd: 'fetch', video: V3 });
+  assert.strictEqual((await cmd({ cmd: 'clearcache' })).code, 'cachebusy');
+  await until(() => node.hasWav(V3), 'Download fertig');
+  await sleep(300);
+  const r = await cmd({ cmd: 'clearcache' });
+  assert.ok(r.ok && r.freed > 0, JSON.stringify(r));
+  assert.deepStrictEqual(fs.readdirSync(node.CACHE).filter((n) => /\.(wav|json|chroma)$/.test(n)), []);
+  assert.ok(fs.existsSync(path.join(node.CACHE, 'notiz.txt')), 'fremde Dateien bleiben');
+  assert.deepStrictEqual(fs.readdirSync(node.SNIP_DIR).sort(), dBefore, 'D unberührt');
+  await a.wait((ev, d) => ev === 'cache' && d.bytes < 10, 'Cache-Anzeige auf 0');
+  await a.wait((ev, d) => ev === 'lib' && d.banks.every((b) => b.wav === false && b.snip === 'ok'), 'nur spielbar, Snippets ok');
+  assert.strictEqual((await cmd({ cmd: 'setstart', id: ids[0], pad: 0, ms: 5 })).code, 'playonly');
+  assert.strictEqual(node.snipEnsure(node.libNow.lib.banks[0]).lens.length, 16, 'Bank spielt weiter');
   done();
 });
 

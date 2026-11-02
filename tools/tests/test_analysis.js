@@ -118,7 +118,7 @@ t('padana pro Pad für zwei Videos: bpm, cent, Fenster ± 4 Schläge, off auf di
     const ones = p.beats.filter((x, j) => mod(p.off + j, 4) === 0 && (p.i || x < SIL[0] * 1000 - 500));
     assert.ok(ones.length >= 3 && ones.every((x) => near(x, bar) < 30), `Pad ${p.i}: Einsen ${ones}`);
   }
-  assert.match(statusOf(max).pop(), /^Bereit: Mix-Bank · Mix aus 2 Tracks$/);
+  assert.match(statusOf(max).pop(), /^Bereit: Neue Bank · 2 Tracks$/);
 
   // Tempo-Korrektur: padana nur für Pads mit X
   max.out.length = 0;

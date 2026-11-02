@@ -1,4 +1,4 @@
-// Downloads (Spec 3.1, nur noch der Editor-Weg): Abbruch, Reihenfolge, Fehlschläge, newbank. node tools/tests/test_download.js
+// Downloads (Spec 3.1, nur noch der Editor-Weg): Abbruch, Reihenfolge, Fehlschläge, fillpads. node tools/tests/test_download.js
 // yt-dlp ist eine Attrappe (fake_ytdlp.js), nie das echte.
 const assert = require('assert');
 const cp = require('child_process');
@@ -53,15 +53,15 @@ t('Editor: drei parallel, ein neuer Wunsch bricht den ältesten ab, keine halbe 
   done();
 });
 
-t('Editor-Reihenfolge: bei vollen Plätzen verdrängt select/fetch newbank verdrängt fetchall', async () => {
+t('Editor-Reihenfolge: bei vollen Plätzen verdrängt select/fetch pads verdrängt fetchall', async () => {
   const { node, log, until, done } = setup();
   const [X, Y, Z1, Z2, W] = ['X', 'Y', 'Z', 'Q', 'W'].map(ID);
   for (const v of [X, Y]) node.libChange('create', { video: v, title: v, starts: Array(16).fill(0).map((_, i) => i) }, 't');
   assert.deepStrictEqual(node.fetchAll(), { todo: 2 });
   await until(() => log().includes('start ' + X) && log().includes('start ' + Y));
-  const pz1 = node.fetchVideo(Z1, 'newbank');
+  const pz1 = node.fetchVideo(Z1, 'pads');
   await until(() => log().includes('start ' + Z1));
-  const pz2 = node.fetchVideo(Z2, 'newbank');
+  const pz2 = node.fetchVideo(Z2, 'pads');
   await until(() => log().includes('start ' + Z2));
   const pw = node.fetchVideo(W, 'fetch');
   await Promise.all([pz1, pz2, pw]);
@@ -73,19 +73,19 @@ t('Editor-Reihenfolge: bei vollen Plätzen verdrängt select/fetch newbank verdr
   done();
 });
 
-t('newbank parallel: eigene job-Zeile pro tag, vierte wartet sichtbar, Bänke in Klickfolge', async () => {
+t('fillpads parallel: eigene job-Zeile pro tag, vierte wartet sichtbar, jede Bank bekommt ihren Track', async () => {
   const { node, log, events, done } = setup(60);
   const [V1, V2, V3, V4, V5] = ['1', '2', '3', '4', '5'].map(ID);
   await node.fetchVideo(V2, 'fetch');   // V2 liegt schon im Cache und wäre sofort fertig
-  const ids = await Promise.all([V1, V2, V3, V4, V5].map((v, i) => node.newBank(v, 'c', 't' + i)));
+  const ids = [V1, V2, V3, V4, V5].map(() => node.libChange('newmix', {}, 't').id);
+  await Promise.all([V1, V2, V3, V4, V5].map((v, i) => node.fillPads({ id: ids[i], video: v, pads: [i], tag: 't' + i }, 'c')));
   const banks = node.libNow.lib.banks;
-  assert.deepStrictEqual(banks.map((b) => b.pads[0].video), [V1, V2, V3, V4, V5]);
-  assert.deepStrictEqual(banks.map((b) => b.id), ids);
+  assert.deepStrictEqual(banks.map((b, i) => b.pads[i].video), [V1, V2, V3, V4, V5]);
   assert.ok(maxRunning(log().slice(2)) <= 3, log().join(', '));
-  const nb = events.filter(([ev, d]) => ev === 'job' && d.kind === 'newbank').map(([, d]) => d);
+  const nb = events.filter(([ev, d]) => ev === 'job' && d.kind === 'pads').map(([, d]) => d);
   assert.ok(nb.some((d) => d.tag === 't4' && d.phase === 'queue'), 'fünfte wartet');
-  [0, 1, 2, 3, 4].forEach((i) => assert.strictEqual(nb.filter((d) => d.tag === 't' + i && d.phase === 'done').pop().bankId, ids[i]));
-  assert.ok(!events.some(([ev, d]) => ev === 'job' && d.kind === 'fetch' && d.video !== V2), 'newbank meldet nicht doppelt');
+  [0, 1, 2, 3, 4].forEach((i) => assert.strictEqual(nb.filter((d) => d.tag === 't' + i && d.phase === 'done').length, 1));
+  assert.ok(!events.some(([ev, d]) => ev === 'job' && d.kind === 'fetch' && d.video !== V2), 'fillpads meldet nicht doppelt');
   done();
 });
 
@@ -123,26 +123,42 @@ t('Teletext-Weg ist weg: kein loadVideo, kein load-Handler', () => {
   done();
 });
 
-t('newbank: laden, würfeln, Bank am Ende mit Titel, Snippets geschnitten, Fortschritt per job', async () => {
+t('fillpads: laden, leere Plätze würfeln (aufsteigend, verschieden), Titel, Snippets geschnitten, done mit before/after', async () => {
   const { node, events, done } = setup(20);
-  const V = ID('N');
-  const id = await node.newBank(V, 'client1');
-  const lib = node.libNow.lib;
-  const bank = lib.banks[lib.banks.length - 1];
-  assert.strictEqual(bank.id, id);
-  assert.strictEqual(bank.name, `Titel; ${V}`);
-  assert.strictEqual(lib.videos[V].title, `Titel; ${V}`);
-  const starts = bank.pads.map((p) => p.start);
-  assert.ok(bank.pads.every((p) => p.video === V));
+  const V = ID('N'), O = ID('O');
+  await node.fetchVideo(O, 'fetch');
+  const { id } = node.libChange('newmix', {}, 't');
+  node.libChange('setpad', { id, pad: 5, video: O, start: 1000, info: { title: 'Alt' } }, 't');
+  const empty = [...Array(16).keys()].filter((k) => k !== 5);
+  await node.fillPads({ id, video: V, pads: empty, tag: 'x' }, 'client1');
+  const bank = node.libNow.lib.banks.find((b) => b.id === id);
+  assert.deepStrictEqual(bank.pads[5], { video: O, start: 1000 });
+  const starts = empty.map((k) => bank.pads[k].start);
+  assert.ok(empty.every((k) => bank.pads[k].video === V));
   assert.deepStrictEqual(starts, [...starts].sort((x, y) => x - y));
-  assert.strictEqual(new Set(starts).size, 16);
+  assert.strictEqual(new Set(starts).size, 15);
+  assert.strictEqual(node.libNow.lib.videos[V].title, `Titel; ${V}`);
+  assert.strictEqual(bank.name, 'Neue Bank');
+  await new Promise((r) => setTimeout(r, 300));   // Schneiden entprellt
   assert.ok(node.snipCurrent(bank));
   assert.ok(fs.existsSync(path.join(node.SNIP_DIR, `${V}.chroma`)));
-  const phases = events.filter(([ev, d]) => ev === 'job' && d.kind === 'newbank').map(([, d]) => d.phase);
-  assert.deepStrictEqual([...new Set(phases)], ['info', 'download', 'convert', 'analyse', 'cut', 'done']);
-  const last = events.filter(([ev, d]) => ev === 'job' && d.kind === 'newbank').pop()[1];
-  assert.strictEqual(last.bankId, id);
+  const pj = events.filter(([ev, d]) => ev === 'job' && d.kind === 'pads').map(([, d]) => d);
+  assert.deepStrictEqual([...new Set(pj.map((d) => d.phase))], ['info', 'download', 'convert', 'analyse', 'done']);
+  const last = pj.pop();
+  assert.deepStrictEqual([last.id, last.tag, last.pads], [id, 'x', empty]);
+  assert.deepStrictEqual(last.before, Array(15).fill(null));
+  assert.deepStrictEqual(last.after, starts.map((start) => ({ video: V, start })));
+  assert.deepStrictEqual(last.videos[V], { title: `Titel; ${V}` });
+  // überschreiben: before = alter Eintrag samt Titel, kein Start doppelt mit den übrigen Pads des Videos
+  await node.fillPads({ id, video: V, pads: [5], tag: 'y' }, 'client1');
+  const l2 = events.filter(([ev, d]) => ev === 'job' && d.kind === 'pads' && d.tag === 'y').pop()[1];
+  assert.deepStrictEqual(l2.before, [{ video: O, start: 1000 }]);
+  assert.deepStrictEqual(l2.videos[O], { title: 'Alt' });
+  assert.ok(!starts.includes(node.libNow.lib.banks.find((b) => b.id === id).pads[5].start) || starts.length >= 15);
   assert.ok(events.some(([ev, d]) => ev === 'cache' && d.bytes > 0 && d.warn === false));
+  // Bank inzwischen gelöscht: nobank
+  node.libChange('delete', { id }, 't');
+  await assert.rejects(node.fillPads({ id, video: V, pads: [0] }, 'c'), (e) => e.code === 'nobank');
   done();
 });
 

@@ -8,7 +8,7 @@
 
 Auf einem neuen Rechner: siehe `CLAUDE.md` „Neuer Rechner“, dann das Device in Live neu auf die Spur ziehen.
 
-Zweig `mix`: **Mix-Bänke (4.0.0)**, geplant in `.scratch/mix-banks/spec.md`, gebaut in den Paketen N, J, E, I. Alle Tests grün, in Live noch nicht geprüft, noch nicht released.
+Zweig `mix`: **Mix-Bänke (4.0.0)**, geplant in `.scratch/mix-banks/spec.md`, gebaut in den Paketen N, J, E, I. Zweig `mix-flow` darauf: Nachtrag „Editor-Flow“ (Spec 10): jede neue Bank leer, Suchtreffer aufs Pad, „Leere Plätze füllen“, Quell-Grid, Ablage für Undo, „Cache leeren“. Alle Tests grün, in Live noch nicht geprüft, noch nicht released.
 
 ## Mix-Bänke: in Live zu prüfen (Spec 6)
 
@@ -17,12 +17,18 @@ Erst `tools/deploy.sh`, Device neu auf die Spur ziehen, dann:
 - Mix-Bank aus zwei Tracks mit verschiedenem Tempo: Beide Pads laufen mit Warp im Live-Tempo, Linien pro Fach stimmen.
 - Leere Plätze stumm, am Device erkennbar: Pad dunkel ohne Nummer. Wie sieht das dunkle Pad in echtem Max aus (Farbe, Kontrast zum normalen Pad)?
 - Icons am Pad im Editor (Würfel, „leeren“) auf kleinen Pads: treffbar, überdecken sie Nummer und Startzeit nicht?
+- Editor-Flow: „Neue Bank“ → leere Bank im Device (alle Pads dunkel, Status „· leer“). Treffer auf ein Pad ziehen und anklicken: Pad zeigt „wartet“/„lädt n %“, danach lädt das Device die Bank neu und das Pad spielt eine Stelle auf einem Taktanfang.
+- „Leere Plätze füllen“ mit einem langen Track: alle leeren Pads laden, klingen danach, kein Start doppelt. Drei Tracks gleichzeitig: der vierte wartet.
+- Belegtes Pad überschreiben, ⌘Z: das alte Pad klingt wieder, auch nach „Cache leeren“ (Ablage).
+- Quell-Grid rechts: auf dem Laptop-Bildschirm groß genug zum Ziehen? Detailspalte darunter lesbar?
+- „Cache leeren“: Rückfrage mit Größe, danach spielen alle Bänke weiter, Anzeige 0 GB, „Track laden“ holt den Track. Während eines Downloads ausgegraut.
+- Nach Neustart von Live: `iCloud Drive/YTSampler/snippets/keep/` enthält nur noch Pads, die eine Bank benutzt.
 - Bühne ohne Cache: Mix-Bank aus Pads anderer Bänke legen geht.
 - Zweiter Mac mit 3.x zeigt „Bibliothek aus neuerer Version“ (beide Macs gleichzeitig auf 4.0).
 - **Division live** (Zweig `mix-livediv`): Pad mit 1/8 anschlagen, auf 1 Takt drehen: läuft weiter, ohne Knacken? Zurückdrehen nach dem neuen Ende: kurzes Ausblenden statt Abriss? Mit Warp: Release neu terminiert (endet am neuen Ende, wird danach stumm)? Rückwärts?
 - Danach `release.sh 4.0.0`.
 
-Bekannte Grenze: „Leeren“ rückgängig machen ohne den ganzen Track im Cache geht nur, wenn eine andere Bank dasselbe Pad noch hat (sonst „nur spielbar“).
+Bekannte Grenze: Die Ablage für Undo räumt jeder Node-Start auf. Startet ein zweites Device, kann das erste ein Leeren ohne Cache danach nicht mehr rückgängig machen.
 
 ## Offene Entscheidungen
 

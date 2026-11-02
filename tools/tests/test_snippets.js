@@ -261,4 +261,42 @@ t('Cache-Größe: Summe aller Dateien, Warnung ab 10 GB', () => {
   done();
 });
 
+t('Ablage: Leeren/Überschreiben ohne Cache, Undo spielt wieder; videos bleibt; Neustart räumt nur Unbenutztes', async () => {
+  const { node, id, bank, done, home } = setup();
+  const Z = 'ZZZZZZZZZZZ';
+  node.cutSnippets(bank());
+  fs.unlinkSync(path.join(node.CACHE, `${V}.wav`));
+  const keep = (v, st) => path.join(node.KEEP_DIR, `${v}_${st}.wav`);
+  // leeren und überschreiben ohne ganzen Track: altes Fach landet in der Ablage
+  await node.runCmd({ cmd: 'setpad', id, pad: 3, video: null });
+  await node.runCmd({ cmd: 'setpad', id, pad: 4, video: V, start: STARTS[15] });
+  node.cutSnippets(bank());
+  assert.ok(fs.existsSync(keep(V, 3333)) && fs.existsSync(keep(V, 5000)));
+  assert.ok(!node.readSnip(id).pads.some((p) => p && (p.start === 3333 || p.start === 5000)), 'keine Bank hat die Pads mehr');
+  // Undo: beide zurück, ohne Cache und ohne andere Bank -> kein playonly
+  await node.runCmd({ cmd: 'setpad', id, pad: 3, video: V, start: 3333 });
+  await node.runCmd({ cmd: 'setpad', id, pad: 4, video: V, start: 5000 });
+  node.cutSnippets(bank());
+  const buf = snipBuf(node, id), j = snipJ(node, id);
+  assert.strictEqual(slotFrame(buf, 3, 100), Math.round(3333 * SR / 1000) + 100);
+  assert.strictEqual(slotFrame(buf, 4, 100), Math.round(5000 * SR / 1000) + 100);
+  assert.deepStrictEqual([j.lens[3], j.lens[4], j.durs[V]], [16000, 16000, DUR]);
+  // letztes Pad eines Videos geleert: videos-Eintrag und .chroma bleiben während der Sitzung
+  rampWav(path.join(node.CACHE, `${Z}.wav`), 20);
+  await node.runCmd({ cmd: 'setpad', id, pad: 6, video: Z, start: 0, info: { title: 'Z' } });
+  node.cutSnippets(bank());
+  await node.runCmd({ cmd: 'setpad', id, pad: 6, video: null });
+  await node.runCmd({ cmd: 'setpad', id, pad: 5, video: null });
+  assert.deepStrictEqual(node.libNow.lib.videos[Z], { title: 'Z' });
+  assert.ok(fs.existsSync(path.join(node.SNIP_DIR, `${Z}.chroma`)) && fs.existsSync(keep(Z, 0)) && fs.existsSync(keep(V, 7000)));
+  // Neustart: ohne Pad weg (Ablage, .chroma in D, videos), mit Pad bleibt; Cache bleibt
+  const n2 = loadNode(home).node;
+  assert.ok(!fs.existsSync(keep(Z, 0)) && !fs.existsSync(keep(V, 7000)), 'ohne Referenz weg');
+  assert.ok(fs.existsSync(keep(V, 3333)) && fs.existsSync(keep(V, 5000)), 'mit Referenz bleibt');
+  assert.ok(!fs.existsSync(path.join(n2.SNIP_DIR, `${Z}.chroma`)) && fs.existsSync(path.join(n2.SNIP_DIR, `${V}.chroma`)));
+  assert.ok(!(Z in n2.libNow.lib.videos) && V in n2.libNow.lib.videos);
+  assert.ok(fs.existsSync(path.join(n2.CACHE, `${Z}.wav`)), 'Cache wird nie automatisch gelöscht');
+  done();
+});
+
 run();
