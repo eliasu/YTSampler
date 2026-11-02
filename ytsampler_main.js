@@ -25,7 +25,6 @@ var HOLD_MAX = 1e9;     // Hold-Modus: bis Snippet-Ende (playRange begrenzt)
 var VMAX = 16;          // Anzahl Instanzen im poly~
 var VOICE_OPTS = [1, 2, 3, 4, 5, 8, 16];
 var NOTE = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
-var ANALYSIS_MS = 4000;     // Analysefenster pro Pad (ms), fest: Slice-Länge, Rate und Mode ändern die Tonart nicht
 var TONAL = 0.5;            // Tune: darunter gilt ein Pad als nicht tonal und bleibt, wie es ist
 var ATK_MS = 2;             // Einblenden
 var REL_MS = 20;            // Ausblenden (Slice-Ende, Hold loslassen)
@@ -47,12 +46,10 @@ var SC = { root: 0, ints: [0, 2, 4, 5, 7, 9, 11] };
 var st = { bankId: 0 };
 
 // Laufzeitwerte der geladenen Bank (werden nicht gespeichert)
-var videoId = "";        // Video der Bank
-var pads = [];           // Starts der Pads in Song-ms
+var pads = [];           // Starts der Pads in Song-ms ihres eigenen Videos
 for (var pi = 0; pi < NPADS; pi++) pads.push(0);
-var srcBpm = 0, srcAuto = 1;   // Quelltempo, srcAuto = aus der Analyse (nicht bestätigt)
 
-var durMs = 0;           // Songdauer, 0 = nichts geladen (Pads tun nichts)
+var durMs = 0;           // > 0 = Bank geladen (sonst tun die Pads nichts)
 var sel = 0;
 var lastSaved = "";
 
@@ -83,17 +80,17 @@ for (var vi = 0; vi < VMAX; vi++) voices.push({ pad: -1, end: 0, t: 0, eng: 0 })
 
 function engOut(e) { return e ? 3 : 0; }
 
-// Beat-Raster (kommt vom Node-Teil): Schlagzeiten in ms, Index der ersten "1"
-var beats = [], beatsIn = [], beatsDown = 0, beatsReady = 0;
-
+// Analyse pro Pad (padana vom Node-Teil): { bpm, cent, off, beats[] }, null = keine Analyse.
+// beats = Schläge des Videos rund ums Snippet (Song-ms), off = Position des ersten in Schlägen ab der ersten „1“
+var PA = [];
 // Tonart pro Pad (kommt vom Node-Teil) und daraus berechnete Verschiebung
 var keys = [], shifts = [];
-var tuningCents = 0, analysisReady = 0;
+var analysisReady = 0;
 resetKeys();
 
 function resetKeys() {
-    keys = []; shifts = [];
-    for (var i = 0; i < NPADS; i++) { keys.push(null); shifts.push(null); }
+    keys = []; shifts = []; PA = [];
+    for (var i = 0; i < NPADS; i++) { keys.push(null); shifts.push(null); PA.push(null); }
 }
 
 // ---------- Start / Session ----------
@@ -155,34 +152,36 @@ function sliceMs() { return 60000 / Math.max(20, P.bpm) * 4 * DIVS[P.div][1]; }
 // Tonhöhenfaktor aus Skala-Anpassung + Stimmungskorrektur
 function pitchRate(i) {
     if (!P.tune || shifts[i] === null) return 1;
-    return Math.pow(2, (shifts[i] - tuningCents / 100) / 12);
+    return Math.pow(2, (shifts[i] - padCent(i) / 100) / 12);
 }
 function padRate(i) { return P.rate * pitchRate(i); }
 
-// Warp: Verhältnis Projekttempo / Quelltempo (0 = Warp aus oder Tempo unbekannt)
+function padCent(i) { return PA[i] ? PA[i].cent : 0; }
+
+// Warp: Verhältnis Projekttempo / Tempo des Videos von Pad i (0 = Warp aus oder Tempo unbekannt)
 // Bank ist kuratiert: auch ein erkanntes, nicht bestätigtes Tempo gilt
-function tempoTrusted() { return srcBpm > 0; }
-function warpRatio() {
-    if (!P.warp || !tempoTrusted()) return 0;
-    return clamp(P.bpm / srcBpm, 0.25, 4);
+function tempoTrusted(i) { return !!(PA[i] && PA[i].bpm > 0); }
+function warpRatio(i) {
+    if (!P.warp || !tempoTrusted(i)) return 0;
+    return clamp(P.bpm / PA[i].bpm, 0.25, 4);
 }
 
-// ---------- Beat-Raster ----------
+// ---------- Beat-Raster (pro Pad) ----------
 // Beats bekannt und Tempo vertrauenswürdig: Overlay, Taktposition, Warp folgt dem Raster
-function beatsOK() { return beatsReady && beats.length >= 4 && tempoTrusted(); }
+function beatsOK(i) { return tempoTrusted(i) && PA[i].beats.length >= 4; }
 
-// Zeit (ms) -> Position in Schlägen, 0 = erste "1"; außerhalb der Beats linear weiter
-function xAt(t) {
-    var n = beats.length, lo = 0, hi = n - 1, i;
-    if (t <= beats[0]) return (0 - beatsDown) + (t - beats[0]) / (beats[1] - beats[0]);
-    if (t >= beats[n - 1]) return (n - 1 - beatsDown) + (t - beats[n - 1]) / (beats[n - 1] - beats[n - 2]);
+// Zeit (ms) -> Position in Schlägen von Pad p, 0 = erste "1"; außerhalb der Beats linear weiter
+function xAt(p, t) {
+    var beats = PA[p].beats, off = PA[p].off, n = beats.length, lo = 0, hi = n - 1, i;
+    if (t <= beats[0]) return off + (t - beats[0]) / (beats[1] - beats[0]);
+    if (t >= beats[n - 1]) return (n - 1 + off) + (t - beats[n - 1]) / (beats[n - 1] - beats[n - 2]);
     while (hi - lo > 1) { i = (lo + hi) >> 1; if (beats[i] <= t) lo = i; else hi = i; }
-    return (lo - beatsDown) + (t - beats[lo]) / (beats[lo + 1] - beats[lo]);
+    return (lo + off) + (t - beats[lo]) / (beats[lo + 1] - beats[lo]);
 }
 
 // Position in Schlägen -> Zeit (ms)
-function timeAt(x) {
-    var n = beats.length, j = x + beatsDown, i = Math.floor(j), f = j - i;
+function timeAt(p, x) {
+    var beats = PA[p].beats, n = beats.length, j = x - PA[p].off, i = Math.floor(j), f = j - i;
     if (i < 0) return beats[0] + j * (beats[1] - beats[0]);
     if (i >= n - 1) return beats[n - 1] + (j - (n - 1)) * (beats[n - 1] - beats[n - 2]);
     return beats[i] + f * (beats[i + 1] - beats[i]);
@@ -191,40 +190,33 @@ function timeAt(x) {
 // Startpunkt eines Pads (fest: die Snippets sind ab genau diesem Start geschnitten)
 function effStart(i) { return pads[i]; }
 
-function requestBeats() {
-    beatsReady = 0;
-    if (analysisReady && srcBpm > 0) outlet(1, "beattrack", srcBpm);
-    else sendGridUI();
-}
-
-// vom Node-Teil: beatsclear | beatsadd <ms…> | beatsdone <down> <anzahl>
-function beatsclear() { beatsIn = []; }
-function beatsadd() { beatsIn = beatsIn.concat(arrayfromargs(arguments)); }
-function beatsdone(down, n) {
-    beats = beatsIn; beatsIn = [];
-    beatsDown = Math.floor(down) || 0;
-    beatsReady = beats.length >= 4 ? 1 : 0;
-    if (beatsReady && beatsDown >= beats.length) beatsDown = 0;
-    requestAll();
+// vom Node-Teil: padana <i> <bpm> <cent> <off> <beats…> (nach bank und nach einer Tempo-Korrektur im Editor)
+function padana() {
+    var a = arrayfromargs(arguments), i = Math.floor(a[0]);
+    if (i < 0 || i >= NPADS) return;
+    PA[i] = { bpm: a[1] || 0, cent: a[2] || 0, off: Math.floor(a[3]) || 0, beats: a.slice(4) };
+    shifts[i] = computeShift(i);
     sendGridUI();
     updateSel();
 }
 
-// Raster-Overlay über der Waveform, alles in Buffer-ms, nur die Schläge, die in einem Fach liegen.
+// Raster-Overlay über der Waveform, alles in Buffer-ms, pro Fach die Schläge seines Videos, die im Fach liegen.
 // Linien immer, wenn Beats da sind (kein Schalter)
 function sendGridUI() {
-    var on = B && beatsOK() ? 1 : 0;
+    var on = 0, i;
+    for (i = 0; B && i < NPADS; i++) if (beatsOK(i)) on = 1;
     outlet(2, "grid", "clear");
     outlet(2, "grid", "dur", bufMs());
     if (on) {
-        var bt = [], bars = [], i, j, s, e, x;
+        var bt = [], bars = [], j, s, e, x, beats;
         for (i = 0; i < NPADS; i++) {
-            s = pads[i]; e = s + B.lens[i];
+            if (!beatsOK(i)) continue;
+            s = pads[i]; e = s + B.lens[i]; beats = PA[i].beats;
             for (j = 0; j < beats.length; j++) {
                 if (beats[j] < s || beats[j] >= e) continue;
                 x = toBuf(i, beats[j]);
                 bt.push(x);
-                if ((((j - beatsDown) % 4) + 4) % 4 === 0) bars.push(x);
+                if ((((j + PA[i].off) % 4) + 4) % 4 === 0) bars.push(x);
             }
         }
         for (var k = 0; k < bt.length; k += 200) outlet(2, ["grid", "beats"].concat(bt.slice(k, k + 200)));
@@ -247,7 +239,7 @@ function sendBankstate() {
         s.push(Math.round(effStart(i)));
         w.push(Math.round(Math.abs(pr.to - pr.from)));
     }
-    var b = ["bankstate", st.bankId, videoId || "-", sel, P.mode, P.rev].concat(s, w,
+    var b = ["bankstate", st.bankId, sel, P.mode, P.rev].concat(s, w,
         [P.div, Math.round(P.rate * 1000) / 1000, P.tune, P.warp, P.quant, Math.round(P.vol * 10) / 10, P.voicesIdx, P.base, P.qdiv, P.qcatch]);
     var key = b.join(" ");
     if (key === lastBankstate) return;
@@ -257,14 +249,14 @@ function sendBankstate() {
 
 // Abspielbereich eines Pads: von, bis (Song-ms) und Warp-Faktor. Nie über das Snippet hinaus
 function playRange(i) {
-    var start = effStart(i), from, to, R = warpRatio();
+    var start = effStart(i), from, to, R = warpRatio(i);
     var hi = start + (B ? B.lens[i] : 0);
     if (P.mode && P.rev) {                     // Hold rückwärts: Fach vom Ende zum Start
         from = hi; to = start;
     } else {
-        if (R > 0 && !P.mode && beatsOK()) {
+        if (R > 0 && !P.mode && beatsOK(i)) {
             // Warp mit Beats: Slice endet auf dem Raster der Quelle -> folgt schwankendem Tempo
-            var end = timeAt(xAt(start) + DIVS[P.div][1] * 4);
+            var end = timeAt(i, xAt(i, start) + DIVS[P.div][1] * 4);
             if (end > start) R = clamp((end - start) / sliceMs(), 0.25, 4);
             to = Math.min(start + sliceMs() * R, hi);
         } else {
@@ -280,12 +272,9 @@ function playRange(i) {
 // Warp: Slice = gleicher Notenwert im Tempo der Quelle
 function padSpan(i) {
     var base = P.mode ? HOLD_MAX : sliceMs();
-    var R = warpRatio();
+    var R = warpRatio(i);
     return R > 0 ? base * R : base * padRate(i);
 }
-
-// Fenster, das der Node-Teil pro Pad analysiert (mind. 2 s, macht der Node-Teil)
-function analysisSpan() { return ANALYSIS_MS; }
 
 function fmt(ms) {
     var m = Math.floor(ms / 60000);
@@ -354,28 +343,17 @@ function watchTrack() {
     }, "this_device canonical_parent");
     trackApi.property = "name";
 }
-// bpm <tempo> = Lives Tempo (Observer); bpm <video> <bpm> = Quelltempo aus dem Editor (Node), nur für die aktive Bank
-function bpm(v, b) {
-    if (arguments.length < 2) { P.bpm = v; requestAll(); updateSel(); return; }
-    if (!st.bankId || String(v) !== videoId || !(b > 0)) return;
-    srcBpm = b; srcAuto = 0;
-    requestBeats(); updateSel();
-}
+// bpm <tempo> = Lives Tempo (Observer). Das Tempo der Videos kommt per padana
+function bpm(v) { P.bpm = v; updateSel(); }
 // Regler: jeder Handler meldet am Ende per bankstate an den Editor (direkt oder über updateSel)
-function division(v) { P.div = clamp(Math.floor(v), 0, DIVS.length - 1); requestAll(); updateSel(); }
-function rate(v) { P.rate = clamp(v, 0.1, 4); requestAll(); updateSel(); }
-function playmode(v) { P.mode = v ? 1 : 0; requestAll(); updateSel(); }   // 0 = Trigger, 1 = Hold
+function division(v) { P.div = clamp(Math.floor(v), 0, DIVS.length - 1); updateSel(); }
+function rate(v) { P.rate = clamp(v, 0.1, 4); updateSel(); }
+function playmode(v) { P.mode = v ? 1 : 0; updateSel(); }   // 0 = Trigger, 1 = Hold
 function reverse(v) { P.rev = v ? 1 : 0; sendBankstate(); }
 function basenote(v) { P.base = Math.floor(v); sendBankstate(); }
 function volume(v) { P.vol = v; sendBankstate(); }                       // dB, am Klang ändert sich hier nichts
-// ---------- Warp / Quelltempo ----------
-function warp(v) { P.warp = v ? 1 : 0; requestAll(); updateSel(); }
-
-// vom Node-Teil: tempo <bpm> <konfidenz>. Ein bestätigtes Tempo (aus bank oder Editor) bleibt
-function tempo(bpm, conf) {
-    if (srcAuto || !(srcBpm > 0)) { srcBpm = bpm || 0; srcAuto = 1; }
-    updateSel();
-}   // Beats werden bei analysisready angefordert
+// ---------- Warp ----------
+function warp(v) { P.warp = v ? 1 : 0; updateSel(); }
 
 // ---------- Skala / Tonart ----------
 function tune(v) { P.tune = v ? 1 : 0; updateSel(); }
@@ -386,11 +364,7 @@ function scaleints() {
     if (ints.length) SC.ints = ints;
     recomputeShifts();
 }
-function tuning(c) { tuningCents = c; updateSel(); }
-function analysisready() {
-    analysisReady = 1;
-    requestBeats(); requestAll();
-}
+function analysisready() { analysisReady = 1; updateSel(); }
 
 // Ergebnis vom Node-Teil: padinfo <i> <konfidenz> <grundton> <moll> <chroma x12>
 function padinfo() {
@@ -400,13 +374,6 @@ function padinfo() {
     keys[i] = { conf: a[1], tonic: a[2], minor: a[3], c: a.slice(4, 16) };
     shifts[i] = computeShift(i);
     if (i === sel) updateSel();
-}
-
-function requestAll() {
-    if (!analysisReady) return;
-    var a = ["analyzeall", analysisSpan()];
-    for (var i = 0; i < NPADS; i++) a.push(effStart(i));
-    outlet(1, a);
 }
 
 // Verschiebung (Halbtöne), mit der möglichst viel vom Pad in Lives Skala liegt.
@@ -507,7 +474,7 @@ function trigger(i, vel, late) {
     var pr = playRange(i), from = pr.from, to = pr.to, R = pr.R;
     var speed = R > 0 ? R : r;
     var dur = Math.abs(to - from) / speed;     // reale Abspieldauer in ms
-    if (dur < 1) return;
+    if (dur < 1) { updateSel(); return; }       // leerer Platz: still, aber gewählt (Editor)
     if (late > 0 && late < dur - 1) {          // Catch: später einsteigen, das Ende bleibt auf dem Raster
         from += (to >= from ? 1 : -1) * late * speed;
         dur -= late;
@@ -558,9 +525,7 @@ function noteoff(i) {
 // ---------- Laden ----------
 function resetAnalysis() {
     analysisReady = 0;
-    tuningCents = 0;
     resetKeys();
-    beats = []; beatsIn = []; beatsReady = 0;
 }
 
 // Ziel ohne Bank: die Position, auf der der Regler „Bank“ steht (1–128)
@@ -580,28 +545,26 @@ function loadTarget() {
 }
 
 // ---------- Bänke ----------
-// bank <id> <nr> <bpm> <s×16> <l×16> <songdur> <video> <pfad…>
+// bank <id> <nr> <s×16> <l×16> <pfad…>  (leerer Platz: l = 0). Tempo, Stimmung, Schläge kommen danach per padana
 function bank() {
     var a = arrayfromargs(arguments), i;
-    var id = Math.floor(a[0]), nr = Math.floor(a[1]), bp = a[2];
+    var id = Math.floor(a[0]), nr = Math.floor(a[1]);
     if (bankBusy) busyGotBank = 1;
-    var lens = a.slice(19, 35);
+    var lens = a.slice(18, 34);
     st.bankId = id;
-    videoId = String(a[36]);
-    pads = a.slice(3, 19);
-    durMs = a[35] || 0;
+    pads = a.slice(2, 18);
+    durMs = bufMs();
     B = { nr: nr, lens: lens };
     if (pendingName && pendingName.id === id) bankName = pendingName.name;
     else bankName = "";
     pendingName = null;
-    if (bp > 0) { srcBpm = bp; srcAuto = 0; }
-    else { srcBpm = 0; srcAuto = 1; }
     resetAnalysis();
+    sendEmpty();
     muted = 0; wantLoad = 0;
     if (!peekWait) peekNr = 0;                     // wer noch dreht, behält seine Anzeige
     if (nr > 0) setNamed("bank", "set", Math.min(nr, 128));
     for (i = 0; i < VMAX; i++) killVoice(i, 5);      // klickfrei aus, bevor der Buffer wechselt
-    pendingPath = a.slice(37).join(" ");
+    pendingPath = a.slice(34).join(" ");
     replaceTask.cancel();
     replaceTask.schedule(10);
     save();
@@ -616,11 +579,19 @@ function bankname() {
     else pendingName = { id: id, name: name };    // Bank lädt gerade
 }
 
+// leere Plätze ans Pad-jsui: padempty <16 × 0/1> (dunkel, ohne Nummer)
+function sendEmpty() {
+    var a = ["padempty"];
+    for (var i = 0; i < NPADS; i++) a.push(B && B.lens[i] <= 0 ? 1 : 0);
+    outlet(2, a);
+}
+
 // nichts mehr geladen: Stimmen aus, Pads tun nichts (der Buffer wird beim nächsten replace überschrieben)
 function unload() {
     for (var k = 0; k < VMAX; k++) killVoice(k, 5);
-    B = null; durMs = 0; videoId = ""; srcBpm = 0; srcAuto = 1;
+    B = null; durMs = 0;
     resetAnalysis();
+    sendEmpty();
 }
 
 // gespeicherte Bank gibt es nicht mehr: die Bank laden, auf der der Regler steht (der alte Platz)
@@ -726,15 +697,16 @@ function updateSel() {
     var pr = durMs > 0 ? playRange(sel) : { from: 0, to: 0, R: 0 };
     var s = Math.min(pr.from, pr.to), e = Math.max(pr.from, pr.to);
     var info = P.mode ? "Hold" : DIVS[P.div][0] + " " + Math.round(sliceMs()) + " ms";
-    if (durMs > 0 && beatsOK()) {
-        var x = Math.round(xAt(s) * 4) / 4;
+    if (durMs > 0 && beatsOK(sel)) {
+        var x = Math.round(xAt(sel, s) * 4) / 4;
         var bar = Math.floor(x / 4) + 1, bt = x - (bar - 1) * 4 + 1;
         info += "  T" + bar + "." + (Math.round(bt * 4) / 4);
     }
     var R = pr.R;
     if (R > 0) info += "  W×" + R.toFixed(2);
     else if (P.warp) info += "  W: kein Tempo";
-    outlet(2, "selinfo", "Pad " + (sel + 1) + "  " + fmt(s) + "  " + info + keyInfo(sel));
+    if (B && B.lens[sel] <= 0) outlet(2, "selinfo", "Pad " + (sel + 1) + "  leer");
+    else outlet(2, "selinfo", "Pad " + (sel + 1) + "  " + fmt(s) + "  " + info + keyInfo(sel));
     outlet(2, "padsel", sel);
     if (durMs > 0) outlet(2, "wsel", toBuf(sel, s), toBuf(sel, e));
     sendPadMarks();
@@ -749,7 +721,7 @@ function keyInfo(i) {
     var conf = " (" + k.conf.toFixed(2) + ")";
     if (shifts[i] === null) return "  |  " + (k.conf < 0.05 ? "atonal" : name) + conf + " – bleibt";
     if (!P.tune) return "  |  " + name + conf;
-    var sh = shifts[i], ct = -Math.round(tuningCents);
+    var sh = shifts[i], ct = -Math.round(padCent(i));
     return "  |  " + name + conf + " → " + (sh > 0 ? "+" : "") + sh + " st" + (ct ? " " + (ct > 0 ? "+" : "") + ct + " ct" : "");
 }
 
