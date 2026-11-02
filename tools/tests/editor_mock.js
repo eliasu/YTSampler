@@ -2,7 +2,8 @@
 // Bibliothek, Device und Downloads nur im Speicher. Nie auf 8765–8770, dort läuft das echte Device.
 //   node tools/tests/editor_mock.js [port] [szenario]     → http://localhost:<port>/editor
 // Szenario umschalten im Browser: /mock/normal, /mock/nurspielbar, /mock/nichtsgeladen, /mock/leer,
-// /mock/kaputt, /mock/neuer, /mock/down (kein Device), /mock/up.
+// /mock/kaputt, /mock/neuer, /mock/mix (aktive Mix-Bank), /mock/down (kein Device), /mock/up.
+// Bibliothek im format 2 (Mix-Spec 2.1/3.2): banks[].pads = {video, start} | null, lib meldet mix/wav pro Bank, videos.wav/dur.
 // Device-Regler (Spec 3.0, 3.2/3.3): device.params, /cmd param stellt den Wert und schickt device zurück.
 const http = require('http');
 const fs = require('fs');
@@ -14,7 +15,7 @@ const ERR = {
   playonly: 'Track fehlt – nur spielbar', nosnip: 'Snippets fehlen – Bank nicht ladbar', idtaken: 'Bank existiert schon',
   notempo: 'Kein Tempo erkannt', superseded: 'Neuere Suche läuft', badreq: 'Ungültiger Befehl',
 };
-const WRITE = ['rename', 'duplicate', 'delete', 'move', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'newbank', 'tempo', 'tempook', 'fetch', 'fetchall'];
+const WRITE = ['rename', 'duplicate', 'delete', 'move', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'newbank', 'newmix', 'setpad', 'tempo', 'tempook', 'fetch', 'fetchall'];
 
 // Videos: id → [Titel, Analyse-BPM, Dauer s]
 const VIDEOS = {
@@ -40,19 +41,31 @@ const PARAMS_START = { div: 5, rate: 1, mode: 0, rev: 0, tune: 1, warp: 0, quant
 const DIV_FRAC = [1 / 64, 1 / 32, 1 / 24, 1 / 16, 1 / 12, 1 / 8, 1 / 6, 1 / 4, 1 / 2, 1, 2];
 function makeStarts(video, seed) { const b = bars(video), out = []; for (let i = 0; out.length < 16; i++) { const t = b[(seed * 7 + i * 5) % b.length]; if (!out.includes(t)) out.push(t); } return out.sort((a, c) => a - c); }
 
+const videoEntry = (v, title) => ({ title: title || VIDEOS[v][0], wav: true, dur: VIDEOS[v][2] * 1000 });
+const padsOf = (v, starts) => starts.map((start) => ({ video: v, start }));
+const videosOf = (b) => [...new Set(b.pads.filter(Boolean).map((p) => p.video))];
+// Track-Bank = 16 belegte Pads aus einem Video, sonst Mix (Spec 2.1)
+const isMix = (b) => !b.pads.every((p) => p && b.pads[0] && p.video === b.pads[0].video);
+
 function scenarioLib(name) {
   const ids = Object.keys(VIDEOS).slice(0, 7);
   const lib = { rev: 57, nextId: 13, banks: [], videos: {} };
   const names = ['Rockit Scratches', 'Vitamin C', 'Water No Get Enemy', 'Numbers – nur Stimmen', 'UFO', 'Cavern', 'Cissy Strut'];
   ids.forEach((v, k) => {
-    lib.banks.push({ id: [7, 3, 9, 4, 11, 2, 12][k], name: names[k], video: v, starts: makeStarts(v, k), snip: 'ok', wav: true });
-    lib.videos[v] = { title: VIDEOS[v][0] };
+    lib.banks.push({ id: [7, 3, 9, 4, 11, 2, 12][k], name: names[k], pads: padsOf(v, makeStarts(v, k)), snip: 'ok' });
+    lib.videos[v] = videoEntry(v);
   });
   lib.videos.Rk7tQ2mLp0A.bpm = 97;
   lib.videos.Kw8Numbers0.bpm = 112;
-  lib.banks[2].wav = false;                                                  // nur spielbar
+  lib.videos.Fk4WaterNoG.wav = false;                                        // nur spielbar (Dauer aus der Snippet-.json)
   lib.videos.Fk4WaterNoG.fail = 'Video nicht verfügbar';
-  lib.banks[4].wav = false; lib.banks[4].snip = 'missing';                   // nicht ladbar
+  lib.videos.Es9UfoUfo00.wav = false; delete lib.videos.Es9UfoUfo00.dur; lib.banks[4].snip = 'missing'; // nicht ladbar
+  if (name === 'mix') { // Mix-Bank aus drei Bänken, einem Video nur hier (Cymande), leeren Plätzen und einem Pad ohne WAV (Fela)
+    const [R, C, F] = lib.banks.map((b) => b.pads), cy = 'Cy5BraBra00';
+    lib.videos[cy] = videoEntry(cy);
+    const pads = [R[0], R[3], R[6], R[9], C[1], C[4], C[7], C[10], F[2], null, { video: cy, start: bars(cy)[12] }, null, R[12], C[13], null, null];
+    lib.banks.push({ id: 13, name: 'Mix Funk', pads: pads.map((p) => p && { ...p }), snip: 'ok' }); lib.nextId = 14;
+  }
   lib.state = 'ok';
   if (name === 'leer') { lib.banks = []; lib.videos = {}; lib.state = 'leer'; }
   if (name === 'kaputt') { lib.banks = []; lib.videos = {}; lib.state = 'kaputt'; lib.error = ERR.libbroken + ' (Zeile 14: unerwartetes Komma)'; }
@@ -66,27 +79,33 @@ function createMock(opts = {}) {
     lib: null, dev: null, beatsOk: null, searchSeq: 0, slowSearch: 0, params: { ...PARAMS_START },
   };
   // Spanne wie [js] grob: Slice-Länge im Quelltempo, durch Rate (Warp und Hold hier egal)
-  const spanOf = (video) => {
-    const bpm = (m.lib.videos[video] && m.lib.videos[video].bpm) || (VIDEOS[video] ? VIDEOS[video][1] : 120), p = m.params || PARAMS_START;
-    return Array.from({ length: 16 }, () => Math.round(Math.min(16000, 240000 / bpm * DIV_FRAC[p.div] / p.rate)));
-  };
+  const spanOf = (b) => b.pads.map((pad) => {
+    if (!pad) return 0;
+    const video = pad.video, bpm = (m.lib.videos[video] && m.lib.videos[video].bpm) || (VIDEOS[video] ? VIDEOS[video][1] : 120), p = m.params || PARAMS_START;
+    return Math.round(Math.min(16000, 240000 / bpm * DIV_FRAC[p.div] / p.rate));
+  });
+  // device.video = Video des gewählten Pads (Spec 3.2), '-' bei leerem Platz
   function devFor(b) {
-    return { bankId: b ? b.id : 0, nr: b ? m.lib.banks.indexOf(b) + 1 : 0, video: b ? b.video : '-', sel: m.dev ? m.dev.sel : 0,
-      starts: b ? b.starts.slice() : [], spans: b ? spanOf(b.video) : [], params: m.params ? { ...m.params } : null };
+    const sel = m.dev ? m.dev.sel : 0, pad = b && b.pads[sel];
+    return { bankId: b ? b.id : 0, nr: b ? m.lib.banks.indexOf(b) + 1 : 0, video: pad ? pad.video : '-', sel,
+      starts: b ? b.pads.map((p) => (p ? p.start : 0)) : [], spans: b ? spanOf(b) : [], params: m.params ? { ...m.params } : null };
   }
   m.scenario = function (name) {
     m.name = name;
     m.lib = scenarioLib(name);
     m.params = { ...PARAMS_START };
-    const b = name === 'nichtsgeladen' ? null : m.lib.banks[name === 'nurspielbar' ? 2 : 0];
-    m.dev = devFor(b);
+    const b = name === 'nichtsgeladen' ? null : m.lib.banks[name === 'nurspielbar' ? 2 : name === 'mix' ? 7 : 0];
+    m.dev = null; m.dev = devFor(b);
     m.beatsOk = null;
     broadcastAll();
   };
   const byId = (id) => m.lib.banks.find((b) => b.id === id);
+  const bankWav = (b) => videosOf(b).every((v) => m.lib.videos[v] && m.lib.videos[v].wav);
+  // ein videos-Eintrag lebt, solange ein Pad ihn benutzt
+  function dropOrphans() { const used = new Set(m.lib.banks.flatMap(videosOf)); for (const v of Object.keys(m.lib.videos)) if (!used.has(v)) delete m.lib.videos[v]; }
   function libMsg(by) {
     const { rev, state, error, banks, videos } = m.lib;
-    return { rev, by, state, error, cache: cacheMsg(), banks, videos };
+    return { rev, by, state, error, cache: cacheMsg(), banks: banks.map((b) => ({ ...b, mix: isMix(b), wav: bankWav(b) })), videos };
   }
   function cacheMsg() { const bytes = opts.cacheBytes != null ? opts.cacheBytes : 4.2e9; return { bytes, warn: bytes >= 1e10 }; }
   function beatsMsg() {
@@ -102,7 +121,12 @@ function createMock(opts = {}) {
   }
   function changed(by) { m.lib.rev++; m.emit('lib', libMsg(by)); }
   function activate(b) { m.dev = devFor(b); m.emit('device', m.dev); const bt = beatsMsg(); if (bt) m.emit('beats', bt); }
-  function syncDev() { const b = byId(m.dev.bankId); if (b) { m.dev = devFor(b); m.emit('device', m.dev); } }
+  // beats folgt dem Video des gewählten Pads
+  function syncDev() {
+    const b = byId(m.dev.bankId), old = m.dev.video; if (!b) return;
+    m.dev = devFor(b); m.emit('device', m.dev);
+    if (m.dev.video !== old) { const bt = beatsMsg(); if (bt) m.emit('beats', bt); }
+  }
   // wie Node, wenn [js] einen neuen bankstate schickt (z. B. Regler am Device gedreht); params null = noch kein bankstate
   m.setParams = function (p) { m.params = p && { ...m.params, ...p }; m.dev = devFor(byId(m.dev.bankId)); m.emit('device', m.dev); };
   m.setDown = function (d) { m.down = d; if (d) for (const c of m.clients) c.destroy(); };
@@ -123,28 +147,29 @@ function createMock(opts = {}) {
   function cmd(q) {
     const c = q.cmd, b = q.id != null ? byId(q.id) : null;
     if (WRITE.includes(c) && (m.lib.state === 'kaputt' || m.lib.state === 'neuer')) return fail(m.lib.state === 'kaputt' ? 'libbroken' : 'libnewer');
-    if (['select', 'rename', 'duplicate', 'delete', 'move', 'setstart', 'setstarts', 'swap', 'roll'].includes(c) && !b) return fail(q.id == null ? 'badreq' : 'nobank');
+    if (['select', 'rename', 'duplicate', 'delete', 'move', 'setstart', 'setstarts', 'swap', 'roll', 'setpad'].includes(c) && !b) return fail(q.id == null ? 'badreq' : 'nobank');
+    const pad = b && isPad(q.pad) ? b.pads[q.pad] : null, padWav = pad && m.lib.videos[pad.video].wav;
+    const known = (video, start) => m.lib.banks.some((x) => x.pads.some((p) => p && p.video === video && p.start === start)); // Quelle ohne WAV (Spec 2.2)
     switch (c) {
       case 'select':
-        if (b.snip === 'missing' && !b.wav) return fail('nosnip');
+        if (b.snip === 'missing' && !bankWav(b)) return fail('nosnip');
         activate(b); return { ok: true };
       case 'rename':
         if (typeof q.name !== 'string') return fail('badreq');
         b.name = q.name.trim().slice(0, 100); changed(q.client); return { ok: true };
       case 'duplicate': {
-        const k = { ...b, id: m.lib.nextId++, name: b.name + ' (Kopie)', starts: b.starts.slice() };
+        const k = { ...b, id: m.lib.nextId++, name: b.name + ' (Kopie)', pads: b.pads.map((p) => p && { ...p }) };
         m.lib.banks.splice(m.lib.banks.indexOf(b) + 1, 0, k); changed(q.client); activate(k); return { ok: true, id: k.id };
       }
       case 'delete': {
-        const at = m.lib.banks.indexOf(b) + 1, v = m.lib.videos[b.video];
-        m.lib.banks.splice(at - 1, 1);
-        const video = { title: v.title }; if (v.bpm) video.bpm = v.bpm;
-        if (!m.lib.banks.some((x) => x.video === b.video)) delete m.lib.videos[b.video];
+        const at = m.lib.banks.indexOf(b) + 1, videos = {};
+        for (const v of videosOf(b)) { const e = m.lib.videos[v]; videos[v] = { title: e.title }; if (e.bpm) videos[v].bpm = e.bpm; }
+        m.lib.banks.splice(at - 1, 1); dropOrphans();
         if (!m.lib.banks.length) m.lib.state = 'leer';
         changed(q.client);
         if (m.dev.bankId === b.id) activate(m.lib.banks[Math.min(at - 1, m.lib.banks.length - 1)] || null); else syncDev();
-        const { snip, wav, ...bank } = b;
-        return { ok: true, removed: { bank, at, video } };
+        const { snip, ...bank } = b;
+        return { ok: true, removed: { bank, at, videos } };
       }
       case 'move': {
         if (!Number.isInteger(q.to) || q.to < 1 || q.to > m.lib.banks.length) return fail('badreq');
@@ -153,32 +178,50 @@ function createMock(opts = {}) {
       case 'restore': {
         const r = q.bank; if (!r || !Number.isInteger(r.id) || !Number.isInteger(q.at)) return fail('badreq');
         if (r.id >= m.lib.nextId || byId(r.id)) return fail('idtaken');
-        if (!m.lib.videos[r.video]) m.lib.videos[r.video] = { ...q.video };
-        m.lib.banks.splice(Math.min(q.at - 1, m.lib.banks.length), 0, { ...r, starts: r.starts.slice(), snip: 'ok', wav: true });
+        if (!Array.isArray(r.pads) || r.pads.length !== 16 || !videosOf(r).every((v) => m.lib.videos[v] || (q.videos && q.videos[v]))) return fail('badreq');
+        for (const v of videosOf(r)) if (!m.lib.videos[v]) m.lib.videos[v] = { ...videoEntry(v), ...q.videos[v] };
+        m.lib.banks.splice(Math.min(q.at - 1, m.lib.banks.length), 0, { ...r, pads: r.pads.map((p) => p && { ...p }), snip: 'ok' });
         m.lib.state = 'ok'; changed(q.client); syncDev(); return { ok: true };
       }
       case 'setstart':
-        if (!isPad(q.pad) || !Number.isInteger(q.ms) || q.ms < 0) return fail('badreq');
-        if (!b.wav) return fail('playonly');
-        b.starts[q.pad] = q.ms; changed(q.client); syncDev(); return { ok: true };
+        if (!pad || !Number.isInteger(q.ms) || q.ms < 0) return fail('badreq');
+        if (!padWav) return fail('playonly');
+        pad.start = q.ms; changed(q.client); syncDev(); return { ok: true };
       case 'setstarts':
-        if (!Array.isArray(q.starts) || q.starts.length !== 16) return fail('badreq');
-        if (!b.wav && !q.starts.every((s) => b.starts.includes(s))) return fail('playonly');
-        b.starts = q.starts.slice(); changed(q.client); syncDev(); return { ok: true };
+        if (!Array.isArray(q.starts) || q.starts.length !== 16 || !q.starts.every((s) => Number.isInteger(s) && s >= 0)) return fail('badreq');
+        if (!b.pads.every((p, i) => !p || m.lib.videos[p.video].wav || p.start === q.starts[i] || known(p.video, q.starts[i]))) return fail('playonly');
+        b.pads.forEach((p, i) => { if (p) p.start = q.starts[i]; }); changed(q.client); syncDev(); return { ok: true };
       case 'swap':
         if (!isPad(q.a) || !isPad(q.b)) return fail('badreq');
-        [b.starts[q.a], b.starts[q.b]] = [b.starts[q.b], b.starts[q.a]]; changed(q.client); syncDev(); return { ok: true };
+        [b.pads[q.a], b.pads[q.b]] = [b.pads[q.b], b.pads[q.a]]; changed(q.client); syncDev(); return { ok: true };
       case 'roll': {
+        if (!pad) return fail('badreq');
+        if (!padWav) return fail('playonly');
+        const taken = b.pads.filter((p) => p && p.video === pad.video).map((p) => p.start);
+        const free = bars(pad.video).filter((t) => !taken.includes(t)), ms = free[Math.floor(Math.random() * free.length)];
+        pad.start = ms; changed(q.client); syncDev(); return { ok: true, ms };
+      }
+      case 'setpad': { // Spec 3.1: Pad auf einen Platz kopieren, video null leert
         if (!isPad(q.pad)) return fail('badreq');
-        if (!b.wav) return fail('playonly');
-        const free = bars(b.video).filter((t) => !b.starts.includes(t)), ms = free[Math.floor(Math.random() * free.length)];
-        b.starts[q.pad] = ms; changed(q.client); syncDev(); return { ok: true, ms };
+        if (q.video === null) { b.pads[q.pad] = null; dropOrphans(); changed(q.client); syncDev(); return { ok: true }; }
+        const e = m.lib.videos[q.video];
+        if (typeof q.video !== 'string' || !Number.isInteger(q.start) || q.start < 0) return fail('badreq');
+        if (!e && !(q.info && typeof q.info.title === 'string')) return fail('badreq');
+        const wav = e ? e.wav : !!VIDEOS[q.video];                                // gelöschtes Video: WAV liegt noch im Cache
+        if (!wav && !known(q.video, q.start)) return fail('playonly');
+        if (!e) { m.lib.videos[q.video] = { ...videoEntry(q.video, q.info.title), wav }; if (q.info.bpm) m.lib.videos[q.video].bpm = q.info.bpm; }
+        b.pads[q.pad] = { video: q.video, start: q.start }; dropOrphans(); changed(q.client); syncDev(); return { ok: true };
+      }
+      case 'newmix': {
+        const k = { id: m.lib.nextId++, name: 'Mix-Bank', pads: Array(16).fill(null), snip: 'ok' };
+        m.lib.banks.push(k); m.lib.state = 'ok'; changed(q.client); activate(k); return { ok: true, id: k.id };
       }
       case 'hit': case 'up': {
         if (!isPad(q.pad)) return fail('badreq');
         if (c === 'up') { m.emit('stop', { pad: q.pad }); return { ok: true }; }
-        const from = m.dev.starts[q.pad], dur = m.dev.spans[q.pad];
-        m.dev.sel = q.pad; m.emit('device', m.dev); m.emit('play', { pad: q.pad, from, to: from + dur, dur });
+        m.dev.sel = q.pad; syncDev();
+        const hb = byId(m.dev.bankId), hp = hb && hb.pads[q.pad], from = m.dev.starts[q.pad], dur = m.dev.spans[q.pad];
+        if (hp) m.emit('play', { pad: q.pad, video: hp.video, from, to: from + dur, dur });
         return { ok: true };
       }
       case 'search': {
@@ -192,8 +235,8 @@ function createMock(opts = {}) {
       case 'newbank': {
         const v = q.video; if (!VIDEOS[v]) return fail('badreq');
         job('newbank', { video: v, tag: q.tag }, () => {
-          const k = { id: m.lib.nextId++, name: VIDEOS[v][0], video: v, starts: makeStarts(v, m.lib.nextId), snip: 'ok', wav: true };
-          if (!m.lib.videos[v]) m.lib.videos[v] = { title: VIDEOS[v][0] };
+          const k = { id: m.lib.nextId++, name: VIDEOS[v][0], pads: padsOf(v, makeStarts(v, m.lib.nextId)), snip: 'ok' };
+          if (!m.lib.videos[v]) m.lib.videos[v] = videoEntry(v);
           m.lib.banks.push(k); m.lib.state = 'ok'; changed(q.client); activate(k);
           return { bankId: k.id };
         });
@@ -216,12 +259,13 @@ function createMock(opts = {}) {
         const v = q.video; if (!m.lib.videos[v]) return fail('badreq');
         delete m.lib.videos[v].fail;
         job('fetch', { video: v }, () => {
-          for (const x of m.lib.banks) if (x.video === v) { x.wav = true; if (x.snip === 'missing') x.snip = 'ok'; }
+          Object.assign(m.lib.videos[v], { wav: true, dur: VIDEOS[v][2] * 1000 });
+          for (const x of m.lib.banks) if (videosOf(x).includes(v) && x.snip === 'missing') x.snip = 'ok';
           m.emit('lib', libMsg(q.client)); return {};
         });
         return { ok: true };
       }
-      case 'fetchall': return { ok: true, todo: m.lib.banks.filter((x) => !x.wav).length };
+      case 'fetchall': return { ok: true, todo: Object.values(m.lib.videos).filter((x) => !x.wav).length };
       case 'param': { // auch bei kaputter Bibliothek erlaubt; Bestätigung nur über device.params
         const r = PARAMS[q.name], v = q.value;
         if (!r || typeof v !== 'number' || !Number.isFinite(v) || v < r[0] || v > r[1] || (r[2] && !Number.isInteger(v))) return fail('badreq');
@@ -269,8 +313,8 @@ function createMock(opts = {}) {
     const pk = u.pathname.match(/^\/peaks\/(.*)$/);
     if (pk) {
       if (!/^[\w-]{11}$/.test(pk[1])) { res.writeHead(400); return res.end(); }
-      const b = m.lib.banks.find((x) => x.video === pk[1]);
-      if (!VIDEOS[pk[1]] || (b && !b.wav)) { res.writeHead(404); return res.end(); }
+      const e = m.lib.videos[pk[1]];
+      if (!VIDEOS[pk[1]] || (e && !e.wav)) { res.writeHead(404); return res.end(); }
       res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'private, max-age=86400' }); return res.end(peaks(pk[1]));
     }
     if (u.pathname === '/cmd' && req.method === 'POST') {
@@ -303,6 +347,6 @@ if (require.main === module) {
   if (port >= 8765 && port <= 8770) { console.error('8765–8770 gehört dem echten Device'); process.exit(1); }
   createMock({ scenario: sc }).listen(port).then((m) => {
     console.log(`Attrappe läuft: http://localhost:${m.port}/editor  (Szenario ${sc})`);
-    console.log(`Umschalten: http://localhost:${m.port}/mock/<normal|nurspielbar|nichtsgeladen|leer|kaputt|neuer|down|up>`);
+    console.log(`Umschalten: http://localhost:${m.port}/mock/<normal|mix|nurspielbar|nichtsgeladen|leer|kaputt|neuer|down|up>`);
   });
 }

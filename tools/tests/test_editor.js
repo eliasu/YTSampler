@@ -112,7 +112,7 @@ t('Marker ziehen rastet auf Schläge, mit Alt frei, ohne gültige Beats frei', a
 
 t('Undo/Redo: Start setzen wählt erst die Bank, Tooltip und Toast nennen den Schritt', async () => {
   await open('normal');
-  const before = (await b.eval('S.lib.banks[0].starts')).slice();
+  const before = (await b.eval('S.lib.banks[0].pads.map((p) => p.start)')).slice();
   await dragMarker(2, 90);
   const s = await waitLog((x) => x.cmd === 'setstart');
   await b.waitFor(`!$('undo').disabled`);
@@ -134,7 +134,7 @@ t('Undo/Redo: Start setzen wählt erst die Bank, Tooltip und Toast nennen den Sc
 
 t('Undo/Redo: neues Snippet, tauschen, umbenennen, verschieben', async () => {
   await open('normal');
-  const st0 = (await b.eval('S.lib.banks[0].starts')).slice();
+  const st0 = (await b.eval('S.lib.banks[0].pads.map((p) => p.start)')).slice();
   await b.click('#pad4'); await waitLog((x) => x.cmd === 'hit' && x.pad === 4); await waitLog((x) => x.cmd === 'up' && x.pad === 4);
   await b.click('#rollbtn');
   const rl = await waitLog((x) => x.cmd === 'roll'); assert.strictEqual(rl.pad, 4);
@@ -206,7 +206,7 @@ t('Undo-Fehler (playonly) zeigt den Text und lässt den Schritt stehen', async (
   await open('normal');
   await dragMarker(0, 120); await waitLog((x) => x.cmd === 'setstart');
   await b.waitFor(`!$('undo').disabled`);
-  m.lib.banks[0].wav = false; m.lib.banks[0].starts[0] = 1; // Undo-Starts kommen in der alten Datei nicht vor
+  m.lib.videos.Rk7tQ2mLp0A.wav = false; m.lib.banks[0].pads[0].start = 1; // Undo-Starts kommen in der alten Datei nicht vor
   m.log = []; await undoKey(b); await waitLog((x) => x.cmd === 'setstarts');
   await b.waitFor(`$('toast').classList.contains('err') && $('toast').textContent === 'Track fehlt – nur spielbar'`);
   assert.strictEqual(await b.eval(`$('undo').disabled`), false);
@@ -485,7 +485,7 @@ t('Marker ziehen stimmt bei hohem Zoom, Schlaglinien je nach Platz', async () =>
   await b.eval(`S.sel = 4; setZoom(40)`); await b.eval(`showSel()`); await sleep(50);
   const r = await b.eval(`(() => { const m = document.querySelector('.mk[data-pad="4"]'); return { left: parseFloat(m.style.left), want: msToX(view().starts[4]), px: W.innerW / W.dur }; })()`);
   assert(Math.abs(r.left - r.want) < 0.01, 'Marker sitzt auf seinem Start');
-  const before = await b.eval('S.lib.banks[0].starts[4]');
+  const before = await b.eval('S.lib.banks[0].pads[4].start');
   await dragMarker(4, 50, ALT);
   const s = await waitLog((x) => x.cmd === 'setstart');
   assert(Math.abs(s.ms - (before + 50 / r.px)) < 2 / r.px + 1, 'frei gezogen um 50 px = ' + Math.round(50 / r.px) + ' ms, war ' + (s.ms - before));
@@ -554,11 +554,143 @@ t('Bank wechseln mit ↑/↓ und ◀ ▶', async () => {
   assert.deepStrictEqual(b.errors, []);
 });
 
+// ---------- Mix-Bänke (Mix-Spec 5, 6) ----------
+// Szenario mix: Bank 13 „Mix Funk“, Pads 1–4 + 13 Rockit, 5–8 + 14 Can, 9 Fela (ohne WAV), 11 Cymande (nur hier), 10/12/15/16 leer
+const markers = () => b.eval(`[...document.querySelectorAll('.mk')].map((x) => +x.dataset.pad)`);
+const post = (q) => b.eval(`fetch('/cmd', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: ${JSON.stringify(JSON.stringify(q))} }).then((r) => r.json())`);
+
+t('Mix: Zeichen in der Liste, Waveform folgt dem Pad, Marker nur fürs eigene Video', async () => {
+  await open('mix');
+  const r = await b.eval(`({ on: document.querySelector('#banklist li.on .name').textContent, mixTags: document.querySelectorAll('#banklist .tag.mix').length,
+    first: document.querySelector('#banklist li:nth-child(1) .name').textContent, vt0: $('pad0').querySelector('.vt').textContent, vt4: $('pad4').querySelector('.vt').textContent,
+    title4: $('pad4').title, empty: [...document.querySelectorAll('.pad.empty')].map((x) => +x.id.slice(3)).sort((a, c) => a - c) })`);
+  assert(/^MixMix Funk4 Tracks/.test(r.on), r.on); assert.strictEqual(r.mixTags, 1);
+  assert(/^Rockit ScratchesHerbie Hancock – Rockit · 97 BPM/.test(r.first), r.first);
+  assert.strictEqual(r.vt0, 'Herbie Hancock – Rockit'); assert.strictEqual(r.vt4, 'Can – Vitamin C'); assert(r.title4.startsWith('Can – Vitamin C · '));
+  assert.deepStrictEqual(r.empty, [9, 11, 14, 15]);
+  assert.deepStrictEqual(await markers(), [0, 1, 2, 3, 12]);
+  assert.strictEqual(await b.eval(`S.beats.video`), 'Rk7tQ2mLp0A');
+  // anderes Video: Waveform, Marker, beats und Tempo wechseln
+  await b.click('#pad4'); await waitLog((x) => x.cmd === 'hit' && x.pad === 4);
+  await b.waitFor(`S.beats.video === 'Cv1tAm1nC0x' && S.peaks.get('Cv1tAm1nC0x').state === 'ok' && !document.querySelector('#wavemsg.on')`);
+  assert.deepStrictEqual(await markers(), [4, 5, 6, 7, 13]);
+  assert(/Can – Vitamin C · 116 BPM/.test(await b.eval(`$('insp').textContent`)));
+  assert.strictEqual(await b.eval(`Math.abs(W.dur - 212000) < 100`), true, 'Waveform = ganzer Track des Pads');
+  // Abspielkopf nur auf der passenden Waveform
+  m.emit('play', { pad: 0, video: 'Rk7tQ2mLp0A', from: 1000, to: 3000, dur: 3000 }); await sleep(80);
+  assert.strictEqual(await b.eval(`$('play').style.display`), 'none');
+  m.emit('play', { pad: 4, video: 'Cv1tAm1nC0x', from: 1000, to: 3000, dur: 3000 }); await b.waitFor(`$('play').style.display === 'block'`);
+  // Pad ohne WAV: Track fehlt, Marker und Würfel gesperrt, Leeren geht
+  await b.click('#pad8'); await waitLog((x) => x.cmd === 'hit' && x.pad === 8);
+  await b.waitFor(`/Track fehlt/.test($('wavemsg').textContent) && !!$('fetchone')`);
+  const f = await b.eval(`({ edit: document.querySelectorAll('.mk.edit').length, roll: getComputedStyle($('pad8').querySelector('.roll')).display, clr: getComputedStyle($('pad8').querySelector('.clr')).display, rb: $('rollbtn').disabled })`);
+  assert.deepStrictEqual(f, { edit: 0, roll: 'none', clr: 'block', rb: true });
+  m.log = []; await b.click('#fetchone'); assert.strictEqual((await waitLog((x) => x.cmd === 'fetch')).video, 'Fk4WaterNoG');
+  // leerer Platz
+  await b.click('#pad9'); await waitLog((x) => x.cmd === 'hit' && x.pad === 9);
+  await b.waitFor(`/Leerer Platz/.test($('wavemsg').textContent) && S.dev.video === '-'`);
+  const e = await b.eval(`({ insp: $('insp').textContent, s: $('pad9').querySelector('.s').textContent, roll: getComputedStyle($('pad9').querySelector('.roll')).display,
+    clr: getComputedStyle($('pad9').querySelector('.clr')).display, mk: document.querySelectorAll('.mk').length, dev: S.dev.video })`);
+  assert.deepStrictEqual(e, { insp: 'AusgewähltPad 10Platzleer', s: 'leer', roll: 'none', clr: 'none', mk: 0, dev: '-' });
+  assert.deepStrictEqual(b.errors, []);
+});
+
+t('Quellleiste: Bank wählen (gemerkt), Pad auf Platz ziehen → setpad, Undo/Redo, einklappen', async () => {
+  await b.eval(`localStorage.clear()`);
+  await open('mix');
+  const opts = await b.eval(`[...$('srcsel').options].map((o) => o.textContent)`);
+  assert.strictEqual(opts.length, 7); assert(!opts.some((x) => /Mix Funk/.test(x)), 'aktive Bank nicht in der Auswahl');
+  assert.strictEqual(opts[0], '1  Rockit Scratches');
+  await b.eval(`$('srcsel').value = '3'; $('srcsel').dispatchEvent(new Event('change'))`);
+  await b.waitFor(`document.querySelectorAll('#srcpads .st').length === 16 && $('srcpads').querySelector('.st').title.startsWith('Can – Vitamin C · ')`);
+  const cs = (await b.eval('S.lib.banks[1].pads'))[2].start;
+  m.log = []; await b.eval(dnd('#srcpads .st[data-pad="2"]', '#pad9'));
+  assert.deepStrictEqual(await waitLog((x) => x.cmd === 'setpad'), { client: last().client, cmd: 'setpad', id: 13, pad: 9, video: 'Cv1tAm1nC0x', start: cs, info: { title: 'Can – Vitamin C' } });
+  await b.waitFor(`!$('pad9').classList.contains('empty') && $('undo').title === 'Rückgängig: Pad 10 aus Vitamin C (⌘Z)'`);
+  m.log = []; await undoKey(b);
+  assert.deepStrictEqual(await waitLog((x) => x.cmd === 'setpad'), { client: last().client, cmd: 'setpad', id: 13, pad: 9, video: null });
+  await b.waitFor(`$('pad9').classList.contains('empty')`);
+  m.log = []; await redoKey(b); assert.strictEqual((await waitLog((x) => x.cmd === 'setpad')).video, 'Cv1tAm1nC0x');
+  // belegter Platz wird ersetzt, Undo bringt den alten Eintrag mit info zurück
+  const old = (await b.eval('S.lib.banks[7].pads'))[0];
+  m.log = []; await b.eval(dnd('#srcpads .st[data-pad="0"]', '#pad0')); await waitLog((x) => x.cmd === 'setpad' && x.pad === 0);
+  m.log = []; await undoKey(b);
+  assert.deepStrictEqual(await waitLog((x) => x.cmd === 'setpad'), { client: last().client, cmd: 'setpad', id: 13, pad: 0, video: 'Rk7tQ2mLp0A', start: old.start, info: { title: 'Herbie Hancock – Rockit', bpm: 97 } });
+  // Quelle gemerkt, einklappen gemerkt
+  await open('mix');
+  assert.strictEqual(await b.eval(`$('srcsel').value`), '3');
+  await b.click('#srctoggle'); await b.waitFor(`getComputedStyle($('srcpads')).display === 'none'`);
+  await open('mix');
+  assert.strictEqual(await b.eval(`getComputedStyle($('srcpads')).display`), 'none');
+  await b.click('#srctoggle'); await b.waitFor(`getComputedStyle($('srcpads')).display === 'grid'`);
+  // Mix-Bank als Quelle: „Mix“ in der Auswahl, leere Plätze nicht ziehbar
+  await b.click('#banklist li:nth-child(1)'); await b.waitFor(`S.dev.bankId === 7 && !!$('srcsel').querySelector('option[value="13"]')`);
+  assert(/8  Mix Funk  · Mix/.test(await b.eval(`[...$('srcsel').options].map((o) => o.textContent).join('|')`)));
+  await b.eval(`$('srcsel').value = '13'; $('srcsel').dispatchEvent(new Event('change'))`);
+  await b.waitFor(`$('srcpads').querySelector('.st[data-pad="9"]').classList.contains('empty')`);
+  assert.strictEqual(await b.eval(`$('srcpads').querySelector('.st[data-pad="9"]').draggable`), false);
+  assert.strictEqual(await b.eval(`$('srcpads').querySelector('.st[data-pad="10"]').draggable`), true);
+  // gesperrt ohne Device
+  m.setDown(true); await b.waitFor(`document.body.classList.contains('offline') && !$('srcpads').querySelector('.st[data-pad="10"]').draggable`);
+  m.down = false;
+  await b.eval(`localStorage.clear()`);
+  assert.deepStrictEqual(b.errors, []);
+});
+
+t('Icon „leeren“: setpad mit null, auch ohne WAV, Undo mit info nach Wegfall des Videos', async () => {
+  await open('mix');
+  await b.click('#pad10'); await waitLog((x) => x.cmd === 'hit' && x.pad === 10);
+  assert.strictEqual(await b.eval(`getComputedStyle($('pad10').querySelector('.clr')).opacity`), '1', 'am gewählten Pad sichtbar');
+  const start = (await b.eval('S.lib.banks[7].pads'))[10].start;
+  m.log = []; await b.click('#pad10 .clr');
+  assert.deepStrictEqual(await waitLog((x) => x.cmd === 'setpad'), { client: last().client, cmd: 'setpad', id: 13, pad: 10, video: null });
+  assert(!m.log.some((x) => x.cmd === 'hit'), 'Icon spielt nicht an');
+  await b.waitFor(`$('pad10').classList.contains('empty') && !S.lib.videos.Cy5BraBra00 && $('undo').title === 'Rückgängig: Pad 11 geleert (⌘Z)'`);
+  m.log = []; await undoKey(b);
+  assert.deepStrictEqual(await waitLog((x) => x.cmd === 'setpad'), { client: last().client, cmd: 'setpad', id: 13, pad: 10, video: 'Cy5BraBra00', start, info: { title: 'Cymande – Bra' } });
+  await b.waitFor(`!$('pad10').classList.contains('empty') && !!S.lib.videos.Cy5BraBra00`);
+  m.log = []; await redoKey(b); assert.strictEqual((await waitLog((x) => x.cmd === 'setpad')).video, null);
+  // ohne WAV (Fela)
+  m.log = []; await b.click('#pad8 .clr');
+  await waitLog((x) => x.cmd === 'setpad' && x.pad === 8 && x.video === null);
+  await b.waitFor(`$('pad8').classList.contains('empty')`);
+  // Attrappe: unbekanntes Video braucht info, leerer Platz kein roll/setstart
+  assert.strictEqual((await post({ cmd: 'setpad', id: 13, pad: 9, video: 'Mg7E2E4e2e4', start: 1000 })).code, 'badreq');
+  assert.strictEqual((await post({ cmd: 'setpad', id: 13, pad: 9, video: 'Mg7E2E4e2e4', start: 1000, info: { title: 'E2-E4' } })).ok, true);
+  assert.strictEqual((await post({ cmd: 'roll', id: 13, pad: 11 })).code, 'badreq');
+  assert.strictEqual((await post({ cmd: 'setstart', id: 13, pad: 11, ms: 5 })).code, 'badreq');
+  assert.deepStrictEqual(b.errors, []);
+});
+
+t('Neue Mix-Bank: Knopf, 16 leere Plätze, Undo = delete, Redo = restore, füllen', async () => {
+  await open('normal');
+  assert.strictEqual(await b.eval(`$('pad0').querySelector('.vt').textContent`), '', 'Track-Bank ohne Titel am Pad');
+  m.log = []; await b.click('#newmix'); await waitLog((x) => x.cmd === 'newmix');
+  await b.waitFor(`S.dev.bankId === 13 && document.querySelectorAll('.pad.empty').length === 16 && /Leerer Platz/.test($('wavemsg').textContent)`);
+  assert(/^MixMix-Bank0 Tracks/.test(await b.eval(`document.querySelector('#banklist li.on .name').textContent`)));
+  await b.waitFor(`$('undo').title === 'Rückgängig: Neue Mix-Bank (⌘Z)'`);
+  m.log = []; await undoKey(b); assert.strictEqual((await waitLog((x) => x.cmd === 'delete')).id, 13);
+  m.log = []; await redoKey(b);
+  const rs = await waitLog((x) => x.cmd === 'restore');
+  assert.strictEqual(rs.bank.id, 13); assert.deepStrictEqual(rs.videos, {}); assert.strictEqual(rs.bank.pads.length, 16);
+  await waitLog((x) => x.cmd === 'select' && x.id === 13); await b.waitFor('S.dev.bankId === 13 && !histBusy');
+  // aus der Quelle (Standard: erste andere Bank) füllen
+  m.log = []; await b.eval(dnd('#srcpads .st[data-pad="5"]', '#pad0'));
+  assert.strictEqual((await waitLog((x) => x.cmd === 'setpad')).video, 'Rk7tQ2mLp0A');
+  await b.waitFor(`/1 Track/.test(document.querySelector('#banklist li.on .sub').textContent) && document.querySelectorAll('.mk').length === 1`);
+  assert.deepStrictEqual(b.errors, []);
+});
+
 t('Screenshots', async () => {
   if (!process.argv.includes('--shots')) return;
   await open('normal'); await b.click('#pad5'); await sleep(250); await b.shot('editor-normal');
   await b.eval(`setZoom(6)`); await sleep(100); await b.shot('editor-zoom');
   await open('nurspielbar'); await b.shot('editor-nur-spielbar');
+  await open('mix'); await b.click('#pad4'); await sleep(300); await b.shot('editor-mix');
+  await b.click('#pad9'); await sleep(250); await b.shot('editor-leerer-platz');
+  await b.click('#banklist li:nth-child(1)'); await b.waitFor(`S.dev.bankId === 7 && !!$('srcsel').querySelector('option[value="13"]')`);
+  await b.eval(`$('srcsel').value = '13'; $('srcsel').dispatchEvent(new Event('change'))`); await sleep(300); await b.shot('editor-quellleiste');
+  await b.eval(`localStorage.clear()`);
   await open('leer'); await b.shot('editor-leer');
   await open('kaputt'); await b.shot('editor-kaputt');
   await open('normal'); m.setDown(true); await b.waitFor(`document.body.classList.contains('offline')`); await sleep(100); await b.shot('editor-kein-device');

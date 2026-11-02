@@ -38,6 +38,7 @@
   .tag { font-size:10.5px; font-weight:500; padding:0 5px; border-radius:4px; border:1px solid var(--line2); color:var(--dim); white-space:nowrap; }
   .tag.bad { color:var(--danger); border-color:#5a2a2a; }
   .tag.busy { color:var(--sel); border-color:#1f4a5e; }
+  .tag.mix { color:var(--acc); border-color:#5a4416; margin-right:6px; vertical-align:1px; }
 
   /* Gerüst */
   #app { display:grid; grid-template-rows:52px auto 1fr; height:100vh; }
@@ -84,6 +85,7 @@
   #banklist input { width:100%; padding:3px 6px; }
   #banklist .empty { padding:18px 8px; color:var(--dim); display:block; cursor:default; }
   #sidefoot { border-top:1px solid var(--line); padding:10px 14px; display:flex; flex-direction:column; gap:8px; }
+  #sidefoot .btns { display:flex; gap:6px; flex-wrap:wrap; }
   #cachesize.warn { color:var(--warn); }
 
   /* Hauptbereich */
@@ -141,7 +143,7 @@
 
   /* Pads */
   #padarea { flex:1; display:flex; gap:18px; min-height:0; position:relative; }
-  #grid { height:100%; aspect-ratio:1; max-width:62%; display:grid; grid-template-columns:repeat(4,1fr); grid-template-rows:repeat(4,1fr); gap:8px; }
+  #grid { height:100%; aspect-ratio:1; max-width:62%; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); grid-template-rows:repeat(4,minmax(0,1fr)); gap:8px; }
   .pad { position:relative; background:var(--raise); border:1px solid var(--line2); border-radius:10px; cursor:pointer; padding:8px 10px; display:flex; flex-direction:column; justify-content:space-between; user-select:none; min-height:0; transition:background .08s; touch-action:none; }
   .pad:hover { border-color:#4a4d55; }
   .pad .n { font-weight:600; font-size:14px; color:var(--dim); }
@@ -153,11 +155,30 @@
   .pad.sel { border-color:var(--sel); } .pad.sel .n { color:var(--sel); }
   .pad.hit { background:var(--acc); } .pad.hit .n, .pad.hit .s { color:#1a1200; }
   .pad.over { outline:2px dashed var(--sel); outline-offset:2px; }
-  .pad .roll { position:absolute; top:5px; right:5px; opacity:0; padding:2px 4px; }
-  .pad:hover .roll { opacity:1; }
-  #insp { flex:1; min-width:190px; display:flex; flex-direction:column; gap:10px; overflow:auto; }
-  #insp .big { font-size:28px; font-weight:600; letter-spacing:-.02em; }
-  #insp .row { display:flex; justify-content:space-between; gap:10px; color:var(--dim); border-bottom:1px solid var(--line); padding:6px 0; }
+  .pad .roll, .pad .clr { position:absolute; top:4px; right:4px; opacity:0; padding:2px 3px; }
+  .pad .clr { top:27px; }  /* unter dem Würfel, rechts von der Mitte (Klick spielt) */
+  .pad:hover .roll, .pad:hover .clr, .pad.sel .clr { opacity:1; }
+  .pad .clr:hover:not(:disabled) { color:var(--danger); }
+  .pad .top { display:flex; align-items:baseline; gap:7px; min-width:0; margin-right:22px; }
+  .pad .vt { flex:1; min-width:0; font-size:10.5px; color:var(--faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pad { overflow:hidden; }
+  .pad.empty { background:none; border-style:dashed; }
+  .pad.empty .bar { display:none; }
+  .pad.empty .n { color:var(--faint); }
+  /* Quellleiste: Pads einer anderen Bank, auf Plätze ziehen (Kopie) */
+  #src { flex:none; display:flex; align-items:center; gap:8px; margin-top:10px; padding-top:8px; border-top:1px solid var(--line); min-height:34px; }
+  #srctoggle { cursor:pointer; user-select:none; white-space:nowrap; }
+  #srcsel { font:inherit; font-size:12px; color:var(--text); background:var(--bg); border:1px solid var(--line2); border-radius:7px; padding:3px 6px; outline:none; width:170px; flex:none; }
+  #srcsel:focus { border-color:var(--sel); }
+  #srcpads { flex:1; min-width:0; display:grid; grid-template-columns:repeat(16, minmax(0, 1fr)); gap:3px; }
+  .st { background:var(--raise); border:1px solid var(--line2); border-radius:5px; padding:2px 3px; font-size:10px; line-height:1.25; color:var(--dim); cursor:grab; user-select:none; overflow:hidden; white-space:nowrap; text-align:center; }
+  .st b { display:block; font-size:11px; font-weight:600; color:var(--text); }
+  .st.empty { opacity:.35; cursor:default; border-style:dashed; }
+  .st.off { cursor:default; }
+  #src.closed #srcsel, #src.closed #srcpads { display:none; }
+  #insp { flex:1; min-width:190px; display:flex; flex-direction:column; gap:6px; overflow:auto; }
+  #insp .big { font-size:24px; font-weight:600; letter-spacing:-.02em; }
+  #insp .row { display:flex; justify-content:space-between; gap:10px; color:var(--dim); border-bottom:1px solid var(--line); padding:4px 0; }
   #insp .row b { color:var(--text); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
   #insp .btns { display:flex; gap:8px; flex-wrap:wrap; }
   #tempo { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
@@ -229,7 +250,7 @@
       <div id="sidehead"><span class="lbl">Bibliothek</span><span class="hint num" id="count"></span></div>
       <ul id="banklist"></ul>
       <div id="sidefoot">
-        <button class="small" id="fetchall">Alle nachladen</button>
+        <div class="btns"><button class="small" id="newmix" title="Bank mit 16 leeren Plätzen, aus der Quellleiste füllen">Neue Mix-Bank</button><button class="small" id="fetchall">Alle nachladen</button></div>
         <span class="hint num" id="cachesize"></span>
       </div>
     </aside>
@@ -271,6 +292,10 @@
           <div id="grid"></div>
           <div id="insp"></div>
           <div id="drop">Loslassen: neue Bank aus diesem Video</div>
+        </div>
+        <div id="src">
+          <span class="lbl" id="srctoggle" title="Quellleiste ein/aus · Pads einer anderen Bank auf Plätze ziehen (Kopie)">▾ Quelle</span><select id="srcsel" aria-label="Quellbank"></select>
+          <div id="srcpads"></div>
         </div>
       </section>
       <div id="blank"><div id="blankmsg"></div></div>
@@ -319,7 +344,7 @@ let savedT;
 function flashSaved() { $('saved').textContent = 'gespeichert ✓'; clearTimeout(savedT); savedT = setTimeout(() => { $('saved').textContent = 'automatisch gespeichert'; }, 900); }
 
 // ---------- Befehle ----------
-const WRITE = new Set(['rename', 'duplicate', 'delete', 'move', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'newbank', 'tempo', 'tempook', 'fetch', 'fetchall']);
+const WRITE = new Set(['rename', 'duplicate', 'delete', 'move', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'newbank', 'newmix', 'setpad', 'tempo', 'tempook', 'fetch', 'fetchall']);
 async function cmd(name, fields = {}, quiet = false) {
   let r;
   try {
@@ -336,10 +361,16 @@ const bankById = (id) => banks().find((b) => b.id === id);
 const curBank = () => (S.dev ? bankById(S.dev.bankId) : null);
 const curIdx = () => banks().indexOf(curBank());
 
-// Was Waveform und Pads zeigen: die aktive Bank. Ohne Bank zeigt der Editor #blank
+// Pads hängen am Video (Mix-Spec 2.1): bank.pads[i] = {video, start} | null
+const vinfo = (v) => (v && S.lib && S.lib.videos[v]) || {};
+const startsOf = (b) => b.pads.map((p) => (p ? p.start : 0));                        // für setstarts, leere Plätze ignoriert Node
+const bankVideos = (b) => [...new Set(b.pads.filter(Boolean).map((p) => p.video))];
+const vtitle = (v) => vinfo(v).title || v;
+// Was Waveform und Pads zeigen: die aktive Bank, die Waveform den Track des gewählten Pads. Ohne Bank zeigt der Editor #blank
 function view() {
-  const b = curBank();
-  return b ? { bank: b, video: b.video, starts: b.starts, edit: writable() && b.wav, playonly: !b.wav } : null;
+  const b = curBank(); if (!b) return null;
+  const pad = b.pads[S.sel] || null, video = pad ? pad.video : null, wav = !!vinfo(video).wav;
+  return { bank: b, pad, video, starts: b.pads.map((p) => (p ? p.start : null)), wav, edit: writable() && !!pad && wav, playonly: !!pad && !wav };
 }
 function videoBpm(v) {
   const e = S.lib && S.lib.videos[v];
@@ -389,22 +420,51 @@ function deletionStep(label, removed) {
 function startsStep(label, id, before, after) {
   return { label, undo: onBank(id, () => ['setstarts', { id, starts: before }]), redo: onBank(id, () => ['setstarts', { id, starts: after }]) };
 }
+// setpad mit info, damit Undo auch geht, wenn das Video inzwischen aus der Bibliothek gefallen ist. Jetzt festhalten, nicht beim Undo
+function padArgs(id, pad, p) {
+  if (!p) return { id, pad, video: null };
+  const e = vinfo(p.video), info = { title: e.title || p.video }; if (e.bpm) info.bpm = e.bpm;
+  return { id, pad, video: p.video, start: p.start, info };
+}
+function padStep(label, id, pad, before, after) {
+  const u = padArgs(id, pad, before), r = padArgs(id, pad, after);
+  return { label, undo: onBank(id, () => ['setpad', u]), redo: onBank(id, () => ['setpad', r]) };
+}
 
 // ---------- Aktionen ----------
 async function setStart(b, pad, ms, before) {
   const r = await cmd('setstart', { id: b.id, pad, ms });
   if (r.ok) { const after = before.slice(); after[pad] = ms; pushStep(startsStep('Start Pad ' + (pad + 1) + ' verschoben', b.id, before, after)); }
-  else { b.starts[pad] = before[pad]; render(); }
+  else { if (b.pads[pad]) b.pads[pad].start = before[pad]; render(); }
 }
 async function roll(pad) {
   const b = curBank(); if (!b || !view().edit) return;
-  const before = b.starts.slice(), r = await cmd('roll', { id: b.id, pad });
+  const before = startsOf(b), r = await cmd('roll', { id: b.id, pad });
   if (r.ok) { const after = before.slice(); after[pad] = r.ms; pushStep(startsStep('Neues Snippet Pad ' + (pad + 1), b.id, before, after)); }
 }
 async function swap(a, c) {
   const b = curBank(); if (!b || a === c) return;
   const r = await cmd('swap', { id: b.id, a, b: c });
   if (r.ok) { const id = b.id; S.sel = c; pushStep({ label: 'Pad ' + (a + 1) + ' ↔ ' + (c + 1) + ' getauscht', undo: onBank(id, () => ['swap', { id, a, b: c }]), redo: onBank(id, () => ['swap', { id, a, b: c }]) }); }
+}
+// Pad aus der Quellleiste kopieren (Spec 5.4), ein belegter Platz wird ersetzt
+async function copyPad(src, k, i) {
+  const b = curBank(), np = src && src.pads[k]; if (!b || !np || !writable()) return;
+  const old = b.pads[i], id = b.id, nv = { video: np.video, start: np.start }, label = 'Pad ' + (i + 1) + ' aus ' + src.name;
+  const step = padStep(label, id, i, old, nv);                                      // vor dem Befehl: info des alten Videos
+  const r = await cmd('setpad', padArgs(id, i, nv));
+  if (r.ok) { S.sel = i; pushStep(step); }
+}
+// Icon „leeren“ (Spec 5.3, M5): geht auch ohne WAV
+async function clearPad(i) {
+  const b = curBank(); if (!b || !b.pads[i] || !writable()) return;
+  const id = b.id, step = padStep('Pad ' + (i + 1) + ' geleert', id, i, b.pads[i], null);
+  const r = await cmd('setpad', { id, pad: i, video: null });
+  if (r.ok) pushStep(step);
+}
+async function newMix() {
+  const r = await cmd('newmix');
+  if (r.ok) { pushStep(creationStep('Neue Mix-Bank', r.id)); toast('Neue Mix-Bank angelegt'); }
 }
 async function rename(b, name) {
   name = name.trim().slice(0, 100);
@@ -485,25 +545,26 @@ function renderList() {
     ul.appendChild(li);
   }
   banks().forEach((b, i) => {
-    const li = document.createElement('li'), v = (S.lib.videos[b.video] || {}), bpm = videoBpm(b.video).bpm;
+    const li = document.createElement('li'), vids = bankVideos(b), v0 = vids[0], bpm = !b.mix && videoBpm(v0).bpm;
     li.dataset.id = b.id; li.draggable = w; if (b === cb) li.className = 'on';
     li.innerHTML = '<span class="nr num">' + (i + 1) + '</span><span class="name"></span><span class="acts">'
       + '<button class="ghost ren" title="Umbenennen">' + icon('edit') + '</button>'
       + '<button class="ghost dup" title="Duplizieren">' + icon('copy') + '</button>'
       + '<button class="ghost del" title="Löschen">' + icon('trash') + '</button></span>';
     const n = li.querySelector('.name'); n.textContent = b.name || '(ohne Namen)';
+    if (b.mix) n.insertAdjacentHTML('afterbegin', '<span class="tag mix">Mix</span>');
     const sub = document.createElement('span'); sub.className = 'sub';
-    sub.textContent = (v.title || b.video) + (bpm ? ' · ' + fmtBpm(bpm) + ' BPM' : ''); n.appendChild(sub);
-    const marks = [], job = S.jobs['fetch:' + b.video];
+    sub.textContent = b.mix ? vids.length + (vids.length === 1 ? ' Track' : ' Tracks') : vtitle(v0) + (bpm ? ' · ' + fmtBpm(bpm) + ' BPM' : ''); n.appendChild(sub);
+    const marks = [], job = vids.map((x) => S.jobs['fetch:' + x]).find(Boolean), missing = vids.filter((x) => !vinfo(x).wav);
     if (!b.wav && b.snip === 'missing') marks.push('<span class="tag bad">nicht ladbar</span>');
     else if (!b.wav) marks.push('<span class="tag">nur spielbar</span>');
     if (b.snip === 'cutting' || b.snip === 'stale') marks.push('<span class="tag busy">' + (b.snip === 'cutting' ? 'schneidet' : 'veraltet') + '</span>');
     if (job) marks.push('<span class="tag busy">' + jobText(job) + '</span>');
     else if (!b.wav && b.snip === 'missing') marks.push('<button class="small fetch">Track laden</button>');
-    if (v.fail) marks.push('<span class="tag bad" title="' + esc(v.fail) + '">' + esc(v.fail) + '</span>');
+    for (const x of vids) { const f = vinfo(x).fail; if (f) marks.push('<span class="tag bad" title="' + esc(vtitle(x) + ': ' + f) + '">' + esc(f) + '</span>'); }
     if (marks.length) { const m = document.createElement('span'); m.className = 'marks'; m.innerHTML = marks.join(''); n.appendChild(m); }
     li.querySelectorAll('.acts button').forEach((x) => { x.disabled = !w; });
-    const fb = li.querySelector('.fetch'); if (fb) { fb.disabled = !w; fb.onclick = () => cmd('fetch', { video: b.video }); }
+    const fb = li.querySelector('.fetch'); if (fb) { fb.disabled = !w; fb.onclick = () => missing.forEach((x) => cmd('fetch', { video: x })); }
     li.onclick = (e) => { if (e.target.closest('button,input')) return; selectBank(b.id); };
     li.ondblclick = (e) => { if (w && !e.target.closest('button')) startRename(li, b); };
     li.querySelector('.ren').onclick = () => startRename(li, b);
@@ -528,6 +589,7 @@ function renderList() {
   });
   $('fetchall').style.display = banks().some((b) => !b.wav) ? '' : 'none';
   $('fetchall').disabled = !w;
+  $('newmix').disabled = !w;
   const c = S.cache || (S.lib && S.lib.cache);
   $('cachesize').textContent = c ? (c.warn ? 'Cache über 10 GB – im Finder aufräumen' : 'Cache ' + fmtGB(c.bytes)) : '';
   $('cachesize').className = 'hint num' + (c && c.warn ? ' warn' : '');
@@ -556,7 +618,10 @@ function peaksFor(video, wav) {
   }).catch(() => { p.state = 'missing'; p.retried = wav; render(); });
   return p;
 }
-function durOf(vw, p) { return p && p.state === 'ok' ? p.dur : Math.max(...vw.starts) + 16000; }
+function durOf(vw, p) {
+  if (p && p.state === 'ok') return p.dur;
+  return vinfo(vw.video).dur || Math.max(0, ...vw.bank.pads.filter((x) => x && x.video === vw.video).map((x) => x.start)) + 16000;
+}
 function beatsFor(video) { return S.beats && S.beats.video === video ? S.beats : null; }
 function barSet(bt) { // Taktanfänge: jeder vierte Schlag ab der „1“
   let kd = 0, best = Infinity;
@@ -577,7 +642,7 @@ function setZoom(z, ax) {
   if (S.markerDrag) return;
   const sc = $('scroll'), vw = view();
   z = Math.max(1, Math.min(maxZoom(), z));
-  if (ax == null) { const mx = vw ? msToX(vw.starts[S.sel]) - sc.scrollLeft : -1; ax = mx >= 0 && mx <= sc.clientWidth ? mx : sc.clientWidth / 2; }
+  if (ax == null) { const mx = vw && vw.pad ? msToX(vw.pad.start) - sc.scrollLeft : -1; ax = mx >= 0 && mx <= sc.clientWidth ? mx : sc.clientWidth / 2; }
   // Innerhalb einer Geste (Pinch, Rad) gilt der erste Anker weiter: scrollLeft ist gerundet, sonst wandert die Stelle
   const a = setZoom.anchor, now = performance.now();
   const ms = a && Math.abs(a.ax - ax) < 2 && now - a.t < 400 && a.dur === W.dur ? a.ms : (sc.scrollLeft + ax) / W.innerW * W.dur;
@@ -605,14 +670,18 @@ $('zoomr').onchange = () => $('zoomr').blur(); // sonst fangen Pfeile und Pad-Ta
 $('zoomin').onclick = () => setZoom(S.zoom * ZOOM_STEP);
 $('zoomout').onclick = () => setZoom(S.zoom / ZOOM_STEP);
 $('zoomfit').onclick = () => setZoom(1);
-function showSel() { const vw = view(); if (!vw) return; const sc = $('scroll'); sc.scrollLeft = msToX(vw.starts[S.sel]) - sc.clientWidth / 3; }
+function showSel() { const vw = view(); if (!vw || !vw.pad) return; const sc = $('scroll'); sc.scrollLeft = msToX(vw.pad.start) - sc.clientWidth / 3; }
 
 function renderWave() {
   if (S.markerDrag) return drawWave();
   const vw = view(), sc = $('scroll'), inner = $('inner'), msg = $('wavemsg');
   inner.querySelectorAll('.mk').forEach((m) => m.remove());
   if (!vw) return;
-  const p = peaksFor(vw.video, vw.bank ? vw.bank.wav : true), mz = maxZoom();
+  if (!vw.pad) { // leerer Platz: nichts zu zeigen
+    msg.className = 'on'; msg.innerHTML = '<b>Leerer Platz</b><span>Pad aus der Quellleiste hierher ziehen</span>';
+    $('wavehint').innerHTML = ''; $('slice').style.display = 'none'; drawWave(); return;
+  }
+  const p = peaksFor(vw.video, vw.wav), mz = maxZoom();
   S.zoom = Math.max(1, Math.min(mz, S.zoom));
   $('zoomr').value = zoomToR(S.zoom);
   $('zoomfit').textContent = (S.zoom < 10 ? Math.round(S.zoom * 10) / 10 : Math.round(S.zoom)).toLocaleString('de-DE') + '×';
@@ -623,7 +692,7 @@ function renderWave() {
   if (vw.playonly) {
     const job = S.jobs['fetch:' + vw.video];
     msg.className = 'on';
-    msg.innerHTML = '<b>Track fehlt</b><span>Die Bank spielt aus den Snippets. Starts lassen sich erst mit dem ganzen Track ändern.</span>'
+    msg.innerHTML = '<b>Track fehlt</b><span>' + esc(vtitle(vw.video)) + '</span><span>Das Pad spielt aus dem Snippet. Starts lassen sich erst mit dem ganzen Track ändern.</span>'
       + (job ? '<span class="tag busy">' + jobText(job) + '</span>' : '<button id="fetchone">Track laden</button>');
     const fb = $('fetchone'); if (fb) { fb.disabled = !writable(); fb.onclick = () => cmd('fetch', { video: vw.video }); }
   } else if (p.state === 'loading') { msg.className = 'on'; msg.innerHTML = '<span>Waveform lädt …</span>'; }
@@ -631,6 +700,7 @@ function renderWave() {
   const bt = beatsFor(vw.video);
   $('wavehint').innerHTML = vw.edit ? (bt && bt.ok ? 'Marker ziehen rastet auf Schläge · <kbd>⌥</kbd> frei' : 'Marker ziehen · Tempo unsicher, kein Einrasten') : '';
   vw.starts.forEach((t, i) => {
+    const pd = vw.bank.pads[i]; if (!pd || pd.video !== vw.video) return; // Marker nur fürs Video des gewählten Pads
     const m = document.createElement('div'); m.className = 'mk' + (i === S.sel ? ' sel' : '') + (vw.edit ? ' edit' : ''); m.dataset.pad = i;
     m.style.left = msToX(t) + 'px'; m.innerHTML = '<span>' + (i + 1) + '</span>';
     if (vw.edit) m.onpointerdown = (e) => dragMarker(e, i, m);
@@ -638,7 +708,7 @@ function renderWave() {
   });
   const s = $('slice'), sp = S.dev && S.dev.spans ? S.dev.spans[S.sel] : 0;
   s.style.display = sp && !vw.playonly ? '' : 'none';
-  s.style.left = msToX(vw.starts[S.sel]) + 'px'; s.style.width = msToX(sp || 0) + 'px';
+  s.style.left = msToX(vw.pad.start) + 'px'; s.style.width = msToX(sp || 0) + 'px';
   drawWave();
 }
 function drawWave() {
@@ -647,6 +717,7 @@ function drawWave() {
   const w = sc.clientWidth, h = sc.clientHeight, dpr = devicePixelRatio || 1, x0 = sc.scrollLeft;
   if (cv.width !== w * dpr || cv.height !== h * dpr) { cv.width = w * dpr; cv.height = h * dpr; cv.style.width = w + 'px'; }
   const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  if (!vw.video) return;
   const p = S.peaks.get(vw.video), bt = beatsFor(vw.video);
   if (bt && bt.beats.length) {
     const isBar = barSet(bt), showBeats = bt.bpm > 0 && msToX(60000 / bt.bpm) >= 6; // Schlaglinien erst mit Platz dazwischen
@@ -678,7 +749,7 @@ function nearest(arr, ms) { // arr aufsteigend
 function dragMarker(e, i, m) {
   const b = curBank(); if (!b) return;
   e.preventDefault(); S.sel = i; m.setPointerCapture(e.pointerId);
-  const before = b.starts.slice(), tip = $('tip'), bt = beatsFor(b.video), snap = bt && bt.ok && bt.beats.length;
+  const before = startsOf(b), tip = $('tip'), bt = beatsFor(b.pads[i].video), snap = bt && bt.ok && bt.beats.length;
   let ms = before[i], moved = false;
   S.markerDrag = true; // Marker nicht neu bauen, sonst geht die Pointer-Capture verloren
   $('inner').querySelectorAll('.mk').forEach((x) => x.classList.toggle('sel', x === m));
@@ -694,7 +765,7 @@ function dragMarker(e, i, m) {
   };
   m.onpointerup = m.onpointercancel = () => {
     m.onpointermove = m.onpointerup = m.onpointercancel = null; tip.style.display = 'none'; S.markerDrag = false;
-    if (moved && ms !== before[i]) { b.starts[i] = ms; render(); setStart(b, i, ms, before); } else render();
+    if (moved && ms !== before[i]) { b.pads[i].start = ms; render(); setStart(b, i, ms, before); } else render();
   };
 }
 
@@ -704,36 +775,51 @@ for (let row = 3; row >= 0; row--) for (let col = 0; col < 4; col++) {
   const i = row * 4 + col, p = document.createElement('div');
   p.className = 'pad'; p.id = 'pad' + i;
   p.title = 'Taste ' + PAD_LABEL[i];
-  p.innerHTML = '<span class="n">' + (i + 1) + '<kbd class="k">' + PAD_LABEL[i] + '</kbd></span><div class="bar"><i></i></div><span class="s num"></span>'
-    + '<button class="ghost roll" title="Neues Snippet">' + icon('dice') + '</button>';
-  p.onpointerdown = (e) => { if (e.button || e.target.closest('.roll') || !view()) return; hit(i); };
+  p.innerHTML = '<div class="top"><span class="n">' + (i + 1) + '<kbd class="k">' + PAD_LABEL[i] + '</kbd></span><span class="vt"></span></div><div class="bar"><i></i></div><span class="s num"></span>'
+    + '<button class="ghost clr" title="Pad leeren">' + icon('x') + '</button><button class="ghost roll" title="Neues Snippet">' + icon('dice') + '</button>';
+  p.onpointerdown = (e) => { if (e.button || e.target.closest('.roll,.clr') || !view()) return; hit(i); };
   p.querySelector('.roll').onclick = () => { S.sel = i; roll(i); };
+  p.querySelector('.clr').onclick = () => clearPad(i);
   p.ondragstart = (e) => { S.drag = { kind: 'pad', i }; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'Pad ' + (i + 1)); };
   p.ondragend = () => { S.drag = null; };
-  p.ondragover = (e) => { if (S.drag && S.drag.kind === 'pad') { e.preventDefault(); p.classList.add('over'); } };
+  const takes = () => S.drag && (S.drag.kind === 'pad' || (S.drag.kind === 'src' && writable()));      // Pad tauschen oder aus der Quellleiste
+  p.ondragover = (e) => { if (!takes()) return; e.preventDefault(); e.dataTransfer.dropEffect = S.drag.kind === 'src' ? 'copy' : 'move'; p.classList.add('over'); };
   p.ondragleave = () => p.classList.remove('over');
-  p.ondrop = (e) => { if (!S.drag || S.drag.kind !== 'pad') return; e.preventDefault(); e.stopPropagation(); p.classList.remove('over'); const from = S.drag.i; S.drag = null; swap(from, i); };
+  p.ondrop = (e) => {
+    if (!takes()) return; e.preventDefault(); e.stopPropagation(); p.classList.remove('over');
+    const d = S.drag; S.drag = null; if (d.kind === 'pad') swap(d.i, i); else copyPad(bankById(d.id), d.pad, i);
+  };
   $('grid').appendChild(p);
 }
 function renderPads() {
   const vw = view();
   if (!vw) { $('insp').innerHTML = ''; renderPads.sig = null; return; }
   const swappable = writable() && !!vw.bank;
-  $('padhint').textContent = 'Klick oder Taste spielt · auf anderes Pad ziehen tauscht';
+  $('padhint').textContent = 'Klick oder Taste spielt · auf anderes Pad ziehen tauscht · aus der Quelle ziehen kopiert';
   for (let i = 0; i < 16; i++) {
-    const p = $('pad' + i);
-    p.classList.toggle('sel', i === S.sel); p.draggable = swappable;
-    p.querySelector('.bar i').style.left = Math.min(100, vw.starts[i] / W.dur * 100) + '%';
-    p.querySelector('.s').textContent = fmt(vw.starts[i]);
-    p.querySelector('.roll').style.display = vw.edit ? '' : 'none';
+    const p = $('pad' + i), pd = vw.bank.pads[i], e = pd ? vinfo(pd.video) : {}, dur = e.dur;
+    p.classList.toggle('sel', i === S.sel); p.classList.toggle('empty', !pd); p.draggable = swappable;
+    // Lage im eigenen Track, ohne Dauer kein Balken
+    p.querySelector('.bar').style.visibility = dur ? '' : 'hidden';
+    if (dur) p.querySelector('.bar i').style.left = Math.min(100, pd.start / dur * 100) + '%';
+    p.querySelector('.s').textContent = pd ? fmt(pd.start) : 'leer';
+    p.querySelector('.vt').textContent = pd && vw.bank.mix ? vtitle(pd.video) : '';
+    p.title = (pd && vw.bank.mix ? vtitle(pd.video) + ' · ' : '') + 'Taste ' + PAD_LABEL[i];
+    p.querySelector('.roll').style.display = pd && e.wav && writable() ? '' : 'none';
+    p.querySelector('.clr').style.display = pd && writable() ? '' : 'none';
   }
   if (document.activeElement === $('bpm')) return; // Tempo wird gerade getippt
-  const v = vw.video, vt = (S.lib && S.lib.videos[v] && S.lib.videos[v].title) || v, tb = videoBpm(v), tempoOn = !!vw.bank && writable();
-  const sig = JSON.stringify([v, vt, tb, tempoOn, vw.edit, S.sel, vw.starts[S.sel]]);
+  if (!vw.pad) {
+    const sig = JSON.stringify(['leer', S.sel]); if (sig === renderPads.sig) return; renderPads.sig = sig;
+    $('insp').innerHTML = '<span class="lbl">Ausgewählt</span><div class="big">Pad ' + (S.sel + 1) + '</div><div class="row"><span>Platz</span><b>leer</b></div>';
+    return;
+  }
+  const v = vw.video, vt = vtitle(v), tb = videoBpm(v), tempoOn = !!vw.bank && writable();
+  const sig = JSON.stringify([v, vt, tb, tempoOn, vw.edit, S.sel, vw.pad.start]);
   if (sig === renderPads.sig) return;
   renderPads.sig = sig;
   $('insp').innerHTML = '<span class="lbl">Ausgewählt</span><div class="big">Pad ' + (S.sel + 1) + '</div>'
-    + '<div class="row"><span>Start</span><b class="num">' + fmt(vw.starts[S.sel]) + '</b></div>'
+    + '<div class="row"><span>Start</span><b class="num">' + fmt(vw.pad.start) + '</b></div>'
     + '<div class="row"><span>Länge</span><b>vom Device</b></div>'
     + '<div class="row"><span>Video</span><b id="inspvideo"></b></div>'
     + '<div class="btns"><button id="rollbtn">' + icon('dice') + ' Neues Snippet</button><button id="hitbtn">Anspielen</button></div>'
@@ -755,6 +841,34 @@ function renderPads() {
   $('double').onclick = () => setTempo(tb.bpm * 2);
   const ok = $('tempook'); if (ok) { ok.disabled = !tempoOn; ok.onclick = () => cmd('tempook', { video: v }); }
 }
+
+// ---------- Quellleiste (Spec 5.4) ----------
+function renderSrc() {
+  const cb = curBank(), w = writable(), others = banks().filter((x) => x !== cb);
+  const src = others.find((x) => x.id === layout.srcId) || others[0] || null;
+  const sig = JSON.stringify([others.map((x) => [x.id, x.name, x.mix]), src, w, layout.srcClosed, S.lib && S.lib.videos]);
+  if (sig === renderSrc.sig) return;
+  renderSrc.sig = sig;
+  $('src').classList.toggle('closed', !!layout.srcClosed);
+  $('srctoggle').textContent = (layout.srcClosed ? '▸' : '▾') + ' Quelle';
+  const sel = $('srcsel'); sel.innerHTML = '';
+  others.forEach((x) => sel.add(new Option((banks().indexOf(x) + 1) + '  ' + x.name + (x.mix ? '  · Mix' : ''), x.id)));
+  sel.disabled = !others.length; if (src) sel.value = src.id;
+  const box = $('srcpads'); box.innerHTML = '';
+  if (!src) { box.innerHTML = '<span class="hint" style="grid-column:1/-1">Keine andere Bank</span>'; return; }
+  src.pads.forEach((p, k) => {
+    const d = document.createElement('div'); d.className = 'st num' + (p ? (w ? '' : ' off') : ' empty'); d.dataset.pad = k;
+    d.innerHTML = '<b>' + (k + 1) + '</b>' + (p ? fmtDur(p.start / 1000) : 'leer');
+    if (p) {
+      d.title = vtitle(p.video) + ' · ' + fmt(p.start); d.draggable = w;
+      d.ondragstart = (e) => { S.drag = { kind: 'src', id: src.id, pad: k }; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', 'Pad ' + (k + 1)); };
+      d.ondragend = () => { S.drag = null; };
+    }
+    box.appendChild(d);
+  });
+}
+$('srcsel').onchange = () => { if (!$('srcsel').value) return; layout.srcId = +$('srcsel').value; saveLayout(); $('srcsel').blur(); render(); };
+$('srctoggle').onclick = () => { layout.srcClosed = !layout.srcClosed; saveLayout(); render(); };
 
 // ---------- Device-Regler (Spec 3.0, 5.1) ----------
 // Ein Zustand: die echten Live-Parameter aus device.params. Bedienung schickt /cmd param, die Anzeige folgt dem Echo.
@@ -832,7 +946,7 @@ function renderCtl() {
 // ---------- Abspielkopf ----------
 function animPlay() {
   const pl = $('play'), p = S.play, vw = view();
-  if (!p || !vw) { pl.style.display = 'none'; return; }
+  if (!p || !vw || (p.video && p.video !== vw.video)) { pl.style.display = 'none'; return; } // nur auf der passenden Waveform
   const d = performance.now() - p.t0;
   if (d > p.dur) { S.play = null; pl.style.display = 'none'; return; }
   pl.style.display = 'block'; pl.style.left = msToX(p.from + (p.to - p.from) * (p.dur ? d / p.dur : 1)) + 'px';
@@ -898,6 +1012,7 @@ applyLayout();
 function step(d) { const n = banks().length; if (!n) return; const i = curIdx(), j = i < 0 ? 0 : Math.max(0, Math.min(n - 1, i + d)); if (j !== i) selectBank(banks()[j].id); }
 $('prev').onclick = () => step(-1); $('next').onclick = () => step(1);
 $('undo').onclick = undo; $('redo').onclick = redo;
+$('newmix').onclick = newMix;
 $('fetchall').onclick = async () => { const r = await cmd('fetchall'); if (r.ok) toast(r.todo ? r.todo + ' Tracks werden geladen' : 'Nichts nachzuladen'); };
 document.addEventListener('keydown', (e) => {
   const ae = document.activeElement, mod = e.metaKey || e.ctrlKey, inField = ae.tagName === 'TEXTAREA' || (ae.tagName === 'INPUT' && ae.type !== 'range');
@@ -928,7 +1043,9 @@ function render() {
   // ohne Bank stehen die Regler unter der Meldung, sonst in der Pad-Karte
   const home = vw ? $('pads') : $('blank'), c = $('ctl');
   if (c.parentNode !== home) { if (vw) home.insertBefore(c, $('padarea')); else home.appendChild(c); }
-  renderHeader(); renderList(); renderWave(); renderPads(); renderCtl();
+  renderHeader(); renderList(); renderWave(); renderPads(); renderCtl(); renderSrc();
+  // anderes Video: zum Marker des gewählten Pads (Zoom gilt weiter)
+  const v = vw && vw.video; if (v && v !== render.video) requestAnimationFrame(showSel); render.video = v;
 }
 let renderQ = false;
 function later() { if (!renderQ) { renderQ = true; requestAnimationFrame(() => { renderQ = false; render(); }); } }
