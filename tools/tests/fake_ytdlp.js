@@ -2,6 +2,7 @@
 // Video-IDs mit „FAIL“ scheitern. Protokoll: "start <id>", "end <id>", "kill <id>".
 const fs = require('fs');
 const args = process.argv.slice(2);
+if (args[0] === '--version') { process.stdout.write('fake\n'); return; }
 // Suche: "ytsearchN:<begriff>". Begriff mit „FAIL“ scheitert, sonst nach FAKE_DELAY drei Treffer (einer ohne Dauer)
 const sq = /^ytsearch\d+:(.*)$/.exec(args[args.length - 1]);
 if (sq) {

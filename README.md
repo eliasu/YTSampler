@@ -45,7 +45,7 @@ Seit 3.0 ist das Device nur noch das Bühneninstrument: Bank wählen und spielen
 | Rev | rückwärts |
 | Tune | stimmt jedes Pad auf Lives aktuelle Skala (Live 12: Skala-Grundton + Skalatyp). Transponiert wird so, dass möglichst viele Töne in der Skala liegen, max. ±6 Halbtöne, plus Korrektur der Stimmung der Aufnahme (Abweichung von A=440). Pads ohne klare Tonart (Drums, Sprache, Rauschen) bleiben, wie sie sind. |
 | Warp | Material läuft im Tempo des Sets, Tonhöhe bleibt (Timestretch, élastique über `groove~`). Sind Beats erkannt, folgt jeder Slice dem Beat-Raster des Originals (siehe „Tempo, Beats und Warp“). Rate und Tune ändern dann nur die Tonhöhe. Aus = klassischer Sampler-Modus, knackiger für Drums. |
-| Quant | Input-Quantize: Pad-Anschläge warten auf die nächste 1/16 von Lives Transport. Bis knapp ⅓ einer 1/16 zu spät gespielt klingt sofort. Läuft der Transport nicht, wirkt Quant nicht. |
+| Quant | Input-Quantize: Pad-Anschläge warten auf den nächsten Rasterpunkt von Lives Transport. Das Raster (1/32, 1/16, 1/8, 1/4, Standard 1/16) stellt das Menü darunter ein. Bis knapp ⅓ einer 1/16 zu spät gespielt klingt sofort. **Catch** (nur bei Raster 1/8 und 1/4, Standard aus): Bis zu einer Achtel zu spät klingt sofort, aber an der Stelle, die auf dem Raster schon erreicht wäre. Das Sample läuft also im Takt, der Anfang fehlt. Noch später wartet der Anschlag. Läuft der Transport nicht, wirkt Quant nicht. |
 | Volume | Lautstärke des Device |
 | Base Note, Voices (rechts, Einrichtung) | Base Note = Note für Pad 1. Voices = Mono, 2, 3, 4, 5, 8 oder 16 gleichzeitige Stimmen. Das gleiche Pad schneidet sich immer selbst ab, sonst wird die älteste Stimme gestohlen. |
 
@@ -79,7 +79,7 @@ Solange das Device läuft: Button **Editor** im Device drücken, oder **http://l
 | Device-Regler | Leiste über den Pads, siehe unten |
 | Rückgängig | ⌘Z / ⇧⌘Z oder ↶ ↷ (100 Schritte, nur in diesem Fenster) |
 
-**Device-Regler im Editor:** Die Leiste über den Pads zeigt die Regler des Device: links die Bühne (Slice, Rate, Trigger/Hold, Rev, Tune, Warp, Quant), rechts gedämpft die Einrichtung (Base Note, Voices, Volume). Es ist derselbe Zustand wie im Device: Dreht man am Device (oder per MIDI), folgt der Editor. Stellt man im Editor, bewegt sich der Regler im Device und wird mit dem Set gespeichert. Doppelklick auf Rate bzw. Volume setzt 1× bzw. 0 dB. Die Regler sind kein Schritt im Rückgängig des Editors. Ohne laufendes Device ist die Leiste ausgegraut.
+**Device-Regler im Editor:** Die Leiste über den Pads zeigt die Regler des Device: links die Bühne (Slice, Rate, Trigger/Hold, Rev, Tune, Warp, Quant, Raster, Catch), rechts gedämpft die Einrichtung (Base Note, Voices, Volume). Es ist derselbe Zustand wie im Device: Dreht man am Device (oder per MIDI), folgt der Editor. Stellt man im Editor, bewegt sich der Regler im Device und wird mit dem Set gespeichert. Doppelklick auf Rate bzw. Volume setzt 1× bzw. 0 dB. Die Regler sind kein Schritt im Rückgängig des Editors. Ohne laufendes Device ist die Leiste ausgegraut.
 
 Alles wird sofort gespeichert. Ist der ganze Track nicht im Cache, heißt die Bank „nur spielbar“: Starts lassen sich dann nicht ändern, „Track laden“ holt ihn. „Alle nachladen“ im Listenfuß holt alle fehlenden Tracks.
 

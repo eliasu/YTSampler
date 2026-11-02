@@ -32,12 +32,13 @@ var REL_MS = 20;            // Ausblenden (Slice-Ende, Hold loslassen)
 
 // Einstellungen kommen von den live.*-Reglern (die speichert Live selbst), so wie der Regler sie schickt.
 // voices = Anzahl, voicesIdx = Index im Menü; vol nur zum Melden an den Editor
-var P = { bpm: 120, div: 5, rate: 1, mode: 0, rev: 0, base: 36, voices: 16, voicesIdx: 6, tune: 0, warp: 0, quant: 0, vol: 0 };
-var QUANT_LATE = 0.3;       // Input-Quantize: bis zu diesem Anteil einer 1/16 nach dem Raster sofort spielen (zu spät gedrückt)
+var P = { bpm: 120, div: 5, rate: 1, mode: 0, rev: 0, base: 36, voices: 16, voicesIdx: 6, tune: 0, warp: 0, quant: 0, qdiv: 1, qcatch: 0, vol: 0 };
+var QUANT_LATE = 0.3;       // Input-Quantize: bis zu diesem Anteil des Rasters (höchstens einer 1/16) danach sofort spielen (zu spät gedrückt)
+var QDIV_BEATS = [0.125, 0.25, 0.5, 1];   // Raster in Schlägen: 1/32, 1/16, 1/8, 1/4 (live.menu „Quant Div“)
 
 // Editor stellt Regler: Name im Protokoll -> varname des live.*-Objekts
 var PARAM_VAR = { div: "Division", rate: "Rate", mode: "Mode", rev: "Reverse", tune: "Tune", warp: "Warp",
-                  quant: "Quantize", vol: "Volume", voices: "Voices", base: "Base Note" };
+                  quant: "Quantize", qdiv: "Quant Div", qcatch: "Quant Catch", vol: "Volume", voices: "Voices", base: "Base Note" };
 
 // Lives globale Skala (Live 12: Song.root_note / Song.scale_intervals)
 var SC = { root: 0, ints: [0, 2, 4, 5, 7, 9, 11] };
@@ -247,7 +248,7 @@ function sendBankstate() {
         w.push(Math.round(Math.abs(pr.to - pr.from)));
     }
     var b = ["bankstate", st.bankId, videoId || "-", sel, P.mode, P.rev].concat(s, w,
-        [P.div, Math.round(P.rate * 1000) / 1000, P.tune, P.warp, P.quant, Math.round(P.vol * 10) / 10, P.voicesIdx, P.base]);
+        [P.div, Math.round(P.rate * 1000) / 1000, P.tune, P.warp, P.quant, Math.round(P.vol * 10) / 10, P.voicesIdx, P.base, P.qdiv, P.qcatch]);
     var key = b.join(" ");
     if (key === lastBankstate) return;
     lastBankstate = key;
@@ -451,34 +452,52 @@ function padhit(i) { hit(clamp(Math.floor(i), 0, NPADS - 1), 100); }
 function padup(i) { hit(clamp(Math.floor(i), 0, NPADS - 1), 0); }
 
 // ---------- Input-Quantize ----------
-// [metro 16n @quantize 16n] im Patch schickt tick auf jede 1/16 von Lives Transport.
+// Im Patch läuft je ein [metro … @quantize …] pro Raster und schickt tick <index>; es zählt nur das eingestellte.
 // Läuft der Transport nicht, kommen keine Ticks und alles spielt sofort.
 var qTick = 0, qQueue = [];
 function quantize(v) { P.quant = v ? 1 : 0; if (!P.quant) tick(); sendBankstate(); }
-function tick() {
+function quantcatch(v) { P.qcatch = v ? 1 : 0; sendBankstate(); }
+function quantdiv(v) {
+    P.qdiv = clamp(Math.floor(v), 0, QDIV_BEATS.length - 1);
+    flushQueue(); qTick = 0;                   // bis zum ersten Tick des neuen Rasters spielt alles sofort
+    sendBankstate();
+}
+function tick(d) {
+    if (d !== undefined && Math.floor(d) !== P.qdiv) return;
     qTick = nowMs();
+    flushQueue();
+}
+function flushQueue() {
     var q = qQueue; qQueue = [];
     for (var n = 0; n < q.length; n++) play(q[n][0], q[n][1]);
 }
 function hit(i, v) {
     if (muted || durMs <= 0) return;           // stumm oder nichts geladen
-    var step = 15000 / Math.max(20, P.bpm), since = nowMs() - qTick;
-    var wait = P.quant && since < step * 1.5 && since > step * QUANT_LATE;
+    var beat = 60000 / Math.max(20, P.bpm), step = beat * QDIV_BEATS[P.qdiv], since = nowMs() - qTick;
+    // Catch (nur Raster 1/8 und 1/4): bis zu einer Achtel zu spät klingt sofort, an der Stelle, die auf dem Raster schon erreicht wäre
+    var catchWin = P.quant && P.qcatch && P.qdiv >= 2 ? beat / 2 : 0;
+    var wait = P.quant && since < step * 1.5 && since > (catchWin || Math.min(step, beat / 4) * QUANT_LATE);
     if (!wait && v === 0) {                    // Note-Off hinter seinem wartenden Note-On einreihen
         for (var n = 0; n < qQueue.length; n++) if (qQueue[n][0] === i) wait = true;
     }
     if (wait) qQueue.push([i, v]);
+    else if (v > 0 && since <= catchWin) trigger(i, v, since);
     else play(i, v);
 }
 function play(i, v) { if (v > 0) trigger(i, v); else noteoff(i); }
 
-function trigger(i, vel) {
+function trigger(i, vel, late) {
     sel = i;
     if (durMs <= 0) { updateSel(); return; }
     var r = padRate(i);
     var pr = playRange(i), from = pr.from, to = pr.to, R = pr.R;
-    var dur = Math.abs(to - from) / (R > 0 ? R : r);   // reale Abspieldauer in ms
+    var speed = R > 0 ? R : r;
+    var dur = Math.abs(to - from) / speed;     // reale Abspieldauer in ms
     if (dur < 1) return;
+    if (late > 0 && late < dur - 1) {          // Catch: später einsteigen, das Ende bleibt auf dem Raster
+        from += (to >= from ? 1 : -1) * late * speed;
+        dur -= late;
+    }
     var amp = vel / 127;
     var atk = Math.min(ATK_MS, dur * 0.5);
     var rel = Math.min(P.mode ? SNIP_FADE_MS : REL_MS, dur * 0.5);   // Hold: am Snippet-Ende kurz ausblenden

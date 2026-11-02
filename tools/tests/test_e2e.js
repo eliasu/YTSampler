@@ -16,7 +16,7 @@ STARTS[15] = DUR - 5000;
 
 // Regler im Patch: varname -> [js]-Handler hinter dem prepend (Spec 3.0, 3.1)
 const ECHO = { Division: 'division', Rate: 'rate', Mode: 'playmode', Reverse: 'reverse', Tune: 'tune', Warp: 'warp',
-  Quantize: 'quantize', Volume: 'volume', Voices: 'voicecount', 'Base Note': 'basenote' };
+  Quantize: 'quantize', 'Quant Div': 'quantdiv', 'Quant Catch': 'quantcatch', Volume: 'volume', Voices: 'voicecount', 'Base Note': 'basenote' };
 
 // [js] mit Attrappen; Ausgang 1 geht an die Node-Handler, Node-Nachrichten an die gleichnamige [js]-Funktion.
 // Beide Richtungen asynchron und der Reihe nach, wie im Max-Scheduler.

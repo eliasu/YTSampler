@@ -26,5 +26,5 @@ Bänke anlegen und bearbeiten: Video suchen, Starts setzen, würfeln, Tempo korr
 _Avoid_: Laden (für das Anlegen einer Bank)
 
 **Device-Regler**:
-Die Live-Parameter des Device (Slice, Rate, Trigger/Hold, Rev, Tune, Warp, Quant, Volume, Voices, Base Note). Der Editor zeigt und stellt dieselben Werte, es gibt keine zweite Kopie.
+Die Live-Parameter des Device (Slice, Rate, Trigger/Hold, Rev, Tune, Warp, Quant, Raster, Catch, Volume, Voices, Base Note). Der Editor zeigt und stellt dieselben Werte, es gibt keine zweite Kopie.
 _Avoid_: Einstellungen der Bank (die Bank speichert keine Regler)

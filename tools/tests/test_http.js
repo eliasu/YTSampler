@@ -402,20 +402,20 @@ t('hit/up → padhit/padup; bankstate mit Reglern → device.params; playing/pla
   await cmd({ cmd: 'up', pad: 4 });
   assert.deepStrictEqual(max.out.filter((m) => m[0] !== 'status'), [['padhit', 4], ['padup', 4]], 'status vom Startcheck kann dazwischen kommen');
   const w = Array.from({ length: 16 }, (_, i) => 1000 + i);
-  // <div> <rate> <tune> <warp> <quant> <vol> <voices> <base>
-  const P = [5, 1.25, 1, 0, 1, -3.5, 6, 36];
+  // <div> <rate> <tune> <warp> <quant> <vol> <voices> <base> <qdiv> <qcatch>
+  const P = [5, 1.25, 1, 0, 1, -3.5, 6, 36, 2, 1];
   max.handlers.bankstate(ids[2], V1, 5, 1, 1, ...STARTS, ...w, ...P);
   await a.wait((ev, d) => ev === 'device' && d.bankId === ids[2]);
   const d = a.last('device');
   assert.deepStrictEqual(d, { bankId: ids[2], nr: 3, video: V1, sel: 5, starts: STARTS, spans: w,
-    params: { div: 5, rate: 1.25, mode: 1, rev: 1, tune: 1, warp: 0, quant: 1, vol: -3.5, voices: 6, base: 36 } });
+    params: { div: 5, rate: 1.25, mode: 1, rev: 1, tune: 1, warp: 0, quant: 1, vol: -3.5, voices: 6, base: 36, qdiv: 2, qcatch: 1 } });
   assert.ok(!('mode' in d) && !('rev' in d) && !('teletext' in d));
   await a.wait((ev, d2) => ev === 'beats' && d2.video === V1, 'beats der aktiven Bank');
   const n = a.of('device').length;
   max.handlers.bankstate(ids[2], V1, 5, 1, 1, ...STARTS, ...w, ...P);
   await sleep(80);
   assert.strictEqual(a.of('device').length, n, 'Gleiches nicht noch einmal');
-  max.handlers.bankstate(ids[2], V1, 5, 0, 1, ...STARTS, ...w, 5, 1.25, 1, 1, 1, -3.5, 6, 36);
+  max.handlers.bankstate(ids[2], V1, 5, 0, 1, ...STARTS, ...w, 5, 1.25, 1, 1, 1, -3.5, 6, 36, 2, 1);
   await a.wait((ev, d2) => ev === 'device' && d2.params && d2.params.warp === 1 && d2.params.mode === 0, 'Regleränderung');
   max.handlers.playing(5, 2000, 3500, 1500);
   max.handlers.playstop(5);
@@ -503,17 +503,27 @@ t('kaputte Bibliothek: schreibend libbroken, hit/up gehen, [js] libstate kaputt;
   done();
 });
 
+t('Direkte Suche: Ergebnisseite auslesen, Länge in Sekunden, kaputte Seite -> keine Treffer', async () => {
+  const { node, done } = await setup();
+  const data = { a: [{ videoRenderer: { videoId: 'AAAAAAAAAAA', title: { runs: [{ text: 'Eins' }, { text: ' & Zwei' }] }, lengthText: { simpleText: '1:02:03' } } },
+    { b: { videoRenderer: { videoId: 'BBBBBBBBBBB', title: { runs: [{ text: 'Live' }] } } } }] };
+  const page = `<html><script>var ytInitialData = ${JSON.stringify(data)};</script></html>`;
+  assert.deepStrictEqual(node.parseSearchPage(page), [{ id: 'AAAAAAAAAAA', title: 'Eins & Zwei', duration: 3723 }, { id: 'BBBBBBBBBBB', title: 'Live', duration: 0 }]);
+  assert.deepStrictEqual(node.parseSearchPage('<html>Consent</html>'), []);
+  done();
+});
+
 t('/cmd param: gültig → param an [js] und {}, ungültig → badreq, auch bei kaputter Bibliothek', async () => {
   const { node, max, on, cmd, done } = await setup();
   const good = [['div', 0], ['div', 10], ['rate', 0.25], ['rate', 1.333], ['rate', 2], ['mode', 1], ['rev', 0], ['tune', 1], ['warp', 1],
-    ['quant', 0], ['vol', -70], ['vol', -3.5], ['vol', 6], ['voices', 0], ['voices', 6], ['base', 0], ['base', 127]];
+    ['quant', 0], ['qdiv', 0], ['qdiv', 3], ['qcatch', 1], ['vol', -70], ['vol', -3.5], ['vol', 6], ['voices', 0], ['voices', 6], ['base', 0], ['base', 127]];
   for (const [name, value] of good) {
     max.out = [];
     assert.deepStrictEqual(await cmd({ client: 'c1', cmd: 'param', name, value }), { ok: true }, `${name} ${value}`);
     assert.deepStrictEqual(on('param'), [['param', name, value]]);
   }
   const bad = [['div', 11], ['div', 2.5], ['div', -1], ['rate', 0.2], ['rate', 2.01], ['mode', 2], ['rev', 0.5], ['tune', -1], ['warp', '1'],
-    ['quant', true], ['vol', -71], ['vol', 6.5], ['voices', 7], ['voices', 1.5], ['base', 128], ['base', 36.5], ['bank', 1], ['toString', 0],
+    ['quant', true], ['qdiv', 4], ['qdiv', 1.5], ['qcatch', 2], ['vol', -71], ['vol', 6.5], ['voices', 7], ['voices', 1.5], ['base', 128], ['base', 36.5], ['bank', 1], ['toString', 0],
     ['div', null], ['rate', NaN], [undefined, 1]];
   for (const [name, value] of bad) {
     max.out = [];

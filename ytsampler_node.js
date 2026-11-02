@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const http = require('http');
+const https = require('https');
 
 // Live startet Max ohne Shell-PATH -> Homebrew-Pfade selbst ergänzen
 const EXTRA_PATHS = ['/opt/homebrew/bin', '/usr/local/bin', '/opt/local/bin', path.join(os.homedir(), '.local/bin')];
@@ -46,6 +47,7 @@ const DATA = DATA_SETUP.dir;
 const CACHE = path.join(LOCAL, 'cache');
 const MAX_SECONDS = 600;  // URL-Videos über 10 min: nur die ersten 10 Minuten laden (RAM!)
 const SEARCH_FETCH = 15;  // so viele Treffer holen
+const SEARCH_FAST_MS = 4000;   // direkte Suche: danach yt-dlp
 
 const SESSIONS = path.join(DATA, 'sessions');
 fs.mkdirSync(CACHE, { recursive: true });
@@ -1271,8 +1273,8 @@ function beatsOf(v, a) {
 // SSE beats für den Track der aktiven Bank
 const videoBeats = (v) => beatsOf(v, getAnalysis(v, true));
 
-// Wie randomStart in [js] auf der ganzen WAV: Taktanfang, wenn die Beats gültig sind, sonst frei
-// (Raster ohne Beats gibt es hier nicht). Keine Slice (16 s) ganz in Stille, kein Start doppelt.
+// Würfeln auf der ganzen WAV: immer aufs Raster, solange Beats da sind (auch bei unsicherem Tempo, es wird ja
+// kuratiert): erst Taktanfänge, dann Schläge, frei nur ohne Beats. Keine Slice (16 s) ganz in Stille, kein Start doppelt.
 // -> (belegte Starts) => ganze ms. Ohne WAV libErr playonly.
 function roller(v) {
   if (!hasWav(v)) throw libErr('playonly');
@@ -1280,15 +1282,22 @@ function roller(v) {
   const a = getAnalysis(v, false);
   const sil = a ? silentRanges(a) : [];
   const b = beatsOf(v, a);
-  const bars = b.ok ? b.beats.filter((t, i) => (i - b.down) % 4 === 0 && t <= last) : [];
+  const usable = b.beats.length >= 4 ? b.beats.filter((t) => t <= last) : [];
+  const bars = usable.filter((t) => (b.beats.indexOf(t) - b.down) % 4 === 0);
   const silent = (t) => {
     for (let k = 0; k + 1 < sil.length; k += 2) if (sil[k] <= t && t + SNIP_MS <= sil[k + 1]) return true;
     return false;
   };
   return (taken) => {
+    const free = (pool) => pool.map(Math.round).filter((t) => !silent(t) && !taken.includes(t));
+    for (const pool of [bars, usable]) {
+      const c = free(pool);
+      if (c.length) return c[Math.floor(Math.random() * c.length)];
+    }
+    if (usable.length) return Math.round(usable[Math.floor(Math.random() * usable.length)]);   // alles belegt oder still: lieber doppelt als neben dem Raster
     let t = 0;
     for (let n = 0; n < 40; n++) {
-      t = Math.round(n < 20 && bars.length ? bars[Math.floor(Math.random() * bars.length)] : last > 0 ? Math.random() * last : 0);
+      t = last > 0 ? Math.round(Math.random() * last) : 0;
       if (!silent(t) && !taken.includes(t)) return t;
     }
     return t;
@@ -1444,10 +1453,10 @@ libEvents.on('job', (j) => edEmit('job', j));
 libEvents.on('msg', (m) => edEmit('msg', m));
 
 // ---------- [js] -> Node (6.2, Spec 3.0 3.2) ----------
-// bankstate <bankId> <video|-> <sel> <mode> <rev> <s×16> <w×16> <div> <rate> <tune> <warp> <quant> <vol> <voices> <base>
+// bankstate <bankId> <video|-> <sel> <mode> <rev> <s×16> <w×16> <div> <rate> <tune> <warp> <quant> <vol> <voices> <base> <qdiv> <qcatch>
 Max.addHandler('bankstate', (id, video, sel, mode, rev, ...sw) => {
-  const p = sw.slice(32, 40);
-  const params = p.length === 8 ? { div: p[0], rate: p[1], mode, rev, tune: p[2], warp: p[3], quant: p[4], vol: p[5], voices: p[6], base: p[7] } : null;
+  const p = sw.slice(32, 42);
+  const params = p.length === 10 ? { div: p[0], rate: p[1], mode, rev, tune: p[2], warp: p[3], quant: p[4], vol: p[5], voices: p[6], base: p[7], qdiv: p[8], qcatch: p[9] } : null;
   dev = { bankId: Math.floor(id) || 0, video: String(video), sel, starts: sw.slice(0, 16), spans: sw.slice(16, 32), params };
   activeId = dev.bankId;
   edDirty('device'); edDirty('beats');
@@ -1492,6 +1501,46 @@ function libBank(id) {
 }
 function checkWav(b) { if (!hasWav(b.video)) throw libErr('playonly'); }
 
+// Direkte Suche über die YouTube-Ergebnisseite (unter 1 s). Die Seite kann sich ändern: Dann bleibt der Rückfall auf yt-dlp.
+function parseSearchPage(html) {
+  const i = html.indexOf('var ytInitialData = '), j = html.indexOf(';</script>', i);
+  if (i < 0 || j < 0) return [];
+  const out = [];
+  const walk = (o) => {
+    if (Array.isArray(o)) { o.forEach(walk); return; }
+    if (!o || typeof o !== 'object') return;
+    if (o.videoRenderer) {
+      const v = o.videoRenderer, len = v.lengthText && v.lengthText.simpleText;
+      const title = v.title && (v.title.simpleText || (v.title.runs || []).map((r) => r.text).join(''));
+      out.push({ id: v.videoId, title, duration: len ? len.split(':').reduce((s, x) => s * 60 + +x, 0) : 0 });
+      return;
+    }
+    Object.values(o).forEach(walk);
+  };
+  walk(JSON.parse(html.slice(i + 20, j)));
+  return out;
+}
+function fastSearch(q, job) {
+  return new Promise((resolve, reject) => {
+    const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}&sp=EgIQAQ%3D%3D`;   // sp: nur Videos
+    const req = https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36',
+      'Accept-Language': 'en', Cookie: 'CONSENT=YES+1; SOCS=CAI' }, timeout: SEARCH_FAST_MS }, (res) => {
+      if (res.statusCode !== 200) { res.resume(); reject(new Error(`HTTP ${res.statusCode}`)); return; }
+      let b = '';
+      res.setEncoding('utf8');
+      res.on('data', (d) => { b += d; });
+      res.on('error', reject);
+      res.on('end', () => { try { resolve(parseSearchPage(b)); } catch (e) { reject(e); } });
+    });
+    req.on('timeout', () => req.destroy(new Error('Zeitüberschreitung')));
+    req.on('error', reject);
+    job.child = { kill: () => req.destroy(new Error('abgebrochen')) };
+  });
+}
+// Treffer ohne Dauer (live) fallen weg
+const searchResults = (list) => list.filter((e) => e && e.id && e.duration > 0)
+  .map((e) => ({ id: e.id, title: String(e.title || e.id), dur: Math.round(e.duration), long: e.duration > MAX_SECONDS }));
+
 // Editor-Suche: eigene Trefferliste, neue Suche bricht die alte ab. URL oder ID -> genau dieses Video.
 let edSearchJob = null;
 async function edSearch(q) {
@@ -1500,12 +1549,17 @@ async function edSearch(q) {
   const job = edSearchJob = { aborted: false, child: null };
   const id = extractId(q);
   try {
+    if (!id && !process.env.YTS_NO_FAST_SEARCH) {
+      try {
+        const r = searchResults(await fastSearch(q.trim(), job)).slice(0, SEARCH_FETCH);
+        if (r.length) return { results: r };
+      } catch (e) { if (job.aborted) throw e; }
+      job.child = null;
+    }
     const out = await run('yt-dlp', id ? ['-J', '--no-playlist', '--no-warnings', `https://www.youtube.com/watch?v=${id}`]
       : ['--flat-playlist', '--dump-single-json', '--no-warnings', `ytsearch${SEARCH_FETCH}:${q.trim()}`], null, job);
     const data = JSON.parse(out);
-    const results = (id ? [data] : data.entries || []).filter((e) => e && e.id && e.duration > 0)
-      .map((e) => ({ id: e.id, title: String(e.title || e.id), dur: Math.round(e.duration), long: e.duration > MAX_SECONDS }));
-    return { results };
+    return { results: searchResults(id ? [data] : data.entries || []) };
   } catch (e) {
     if (job.aborted) throw libErr('superseded');
     throw libErr('searchfail', errMsg(e).replace(/^Fehler: /, ''));
@@ -1517,7 +1571,7 @@ async function edSearch(q) {
 // Device-Regler (Spec 3.0 3.1): name -> [min, max, ganz]. Toggles 0/1.
 const PARAMS = {
   div: [0, 10, true], rate: [0.25, 2, false], mode: [0, 1, true], rev: [0, 1, true], tune: [0, 1, true],
-  warp: [0, 1, true], quant: [0, 1, true], vol: [-70, 6, false], voices: [0, 6, true], base: [0, 127, true],
+  warp: [0, 1, true], quant: [0, 1, true], qdiv: [0, 3, true], qcatch: [0, 1, true], vol: [-70, 6, false], voices: [0, 6, true], base: [0, 127, true],
 };
 
 // (Felder, client) -> Antwortfelder, wirft libErr
@@ -1808,5 +1862,5 @@ module.exports = {
   AN, SNIP_DIR, SNIP_MS, computeAnalysis, tempoFromOnset, saveAnalysis, readAnalysis, getAnalysis, ensureAnalysis, trackBeats, silentRanges,
   hasWav, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, cacheSize, videoFail,
   beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, newBank, get analysis() { return analysis; },
-  runCmd, peaks, get webPort() { return webPort; }, get activeId() { return activeId; },
+  parseSearchPage, runCmd, peaks, get webPort() { return webPort; }, get activeId() { return activeId; },
 };

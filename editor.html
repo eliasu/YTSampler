@@ -125,13 +125,13 @@
   #ctl .set:hover, #ctl .set:focus-within { opacity:1; }
   #ctl .f { display:flex; align-items:center; gap:5px; }
   #ctl .tgs { display:flex; gap:4px; }
-  #ctl .v { min-width:44px; color:var(--dim); font-size:12px; }
+  #ctl .v { min-width:36px; color:var(--dim); font-size:12px; }
   #ctl select { font:inherit; color:var(--text); background:var(--bg); border:1px solid var(--line2); border-radius:7px; padding:4px 6px; outline:none; }
   #ctl select:focus { border-color:var(--sel); }
-  #ctl input[type=range] { width:80px; padding:0; border:none; background:none; accent-color:var(--acc); }
+  #ctl input[type=range] { width:52px; padding:0; border:none; background:none; accent-color:var(--acc); }
   #p-base { width:50px; padding:4px 6px; }
   #p-base-v { min-width:28px; }
-  #ctl .tog { min-width:52px; padding:5px 8px; }
+  #ctl .tog { min-width:0; padding:5px 7px; }
   #ctl .tog.on { background:var(--acc); border-color:var(--acc); color:#1a1200; font-weight:600; }
   #ctl.locked { opacity:.35; }
   #ctl.locked .set { opacity:1; }
@@ -256,7 +256,9 @@
               <button class="tog" id="p-rev" data-p="rev" title="Rückwärts">Rev</button>
               <button class="tog" id="p-tune" data-p="tune" title="In Tonart des Sets stimmen">Tune</button>
               <button class="tog" id="p-warp" data-p="warp" title="An Projekttempo anpassen">Warp</button>
-              <button class="tog" id="p-quant" data-p="quant" title="Anschläge auf 1/16">Quant</button>
+              <button class="tog" id="p-quant" data-p="quant" title="Anschläge aufs Raster">Quant</button>
+              <select id="p-qdiv" data-p="qdiv" title="Raster für Quant" aria-label="Raster für Quant"></select>
+              <button class="tog" id="p-qcatch" data-p="qcatch" title="Raster 1/8 und 1/4: bis zu einer Achtel zu spät klingt sofort, im Takt versetzt">Catch</button>
             </div>
           </div>
           <div class="grp set">
@@ -764,6 +766,7 @@ const SLIDE = {
 const ctl = { hold: {}, thr: {} }; // hold[name] = { v, until }: lokaler Wert beim Ziehen (until Infinity) und kurz danach
 DIV_NAMES.forEach((n, i) => $('p-div').add(new Option(n, i)));
 VOICE_NAMES.forEach((n, i) => $('p-voices').add(new Option(n, i)));
+['1/32', '1/16', '1/8', '1/4'].forEach((n, i) => $('p-qdiv').add(new Option(n, i)));   // wie QDIV_BEATS
 const ctlOn = () => S.conn && !!(S.dev && S.dev.params);
 function sendParam(name, value) { if (ctlOn()) cmd('param', { name, value }); }
 function shown(name) {
@@ -795,8 +798,8 @@ for (const name of Object.keys(SLIDE)) {
   el.ondblclick = () => { ctl.hold[name] = { v: cf.def, until: Infinity }; slideEnd(name); renderCtl(); };
 }
 document.addEventListener('pointerup', () => Object.keys(SLIDE).forEach(slideEnd));
-for (const name of ['mode', 'rev', 'tune', 'warp', 'quant']) $('p-' + name).onclick = () => sendParam(name, shown(name) ? 0 : 1);
-for (const name of ['div', 'voices']) { const el = $('p-' + name); el.onchange = () => { sendParam(name, +el.value); el.blur(); }; }
+for (const name of ['mode', 'rev', 'tune', 'warp', 'quant', 'qcatch']) $('p-' + name).onclick = () => sendParam(name, shown(name) ? 0 : 1);
+for (const name of ['div', 'qdiv', 'voices']) { const el = $('p-' + name); el.onchange = () => { sendParam(name, +el.value); el.blur(); }; }
 $('p-base').onkeydown = (e) => { if (e.key === 'Enter') $('p-base').blur(); };
 $('p-base').onchange = () => {
   const x = Math.round(parseFloat($('p-base').value));
@@ -808,8 +811,8 @@ function renderCtl() {
   c.title = on ? '' : S.conn ? 'Device meldet noch keine Regler' : 'kein Device';
   c.querySelectorAll('select, input, button').forEach((e) => { e.disabled = !on; });
   if (!p) return;
-  $('p-div').value = p.div; $('p-voices').value = p.voices;
-  for (const name of ['mode', 'rev', 'tune', 'warp', 'quant']) $('p-' + name).classList.toggle('on', !!p[name]);
+  $('p-div').value = p.div; $('p-qdiv').value = p.qdiv; $('p-voices').value = p.voices;
+  for (const name of ['mode', 'rev', 'tune', 'warp', 'quant', 'qcatch']) $('p-' + name).classList.toggle('on', !!p[name]);
   $('p-mode').textContent = p.mode ? 'Hold' : 'Trigger';
   for (const name of Object.keys(SLIDE)) {
     const v = shown(name), el = $('p-' + name);

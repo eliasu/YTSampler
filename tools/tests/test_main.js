@@ -218,18 +218,18 @@ t('bankstate nur bei Änderung, Song-ms, w gekappt auf l', function () {
     assert.deepStrictEqual(b.slice(1, 7), ['bankstate', 7, 'F2RnxZnubCM', 0, 1, 1]);
     assert.deepStrictEqual(b.slice(7, 23), STARTS);
     assert.deepStrictEqual(b.slice(23, 39), LENS, 'Hold: ganze Snippets');
-    // angehängt: div rate tune warp quant vol voices base
-    assert.strictEqual(b.length, 39 + 8);
-    assert.deepStrictEqual(b.slice(39), [5, 1, 0, 0, 0, 0, 6, 36]);
+    // angehängt: div rate tune warp quant vol voices base qdiv qcatch
+    assert.strictEqual(b.length, 39 + 10);
+    assert.deepStrictEqual(b.slice(39), [5, 1, 0, 0, 0, 0, 6, 36, 1, 0]);
 });
 
-t('bankstate: die zehn Reglerwerte, gerundet, nur bei Änderung', function () {
+t('bankstate: die zwölf Reglerwerte, gerundet, nur bei Änderung', function () {
     var m = load(SRC);
     startDevice(m);
     m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
     m.send('bpm', 120);
     var steps = [['division', 3], ['rate', 1.23456], ['playmode', 1], ['reverse', 1], ['tune', 1], ['warp', 1],
-        ['quantize', 1], ['volume', -3.54], ['voicecount', 2], ['basenote', 48]];
+        ['quantize', 1], ['volume', -3.54], ['voicecount', 2], ['basenote', 48], ['quantdiv', 2], ['quantcatch', 1]];
     steps.forEach(function (st) {
         m.take();
         m.send.apply(null, st);
@@ -237,7 +237,7 @@ t('bankstate: die zehn Reglerwerte, gerundet, nur bei Änderung', function () {
     });
     var b = bankstates(m)[0];
     assert.deepStrictEqual(b.slice(5, 7), [1, 1], 'mode rev');
-    assert.deepStrictEqual(b.slice(39), [3, 1.235, 1, 1, 1, -3.5, 2, 48]);
+    assert.deepStrictEqual(b.slice(39), [3, 1.235, 1, 1, 1, -3.5, 2, 48, 2, 1]);
     assert.strictEqual(m.ctx.P.voices, 3, 'Index 2 = 3 Stimmen');
     // Mikroänderung unterhalb der Rundung: kein neues bankstate
     m.take(); m.send('volume', -3.52); m.send('rate', 1.2349);
@@ -251,7 +251,7 @@ t('param vom Editor -> setNamed mit varname, unbekannt -> nichts', function () {
     var m = load(SRC);
     startDevice(m);
     var want = { div: 'Division', rate: 'Rate', mode: 'Mode', rev: 'Reverse', tune: 'Tune', warp: 'Warp',
-        quant: 'Quantize', vol: 'Volume', voices: 'Voices', base: 'Base Note' };
+        quant: 'Quantize', qdiv: 'Quant Div', qcatch: 'Quant Catch', vol: 'Volume', voices: 'Voices', base: 'Base Note' };
     Object.keys(want).forEach(function (n) {
         m.named = [];
         m.send('param', n, 1);
@@ -259,7 +259,7 @@ t('param vom Editor -> setNamed mit varname, unbekannt -> nichts', function () {
     });
     m.named = [];
     m.send('param', 'bank', 3); m.send('param', 'constructor', 1); m.send('param', 'Tonal', 1);
-    assert.deepStrictEqual(m.named, [], 'nur die zehn Regler');
+    assert.deepStrictEqual(m.named, [], 'nur die zwölf Regler');
     m.send('param', 'vol', -12.5);
     assert.deepStrictEqual(m.named, [['Volume', -12.5]]);
 });
@@ -526,6 +526,75 @@ t('analyzeall: festes Fenster unabhängig von Division, Rate, Mode', function ()
     var spans = m.out.filter(function (o) { return o[0] === 1 && o[1] === 'analyzeall'; }).map(function (o) { return o[2]; });
     assert.ok(spans.length >= 5);
     spans.forEach(function (v) { assert.strictEqual(v, 4000); });
+});
+
+// Quant-Raster: nur der Tick des eingestellten Rasters zählt, Wartefenster wächst mit dem Raster
+t('Quant Div: tick <index> nur vom eingestellten Raster, Anschlag wartet darauf', function () {
+    var m = load(SRC);
+    startDevice(m);
+    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    m.send('bpm', 120);
+    m.send('quantize', 1);
+    m.send('quantdiv', 3);                 // 1/4 = 500 ms bei 120 BPM
+    m.send('tick', 3);
+    m.clock += 200; m.take();
+    m.send('tick', 1);                     // 1/16-Tick: darf hier nichts auslösen
+    m.send('padhit', 2);
+    assert.strictEqual(m.on(1, 'playing').length, 0, 'wartet auf die nächste 1/4');
+    m.send('tick', 1);
+    assert.strictEqual(m.on(1, 'playing').length, 0, '1/16-Tick spielt nicht ab');
+    m.clock += 300;
+    m.send('tick', 3);
+    assert.strictEqual(m.on(1, 'playing').length, 1, '1/4-Tick spielt ab');
+    // knapp nach dem Raster: höchstens 0,3 einer 1/16 (37,5 ms) gilt als zu spät gedrückt
+    m.send('padup', 2); m.clock += 30; m.take();
+    m.send('padhit', 3);
+    assert.strictEqual(m.on(1, 'playing').length, 1, 'zu spät gedrückt: sofort');
+    // Rasterwechsel: Wartendes spielt sofort, danach kein Warten bis zum ersten neuen Tick
+    m.clock += 100; m.take();
+    m.send('padhit', 4);
+    assert.strictEqual(m.on(1, 'playing').length, 0);
+    m.send('quantdiv', 1);
+    assert.strictEqual(m.on(1, 'playing').length, 1, 'Wechsel spielt Wartendes');
+    m.take();
+    m.send('padhit', 5);
+    assert.strictEqual(m.on(1, 'playing').length, 1, 'noch kein neuer Tick: sofort');
+});
+
+t('Catch: bei 1/8 und 1/4 später einsteigen, Ende bleibt; bei 1/16 und aus wie bisher', function () {
+    function setup(qdiv, on) {
+        var m = load(SRC);
+        startDevice(m);
+        m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+        m.send('bpm', 120);
+        m.send('quantize', 1); m.send('quantdiv', qdiv); m.send('quantcatch', on);
+        m.send('division', 7);             // Slice 1/4 = 500 ms
+        m.send('tick', qdiv); m.take();
+        return m;
+    }
+    var S0 = STARTS[2];
+    var m = setup(2, 1);                   // 1/8: 100 ms zu spät
+    m.clock += 100; m.send('padhit', 2);
+    var p = m.on(1, 'playing');
+    assert.strictEqual(p.length, 1, 'klingt sofort');
+    assert.ok(Math.abs(p[0][3] - (S0 + 100)) < 0.01, 'Start 100 ms versetzt');
+    assert.ok(Math.abs(p[0][4] - (S0 + 500)) < 0.01, 'Ende auf dem Raster');
+    assert.ok(Math.abs(p[0][5] - 400) < 0.01, 'Dauer gekürzt');
+    m = setup(3, 1);                       // 1/4: 200 ms aufholen, 300 ms warten
+    m.clock += 200; m.send('padhit', 2);
+    assert.ok(Math.abs(m.on(1, 'playing')[0][3] - (S0 + 200)) < 0.01);
+    m = setup(3, 1); m.clock += 300; m.send('padhit', 2);
+    assert.strictEqual(m.on(1, 'playing').length, 0, 'über eine Achtel: wartet');
+    m.clock += 200; m.send('tick', 3);
+    assert.strictEqual(m.on(1, 'playing')[0][3], S0, 'auf dem Tick vom Anfang');
+    m = setup(1, 1); m.clock += 20; m.send('padhit', 2);   // 1/16: Catch wirkt nicht
+    assert.strictEqual(m.on(1, 'playing')[0][3], S0, '1/16 wie bisher');
+    m = setup(2, 0); m.clock += 20; m.send('padhit', 2);   // aus
+    assert.strictEqual(m.on(1, 'playing')[0][3], S0, 'aus: knapp zu spät vom Anfang');
+    m = setup(2, 0); m.clock += 100; m.send('padhit', 2);
+    assert.strictEqual(m.on(1, 'playing').length, 0, 'aus: später wartet');
+    m = setup(2, 1); m.send('division', 0); m.take(); m.clock += 100; m.send('padhit', 2);   // Slice kürzer als der Versatz
+    assert.strictEqual(m.on(1, 'playing')[0][3], S0, 'kurzer Slice: Ton vom Anfang statt Stille');
 });
 
 var bad = 0;

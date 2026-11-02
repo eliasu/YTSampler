@@ -7,6 +7,11 @@ const path = require('path');
 
 const NODE_FILE = path.join(__dirname, '..', '..', 'ytsampler_node.js');
 process.env.YTS_PORT = '0';
+process.env.YTS_NO_FAST_SEARCH = '1';   // kein Netz in Tests
+// Nie das echte yt-dlp: auch nicht der „--version“-Check beim Laden von Node
+const cp = require('child_process');
+const realSpawn = cp.spawn;
+cp.spawn = (cmd, args, opts) => (cmd === 'yt-dlp' ? realSpawn(process.execPath, [path.join(__dirname, 'fake_ytdlp.js'), ...args], opts) : realSpawn(cmd, args, opts));
 process.setMaxListeners(0);   // jedes loadNode hängt exit-Handler an
 
 const TMP = fs.realpathSync(os.tmpdir());

@@ -288,12 +288,20 @@ t('Regler: Leiste in der Pad-Karte zeigt device.params und folgt dem Device', as
 t('Regler: Umschalter und Menüs schicken param sofort, kein Undo, kein „gespeichert“', async () => {
   await open('normal');
   const w0 = await b.eval(`parseFloat($('slice').style.width)`);
-  for (const [name, value] of [['rev', 1], ['mode', 1], ['warp', 1], ['tune', 0], ['quant', 0]]) {
+  for (const [name, value] of [['rev', 1], ['mode', 1], ['warp', 1], ['tune', 0], ['quant', 0], ['qcatch', 1]]) {
     m.log = []; await b.click('#p-' + name);
     const x = await waitLog((y) => y.cmd === 'param');
     assert.deepStrictEqual({ name: x.name, value: x.value }, { name, value });
     await b.waitFor(`$('p-${name}').classList.contains('on') === ${!!value}`);
   }
+  // Raster für Quant: Menü schickt qdiv, Device-Wert kommt zurück, Leiste bleibt einzeilig
+  m.log = []; await b.eval(`(() => { const e = $('p-qdiv'); e.value = '3'; e.dispatchEvent(new Event('change')); })()`);
+  const qd = await waitLog((y) => y.cmd === 'param');
+  assert.deepStrictEqual({ name: qd.name, value: qd.value }, { name: 'qdiv', value: 3 });
+  await b.waitFor(`S.dev.params.qdiv === 3 && $('p-qdiv').value === '3'`);
+  m.setParams({ qdiv: 0 }); await b.waitFor(`$('p-qdiv').value === '0'`);
+  assert.strictEqual(await b.eval(`$('p-qdiv').selectedOptions[0].textContent`), '1/32');
+  assert(await b.eval(`$('ctl').querySelector('.set').getBoundingClientRect().top < $('p-quant').getBoundingClientRect().bottom`), 'Reglerleiste einzeilig');
   assert.strictEqual(await b.eval(`$('p-mode').textContent`), 'Hold');
   m.log = []; await b.click('#p-mode'); assert.strictEqual((await waitLog((y) => y.cmd === 'param')).value, 0);
   await b.waitFor(`$('p-mode').textContent === 'Trigger'`);

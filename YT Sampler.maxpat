@@ -1363,7 +1363,7 @@
       35.0,
       22.0
      ],
-     "text": "tick"
+     "text": "tick 1"
     }
    },
    {
@@ -1758,6 +1758,239 @@
      ],
      "text": "openeditor",
      "id": "obj-200"
+    }
+   },
+   {
+    "box": {
+     "id": "obj-201",
+     "maxclass": "live.menu",
+     "numinlets": 1,
+     "numoutlets": 3,
+     "patching_rect": [
+      2020.0,
+      540.0,
+      70.0,
+      18.0
+     ],
+     "outlettype": [
+      "",
+      "",
+      "float"
+     ],
+     "presentation": 1,
+     "presentation_rect": [
+      648.0,
+      128.0,
+      70.0,
+      18.0
+     ],
+     "saved_attribute_attributes": {
+      "valueof": {
+       "parameter_longname": "Quant Div",
+       "parameter_shortname": "Quant Div",
+       "parameter_type": 2,
+       "parameter_enum": [
+        "1/32",
+        "1/16",
+        "1/8",
+        "1/4"
+       ],
+       "parameter_mmax": 3,
+       "parameter_initial": [
+        1
+       ],
+       "parameter_initial_enable": 1
+      }
+     },
+     "parameter_enable": 1,
+     "varname": "Quant Div"
+    }
+   },
+   {
+    "box": {
+     "id": "obj-202",
+     "maxclass": "newobj",
+     "numinlets": 1,
+     "numoutlets": 1,
+     "patching_rect": [
+      2020.0,
+      570.0,
+      110.0,
+      22.0
+     ],
+     "outlettype": [
+      ""
+     ],
+     "text": "prepend quantdiv"
+    }
+   },
+   {
+    "box": {
+     "id": "obj-203",
+     "maxclass": "newobj",
+     "numinlets": 2,
+     "numoutlets": 1,
+     "outlettype": [
+      "bang"
+     ],
+     "patching_rect": [
+      2200.0,
+      600.0,
+      170.0,
+      22.0
+     ],
+     "text": "metro 32n @quantize 32n @active 1"
+    }
+   },
+   {
+    "box": {
+     "id": "obj-204",
+     "maxclass": "message",
+     "numinlets": 2,
+     "numoutlets": 1,
+     "outlettype": [
+      ""
+     ],
+     "patching_rect": [
+      2200.0,
+      630.0,
+      45.0,
+      22.0
+     ],
+     "text": "tick 0"
+    }
+   },
+   {
+    "box": {
+     "id": "obj-205",
+     "maxclass": "newobj",
+     "numinlets": 2,
+     "numoutlets": 1,
+     "outlettype": [
+      "bang"
+     ],
+     "patching_rect": [
+      2380.0,
+      600.0,
+      170.0,
+      22.0
+     ],
+     "text": "metro 8n @quantize 8n @active 1"
+    }
+   },
+   {
+    "box": {
+     "id": "obj-206",
+     "maxclass": "message",
+     "numinlets": 2,
+     "numoutlets": 1,
+     "outlettype": [
+      ""
+     ],
+     "patching_rect": [
+      2380.0,
+      630.0,
+      45.0,
+      22.0
+     ],
+     "text": "tick 2"
+    }
+   },
+   {
+    "box": {
+     "id": "obj-207",
+     "maxclass": "newobj",
+     "numinlets": 2,
+     "numoutlets": 1,
+     "outlettype": [
+      "bang"
+     ],
+     "patching_rect": [
+      2560.0,
+      600.0,
+      170.0,
+      22.0
+     ],
+     "text": "metro 4n @quantize 4n @active 1"
+    }
+   },
+   {
+    "box": {
+     "id": "obj-208",
+     "maxclass": "message",
+     "numinlets": 2,
+     "numoutlets": 1,
+     "outlettype": [
+      ""
+     ],
+     "patching_rect": [
+      2560.0,
+      630.0,
+      45.0,
+      22.0
+     ],
+     "text": "tick 3"
+    }
+   },
+   {
+    "box": {
+     "id": "obj-209",
+     "maxclass": "live.text",
+     "numinlets": 1,
+     "numoutlets": 2,
+     "patching_rect": [
+      2700.0,
+      600.0,
+      78.0,
+      18.0
+     ],
+     "outlettype": [
+      "",
+      ""
+     ],
+     "text": "Catch",
+     "presentation": 1,
+     "presentation_rect": [
+      724.0,
+      92.0,
+      70.0,
+      30.0
+     ],
+     "mode": 1,
+     "texton": "Catch ✓",
+     "saved_attribute_attributes": {
+      "valueof": {
+       "parameter_longname": "Quant Catch",
+       "parameter_shortname": "Catch",
+       "parameter_type": 2,
+       "parameter_enum": [
+        "off",
+        "on"
+       ],
+       "parameter_mmax": 1
+      }
+     },
+     "parameter_enable": 1,
+     "varname": "Quant Catch",
+     "fontsize": 12.0
+    }
+   },
+   {
+    "box": {
+     "id": "obj-210",
+     "maxclass": "newobj",
+     "numinlets": 1,
+     "numoutlets": 1,
+     "outlettype": [
+      ""
+     ],
+     "patching_rect": [
+      2700.0,
+      630.0,
+      120.0,
+      22.0
+     ],
+     "text": "prepend quantcatch"
     }
    },
    {
@@ -2775,6 +3008,126 @@
     "patchline": {
      "source": [
       "obj-200",
+      0
+     ],
+     "destination": [
+      "obj-1",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-201",
+      0
+     ],
+     "destination": [
+      "obj-202",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-202",
+      0
+     ],
+     "destination": [
+      "obj-1",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-203",
+      0
+     ],
+     "destination": [
+      "obj-204",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-204",
+      0
+     ],
+     "destination": [
+      "obj-1",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-205",
+      0
+     ],
+     "destination": [
+      "obj-206",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-206",
+      0
+     ],
+     "destination": [
+      "obj-1",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-207",
+      0
+     ],
+     "destination": [
+      "obj-208",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-208",
+      0
+     ],
+     "destination": [
+      "obj-1",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-209",
+      0
+     ],
+     "destination": [
+      "obj-210",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-210",
       0
      ],
      "destination": [
