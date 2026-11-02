@@ -1,6 +1,6 @@
 # Spezifikation: Mix-Bänke
 
-Stand 2026-11-02. Grundlage: Spec 2.0 (`.scratch/bank-editor/spec.md`), Spec 3.0 (`.scratch/device-3/spec.md`), gültiger Stand in `CLAUDE.md`. **Was hier nicht geändert wird, gilt dort weiter.** **(festgelegt)** = von der Planung aus dem Code entschieden. **(offen Mx)** = Bedienfrage an den Nutzer (Abschnitt 9). Bis zur Antwort gilt die Empfehlung, sie ist hier schon eingetragen.
+Stand 2026-11-02. Grundlage: Spec 2.0 (`.scratch/bank-editor/spec.md`), Spec 3.0 (`.scratch/device-3/spec.md`), gültiger Stand in `CLAUDE.md`. **Was hier nicht geändert wird, gilt dort weiter.** **(festgelegt)** = von der Planung aus dem Code entschieden. **(Mx)** = vom Nutzer entschieden (Abschnitt 9).
 
 Leitlinie: Bühnenwerkzeug, einfach halten. Was hier nicht steht, wird nicht gebaut. Version: **4.0.0** (Format der Bibliothek ändert sich, 3.x-Devices sperren sich aus, siehe 2.1).
 
@@ -54,7 +54,7 @@ Kern der Umsetzung **(festgelegt)**: `[js]` hält Tempo, Stimmung und Schläge a
 - `format 2`: neue Prüfregeln (Tabelle oben). Eine Bank mit 16 × `null` ist gültig.
 - `format > 2`: „neuer“ wie bisher.
 
-**Abwärts:** Ein 3.x-Device liest format 2 als „neuer“, fasst nichts an und bleibt stumm. Das ist so gewollt, denn sonst würde es Mix-Snippets aus `banks[].video` neu schneiden und in iCloud überschreiben. Folge: Beide Macs müssen gleichzeitig auf 4.0 **(offen M6)**. README und Release-Hinweis sagen das.
+**Abwärts:** Ein 3.x-Device liest format 2 als „neuer“, fasst nichts an und bleibt stumm. Das ist so gewollt, denn sonst würde es Mix-Snippets aus `banks[].video` neu schneiden und in iCloud überschreiben. Folge: Beide Macs müssen gleichzeitig auf 4.0 **(M6)**. README und Release-Hinweis sagen das.
 
 **Sessions** bleiben gültig, `state` ist weiter nur `{bankId}`.
 
@@ -86,9 +86,9 @@ Kern der Umsetzung **(festgelegt)**: `[js]` hält Tempo, Stimmung und Schläge a
 
 | `cmd` | neu/geändert | Regel |
 |---|---|---|
-| `newmix` | **neu** | Bank am Ende, Name „Mix-Bank“, 16 × `null`, wird aktiv. Antwort `{id}`. Undo = `delete`, Redo = `restore` (wie Neue Bank) **(offen M1)** |
-| `setpad` | **neu** | `{id, pad, video, start}` kopiert ein Pad auf einen Platz. `video: null` leert den Platz (nur für Undo, **offen M5**). Steht `video` nicht in `videos`, braucht es `info: {title, bpm?}` (Undo nach Löschen der Quellbank), sonst `badreq`. Schneiden nach 2.2. Keine Quelle → `playonly`, nichts geändert. Antwort `{}` |
-| `setstart`, `roll` | geändert | wirken auf `pads[pad]`. Leerer Platz → `badreq`. `playonly`, wenn die WAV **dieses** Pads fehlt. `roll` würfelt im Video des Pads, belegt sind die Starts der Pads mit demselben Video **(offen M3)** |
+| `newmix` | **neu** | Bank am Ende, Name „Mix-Bank“, 16 × `null`, wird aktiv. Antwort `{id}`. Undo = `delete`, Redo = `restore` (wie Neue Bank) **(M1)** |
+| `setpad` | **neu** | `{id, pad, video, start}` kopiert ein Pad auf einen Platz. `video: null` leert den Platz (Icon „leeren“ und Undo, **M5**). Das Fach wird beim Schneiden still, `lens 0`. Steht `video` nicht in `videos`, braucht es `info: {title, bpm?}` (Undo nach Löschen der Quellbank), sonst `badreq`. Schneiden nach 2.2. Keine Quelle → `playonly`, nichts geändert. Antwort `{}` |
+| `setstart`, `roll` | geändert | wirken auf `pads[pad]`. Leerer Platz → `badreq`. `playonly`, wenn die WAV **dieses** Pads fehlt. `roll` würfelt im Video des Pads, belegt sind die Starts der Pads mit demselben Video **(M3)** |
 | `setstarts` | geändert | `starts[16]`: setzt die Starts der belegten Pads, bei leeren wird der Wert ignoriert. Videos bleiben. Ohne WAV nur, wenn jedes neue `{video, start}` in einer Quelle nach 2.2 vorkommt |
 | `swap` | geändert | tauscht ganze Pad-Einträge (auch `null`) |
 | `select` | geändert | lädt fehlende WAVs **aller** Videos der Bank in den Cache, über die Warteschlange (siehe 7, Paket N) mit Vorrang für das Video des gewählten Pads |
@@ -159,7 +159,7 @@ Ersetzt `srcBpm`, `srcAuto`, `tuningCents`, `beats`, `beatsIn`, `beatsDown`, `be
 
 ### 4.3 Leerer Platz
 
-`l = 0` → `playRange` ergibt Dauer 0, `trigger` spielt nichts. **Fix:** `trigger` ruft `updateSel()` auch, wenn nichts klingt, damit das gewählte Pad beim Editor ankommt. `selinfo` bei leerem Platz: „Pad <n>  leer“. Pad-jsui: neue Nachricht `padempty <16 × 0/1>` aus `bank()`. Ein leeres Pad zeichnet `ytpads.js` dunkel und ohne Nummer **(offen M2)**.
+`l = 0` → `playRange` ergibt Dauer 0, `trigger` spielt nichts. **Fix:** `trigger` ruft `updateSel()` auch, wenn nichts klingt, damit das gewählte Pad beim Editor ankommt. `selinfo` bei leerem Platz: „Pad <n>  leer“. Pad-jsui: neue Nachricht `padempty <16 × 0/1>` aus `bank()`. Ein geleerter Platz kommt als neues `bank` (neu geschnitten) und ist danach dunkel. Ein leeres Pad zeichnet `ytpads.js` dunkel und ohne Nummer **(M2)**.
 
 ### 4.4 Anzeige
 
@@ -175,7 +175,7 @@ Ehrlich: **mittel**. Etwa 120 Zeilen ändern sich. Neue Logik ist kaum dabei, de
 
 - Zeile: Name, darunter klein bei Track-Bänken wie heute „Titel · BPM“, bei Mix-Bänken das Zeichen **Mix** vor dem Namen und darunter „<n> Tracks“.
 - „nur spielbar“, wenn ein Video der Bank nicht im Cache liegt (`bank.wav false`). Lädt ein Video der Bank: „lädt n %“ (Fortschrittszeilen aus der Session downloads übernehmen).
-- Knopf **„Neue Mix-Bank“** im Listenfuß neben „Alle nachladen“ → `newmix`, Schritt in der Historie **(offen M1)**.
+- Knopf **„Neue Mix-Bank“** im Listenfuß neben „Alle nachladen“ → `newmix`, Schritt in der Historie **(M1)**.
 
 ### 5.2 Waveform
 
@@ -189,16 +189,17 @@ Ehrlich: **mittel**. Etwa 120 Zeilen ändern sich. Neue Logik ist kaum dabei, de
 
 - Jedes Pad zeigt Nummer und Startzeit. Der Mini-Balken zeigt die Lage im **eigenen** Track (`videos[v].dur`, ohne Dauer kein Balken). In Mix-Bänken zeigt jedes Pad zusätzlich klein die ersten Zeichen des Videotitels, Tooltip mit dem ganzen Titel.
 - Leerer Platz: gestrichelt, „leer“, nimmt Ablagen an, Würfel aus.
+- Belegtes Pad: Icon **„leeren“** bei Hover und am gewählten Pad, neben dem Würfel → `setpad {id, pad, video: null}`. Schritt in der Historie „Pad <n> geleert“, Undo = `setpad` mit dem alten Eintrag plus `info`, Redo = `setpad` mit `null`. Geht auch ohne WAV (Stille braucht keine Quelle) **(M5)**.
 - Detailspalte: Video · BPM und Tempo-Knöpfe für das Video des gewählten Pads (`tempo` mit diesem Video). Leerer Platz: nur „leer“.
 - Pad auf Pad ziehen tauscht wie heute (`swap`), auch mit leeren Plätzen.
 
 ### 5.4 Quellleiste
 
-- Unter dem Pad-Raster, einklappbar (Zustand im `localStorage`, wie die Größen). Bei jeder Bank sichtbar **(offen M1)**.
+- Unter dem Pad-Raster, einklappbar (Zustand im `localStorage`, wie die Größen). Bei jeder Bank sichtbar **(M1)**.
 - Oben ein `<select>` mit allen Bänken außer der aktiven (Nummer + Name, Mix-Bänke mit „Mix“). Der Editor merkt sich pro Browser die zuletzt gewählte Quelle.
 - Darunter die 16 Pads der Quellbank als kleine Kacheln in einer Reihe (Pad 1 links): Nummer, Startzeit, Titel als Tooltip. Leere Plätze der Quelle sind ausgegraut und nicht ziehbar.
 - Kachel auf einen Platz ziehen → `setpad {id, pad, video, start}`. Ein belegter Platz wird ersetzt. Schritt in der Historie „Pad <n> aus <Quellbank>“. Undo = `setpad` mit dem alten Eintrag (bzw. `video: null`) plus `info` des alten Videos, Redo = `setpad` neu.
-- Vorhören gibt es nicht: reinziehen, anspielen, ⌘Z **(offen M4)**.
+- Vorhören gibt es nicht: reinziehen, anspielen, ⌘Z **(M4)**.
 - Gesperrt wie alles Schreibende (kaputte Bibliothek, kein Device).
 
 ### 5.5 Undo
@@ -206,6 +207,7 @@ Ehrlich: **mittel**. Etwa 120 Zeilen ändern sich. Neue Logik ist kaum dabei, de
 | Schritt | Undo | Redo |
 |---|---|---|
 | Pad aus Quelle | `setpad` alt (+ `info`) | `setpad` neu |
+| Pad leeren | `setpad` alt (+ `info`) | `setpad` mit `null` |
 | Neue Mix-Bank | `delete` | `restore` |
 | Start setzen, Neues Snippet | `setstarts` alt (wie heute) | `setstarts` neu |
 | Rest | wie Spec 2.0, 5.3 | |
@@ -220,7 +222,7 @@ Ehrlich: **mittel**. Etwa 120 Zeilen ändern sich. Neue Logik ist kaum dabei, de
 - `test_http.js`: `newmix`, `setpad` (mit und ohne `info`, `null`), `roll`/`setstart` auf leerem Platz → `badreq`, `device.video` folgt `sel`, `beats` wechselt mit dem Pad, `delete`/`restore` mit mehreren Videos.
 - `test_main.js`: Golden-Test Track-Bank (4.5). Mix: Warp-Faktor pro Pad (zwei Tempi), Tune mit `cent` pro Pad, Overlay-Linien pro Fach, leerer Platz spielt nichts, meldet aber `sel`. `padana` vor/nach `bank`.
 - `test_wiring.js`: neue Selektoren `padana`, `padempty`. Die weggefallenen haben keine Ziele mehr.
-- `test_editor.js` (`editor_mock.js` mit Mix-Bank): Mix-Zeichen, Waveform wechselt mit dem Pad, Marker nur fürs eigene Video, Quellleiste ziehen → `setpad`, Undo/Redo, leerer Platz, „Neue Mix-Bank“. Screenshots mit `--shots`.
+- `test_editor.js` (`editor_mock.js` mit Mix-Bank): Mix-Zeichen, Waveform wechselt mit dem Pad, Marker nur fürs eigene Video, Quellleiste ziehen → `setpad`, Icon „leeren“ → `setpad` mit `null` (auch ohne WAV), Undo/Redo, leerer Platz, „Neue Mix-Bank“. Screenshots mit `--shots`.
 - `test_e2e.js`: Mix-Bank aus zwei Videos anlegen, ins echte `[js]` laden, Anschlag auf beiden Videos mit Warp.
 
 **Prüft der Nutzer in Live:**
@@ -254,7 +256,7 @@ Regeln wie in 3.0: jedes Paket eine eigene Worktree-Session, normaler `git commi
 - **Abnahme:** ES5-grep, `node --check`, `test_main.js` mit Golden-Test und den Mix-Fällen aus 6, `test_ytgrid.js` grün.
 
 ### Paket E: Editor
-- **Ziel:** 5.1–5.5. Die Attrappe kennt format-2-`lib` (`pads`, `mix`, `videos.wav/dur`), `device.video` nach `sel`, `beats` pro Video, `newmix`, `setpad`.
+- **Ziel:** 5.1–5.5, mit Icon „leeren“ (5.3). Die Attrappe kennt format-2-`lib` (`pads`, `mix`, `videos.wav/dur`), `device.video` nach `sel`, `beats` pro Video, `newmix`, `setpad`.
 - **Abhängig:** Merge der Session downloads (Fortschrittszeilen in der Bibliothek).
 - **Abnahme:** `test_editor.js` mit den Fällen aus 6, Screenshots Track-Bank, Mix-Bank, leerer Platz, Quellleiste. Der Nutzer schaut einmal gegen die Attrappe drauf.
 
@@ -264,17 +266,15 @@ Regeln wie in 3.0: jedes Paket eine eigene Worktree-Session, normaler `git commi
 
 ## 8. Außerhalb
 
-Pads vorhören in der Quellleiste, Mix-Zeichen am Device, Pads aus Suchtreffern direkt in eine Mix-Bank (geht über eine neue Track-Bank als Quelle), Länge pro Pad, Verknüpfung statt Kopie, „Platz leeren“-Knopf (offen M5), Export.
+Pads vorhören in der Quellleiste, Mix-Zeichen am Device, Pads aus Suchtreffern direkt in eine Mix-Bank (geht über eine neue Track-Bank als Quelle), Länge pro Pad, Verknüpfung statt Kopie, Export.
 
-## 9. Offene Fragen an den Nutzer (über die Master-Session gestellt, 2026-11-02)
+## 9. Entschiedene Fragen
 
-Keine blockiert. Eingetragen ist jeweils die Empfehlung A.
-
-| # | Frage | Empfehlung (gilt bis zur Antwort) | Alternativen |
+| # | Frage | Antwort (Nutzer, 2026-11-02) | verworfen |
 |---|---|---|---|
-| M1 | Wie entsteht eine Mix-Bank? | Knopf „Neue Mix-Bank“ (16 leere Plätze), Quellleiste bei jeder Bank | B: Quellleiste nur bei Mix-Bänken · C: kein Knopf, duplizieren + reinziehen |
-| M2 | Leere Plätze am Device | stumm, Pad dunkel ohne Nummer | B: stumm, sieht normal aus (dann kein `padempty`, `ytpads.js` bleibt) |
-| M3 | Neues Snippet in Mix-Bank | würfelt im Video des Pads | B: in Mix-Bänken gesperrt |
-| M4 | Quell-Pads vorhören | nein (reinziehen, anspielen, ⌘Z) | B: ja, braucht zweite Bank im Device (großer Umbau) |
-| M5 | „Platz leeren“ | nein, nur über Undo | B: Icon am Pad (`setpad` mit `null` gibt es schon) |
-| M6 | Zwei Macs | format 2, beide Macs gleichzeitig updaten | B: format 1 lesbar halten (riskant: 3.x schneidet Mix-Snippets falsch) |
+| M1 | Wie entsteht eine Mix-Bank? | Knopf „Neue Mix-Bank“ (16 leere Plätze), Quellleiste bei jeder Bank | Quellleiste nur bei Mix-Bänken · kein Knopf, duplizieren + reinziehen |
+| M2 | Leere Plätze am Device | stumm, Pad dunkel ohne Nummer | stumm, sieht normal aus |
+| M3 | Neues Snippet in Mix-Bank | würfelt im Video des Pads | in Mix-Bänken gesperrt |
+| M4 | Quell-Pads vorhören | nein (reinziehen, anspielen, ⌘Z) | ja, braucht zweite Bank im Device (großer Umbau) |
+| M5 | „Platz leeren“ | **ja, Icon „leeren“ am Pad** (Undo-Schritt, Device dunkel, Fach still) | nur über Undo |
+| M6 | Zwei Macs | format 2, beide Macs gleichzeitig updaten | format 1 lesbar halten (riskant: 3.x schneidet Mix-Snippets falsch) |
