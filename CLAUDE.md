@@ -2,6 +2,8 @@
 
 Max-for-Live-Instrument (macOS, Apple Silicon, Live 12 / Max 9) nach dem Vorbild von ypc2000.fun: 16 Slices eines YouTube-Tracks auf Pads, per MIDI fingerdrummen. Seit 2.0 kuratiert: Bänke (16 Pads aus einem Track, gespeichert als 16 Snippets à 16 s) in einer globalen Bibliothek, bearbeitet im Browser-Editor, auf der Bühne per `Bank`-Regler durchgeschaltet. Seit 3.0 **nur noch** kuratiert: Das Device spielt ausschließlich Bänke, kuratiert wird nur im Editor, der Editor spiegelt die Device-Regler. Begriffe in `GLOSSARY.md`. Spezifikationen: 2.0 in `.scratch/bank-editor/spec.md`, 3.0 in `.scratch/device-3/spec.md` (ändert nur, was dort steht, sonst gilt 2.0). Teletext, IR-Fernbedienung, Schreibmaschine und Spielen ohne Bank sind seit 3.0 weg, beschrieben in `.scratch/archiv/teletext-ir-schreibmaschine.md` (Code im Tag `v2.1.0`).
 
+**Offene Punkte und Stand der Arbeit:** `OFFEN.md` (zuerst lesen).
+
 **Charakter:** Live-Werkzeug für die Bühne, kein Produktionswerkzeug. Features, die zu speziell sind oder die Bedienung komplizierter machen, lehnt der Nutzer ab. Im Zweifel einfach halten und vorher fragen. Bewusst abgelehnt: Launch-Quantisierung (Clip-artig auf Takte; Input-Quantize per Toggle „Quant“ gibt es seit 1.1.0, Raster 1/32–1/4 per Menü „Quant Div“), Button zum Verschieben der „1“, Pads als Clip exportieren. Außerhalb von 2.0 (Spec 1): Pads aus mehreren Tracks, Länge pro Pad, Wiedergabe im Browser, Editor ohne Device, Auswahl zwischen Devices, Import der alten Favoriten, Export. Außerhalb von 3.0: Grid/Snap als eigener Schalter, Bankwahl-Regler im Editor spiegeln, Ersatz für IR oder Schreibmaschine.
 
 **Sprache:** Mit dem Nutzer Deutsch. UI-Beschriftungen und Code-Kommentare deutsch. Parameternamen (`parameter_longname`) sind englisch, so bleiben sie.
@@ -64,7 +66,7 @@ git clone https://github.com/eliasu/YTSampler.git ~/Sites/YTSampler
 cd ~/Sites/YTSampler && tools/deploy.sh
 ```
 - Gebraucht werden Ableton Live 12 mit Max 9 und für die Editor-Tests Chrome unter /Applications.
-- **Intel-Mac mit macOS 14:** Homebrew kann `yt-dlp` und `deno` dort nicht bauen. Stattdessen die fertigen Binaries von den GitHub-Releases nach `~/.local/bin` legen: `yt-dlp_macos` (als `yt-dlp`, ausführbar) und `deno-x86_64-apple-darwin.zip` (entpackt `deno`). `ffmpeg` geht weiter über brew. `~/.local/bin` steht in `EXTRA_PATHS` von Node, so findet das Device die Programme auch unter Live.
+- **Intel-Mac mit macOS 14:** Homebrew kann `yt-dlp` und `deno` dort nicht bauen. Stattdessen fertige Programme von den GitHub-Releases: **`yt-dlp_macos.zip`** (entpackte Fassung, nicht die Einzeldatei `yt-dlp_macos`: die entpackt sich bei jedem Start neu, braucht dann bis zu 1 min und staute sich hier zu über 160 hängenden Prozessen) nach `~/.local/yt-dlp-dir/`, Symlink `~/.local/bin/yt-dlp` → `../yt-dlp-dir/yt-dlp_macos`; `deno-x86_64-apple-darwin.zip` nach `~/.local/bin` (entpackt `deno`). `ffmpeg` geht weiter über brew. `~/.local/bin` steht in `EXTRA_PATHS` von Node, so findet das Device die Programme auch unter Live.
 - Bibliothek, Snippets und Sessions kommen über iCloud Drive (`YTSampler/`, dort „Geladen lassen“). Derselbe Apple-Account muss angemeldet sein.
 - Lokal bleibt `cache/` mit den ganzen WAVs (er baut sich beim Bearbeiten im Editor neu auf).
 - Die Erinnerungen von Claude unter `~/.claude/` kommen nicht mit. Was wichtig ist, steht deshalb hier.

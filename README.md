@@ -8,7 +8,7 @@ Spielt Bänke aus 16 Slices eines YouTube-Tracks per MIDI/Pads. Die Bänke stell
 brew install yt-dlp ffmpeg deno
 ```
 
-**Intel-Mac mit macOS 14:** Dort kann Homebrew `yt-dlp` und `deno` nicht bauen. Stattdessen `brew install ffmpeg` und die fertigen Programme von GitHub nach `~/.local/bin` legen: `yt-dlp_macos` von github.com/yt-dlp/yt-dlp/releases (umbenennen in `yt-dlp`, `chmod +x`) und `deno-x86_64-apple-darwin.zip` von github.com/denoland/deno/releases (entpacken). Das Device sucht dort von selbst.
+**Intel-Mac mit macOS 14:** Dort kann Homebrew `yt-dlp` und `deno` nicht bauen. Stattdessen `brew install ffmpeg` und die fertigen Programme von GitHub nach `~/.local/bin` legen: `yt-dlp_macos.zip` von github.com/yt-dlp/yt-dlp/releases nach `~/.local/yt-dlp-dir/` entpacken und `ln -s ../yt-dlp-dir/yt-dlp_macos ~/.local/bin/yt-dlp` (nicht die Einzeldatei `yt-dlp_macos`, die startet dort extrem langsam) und `deno-x86_64-apple-darwin.zip` von github.com/denoland/deno/releases (entpacken). Das Device sucht dort von selbst.
 
 yt-dlp braucht für YouTube inzwischen eine JavaScript-Runtime (deno). Wenn Downloads irgendwann fehlschlagen: `brew upgrade yt-dlp`, YouTube ändert öfter etwas.
 
