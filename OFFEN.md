@@ -25,7 +25,7 @@ Dann das Device in Live neu auf die Spur ziehen (nicht nur ersetzen, `poly~` lä
 **Nachträge nach der Spec** (stehen in `CLAUDE.md`, aber **nicht** in `.scratch/device-3/spec.md`):
 1. Button **Editor** im Device öffnet den Editor im Standardbrowser (Parameter `Open Editor`, gesperrt in den ersten 300 ms nach dem Laden).
 2. **Quant Div**: Menü unter Quant, Raster 1/32, 1/16, 1/8, 1/4 (Standard 1/16). Vier `metro` im Patch schicken `tick 0…3`, es zählt nur das eingestellte.
-3. **Catch** (Parameter `Quant Catch`, Standard aus, nur bei Raster 1/8 und 1/4): Bis zu einer Achtel zu spät klingt sofort, aber an der Stelle, die auf dem Raster schon erreicht wäre. Später wartet der Anschlag. Ist der Slice kürzer als die Verspätung, klingt er vom Anfang.
+3. **Catch** (Parameter `Quant Catch`, Standard aus, nur bei Raster 1/8 und 1/4): In der ersten Hälfte nach einem Rasterpunkt (zu spät) klingt sofort, aber an der Stelle, die auf dem Raster schon erreicht wäre. In der zweiten Hälfte (zu früh) wartet der Anschlag. Seit 2026-11-02: Grenze ist das halbe Raster, vorher fest eine Achtel (bei 1/8 zählte dadurch jeder Anschlag als zu spät). Ist der Slice kürzer als die Verspätung, klingt er vom Anfang.
 4. **Suche** direkt über die YouTube-Ergebnisseite (400–600 ms), bei Fehler oder ohne Treffer Rückfall auf `yt-dlp`. 15 Treffer.
 5. **Würfeln immer aufs Raster** (neue Bank, „Neues Snippet“): erst Taktanfänge, dann Schläge, frei nur ohne Beats.
 6. **Start im Editor verschoben:** Node meldet `bankbusy`, das Device hält Anschläge zurück, bis die neuen Snippets im Buffer sind (`bank` + `bufloaded`, höchstens 3 s). Entprellen 150 ms statt 500 ms.

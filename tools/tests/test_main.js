@@ -561,7 +561,7 @@ t('Quant Div: tick <index> nur vom eingestellten Raster, Anschlag wartet darauf'
     assert.strictEqual(m.on(1, 'playing').length, 1, 'noch kein neuer Tick: sofort');
 });
 
-t('Catch: bei 1/8 und 1/4 später einsteigen, Ende bleibt; bei 1/16 und aus wie bisher', function () {
+t('Catch: bei 1/8 und 1/4 zu spät (erste Rasterhälfte) später einsteigen, zu früh warten; bei 1/16 und aus wie bisher', function () {
     function setup(qdiv, on) {
         var m = load(SRC);
         startDevice(m);
@@ -580,11 +580,15 @@ t('Catch: bei 1/8 und 1/4 später einsteigen, Ende bleibt; bei 1/16 und aus wie 
     assert.ok(Math.abs(p[0][3] - (S0 + 100)) < 0.01, 'Start 100 ms versetzt');
     assert.ok(Math.abs(p[0][4] - (S0 + 500)) < 0.01, 'Ende auf dem Raster');
     assert.ok(Math.abs(p[0][5] - 400) < 0.01, 'Dauer gekürzt');
+    m = setup(2, 1); m.clock += 200; m.send('padhit', 2);   // 1/8: 50 ms vor dem nächsten Punkt = zu früh
+    assert.strictEqual(m.on(1, 'playing').length, 0, '1/8 zu früh: wartet');
+    m.clock += 50; m.send('tick', 2);
+    assert.strictEqual(m.on(1, 'playing')[0][3], S0, '1/8 zu früh: auf dem Tick vom Anfang');
     m = setup(3, 1);                       // 1/4: 200 ms aufholen, 300 ms warten
     m.clock += 200; m.send('padhit', 2);
     assert.ok(Math.abs(m.on(1, 'playing')[0][3] - (S0 + 200)) < 0.01);
     m = setup(3, 1); m.clock += 300; m.send('padhit', 2);
-    assert.strictEqual(m.on(1, 'playing').length, 0, 'über eine Achtel: wartet');
+    assert.strictEqual(m.on(1, 'playing').length, 0, 'zweite Rasterhälfte: wartet');
     m.clock += 200; m.send('tick', 3);
     assert.strictEqual(m.on(1, 'playing')[0][3], S0, 'auf dem Tick vom Anfang');
     m = setup(1, 1); m.clock += 20; m.send('padhit', 2);   // 1/16: Catch wirkt nicht

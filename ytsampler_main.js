@@ -488,8 +488,8 @@ function hit(i, v) {
     if (muted || durMs <= 0) return;           // stumm oder nichts geladen
     if (bankBusy) { busyQueue.push([i, v]); return; }
     var beat = 60000 / Math.max(20, P.bpm), step = beat * QDIV_BEATS[P.qdiv], since = nowMs() - qTick;
-    // Catch (nur Raster 1/8 und 1/4): bis zu einer Achtel zu spät klingt sofort, an der Stelle, die auf dem Raster schon erreicht wäre
-    var catchWin = P.quant && P.qcatch && P.qdiv >= 2 ? beat / 2 : 0;
+    // Catch (nur Raster 1/8 und 1/4): in der ersten Hälfte nach dem Rasterpunkt (zu spät) klingt sofort, an der Stelle, die auf dem Raster schon erreicht wäre. Zweite Hälfte (zu früh) wartet auf den nächsten Punkt
+    var catchWin = P.quant && P.qcatch && P.qdiv >= 2 ? step / 2 : 0;
     var wait = P.quant && since < step * 1.5 && since > (catchWin || Math.min(step, beat / 4) * QUANT_LATE);
     if (!wait && v === 0) {                    // Note-Off hinter seinem wartenden Note-On einreihen
         for (var n = 0; n < qQueue.length; n++) if (qQueue[n][0] === i) wait = true;
