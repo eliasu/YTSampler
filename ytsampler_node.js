@@ -58,9 +58,18 @@ const status = (t) => { Max.outlet('status', t); };
 // Zeichen entfernen, die in Max-Nachrichten Ärger machen
 const clean = (s) => String(s || '').replace(/[,;{}\\\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
 
+// Bekannte yt-dlp-Fehler in verständliche Hinweise übersetzen. Alte yt-dlp-Versionen scheitern an YouTube mit „No video formats“ o. ä.
+const YT_HINTS = [
+  [/ffmpeg|ffprobe|WAV fehlt/i, 'ffmpeg fehlt → Terminal: brew install ffmpeg'],
+  [/JavaScript runtime|\bdeno\b/i, 'deno fehlt → Terminal: brew install deno'],
+  [/No video formats|Requested format is not available|nsig|Precondition check failed|HTTP Error 403|Sign in to confirm|latest version/i,
+    'yt-dlp veraltet (YouTube verweigert den Download) → Terminal: brew upgrade yt-dlp'],
+];
 function errMsg(e) {
   if (e && e.code === 'ENOENT') return 'yt-dlp nicht gefunden → Terminal: brew install yt-dlp ffmpeg deno';
   const msg = clean(e && e.message ? e.message : e);
+  const hint = YT_HINTS.find(([re]) => re.test(msg));
+  if (hint) return 'Fehler: ' + hint[1];
   return 'Fehler: ' + msg.slice(0, 140);
 }
 
@@ -1314,55 +1323,66 @@ function rollBank(v) {
 
 // =====================================================================
 // Downloads im Editor-Weg (Spec 3.1). kind: select | fetch | newbank | fetchall.
-// Reihenfolge select/fetch vor newbank vor fetchall. Ein neues select/fetch bricht den laufenden Download
-// ab, ebenso jeder Wunsch höherer Stufe; der abgebrochene wartet dann wieder. Unter select/fetch gewinnt
-// der neueste, newbank und fetchall laufen der Reihe nach (Bänke entstehen in der gewünschten Folge).
+// Bis ED_PAR Downloads laufen gleichzeitig, der Rest wartet (Phase „queue“). Reihenfolge der Warteschlange:
+// select/fetch vor newbank vor fetchall. Sind alle Plätze belegt, bricht ein neues select/fetch den laufenden
+// mit der niedrigsten Stufe ab (unter select/fetch den ältesten), ebenso jeder Wunsch höherer Stufe;
+// der abgebrochene wartet dann wieder. Unter select/fetch gewinnt der neueste, newbank und fetchall der Reihe nach.
 // Fehlschlag setzt videoFail, fetchall überspringt solche Videos.
+// onPhase (optional, newBank): Fortschritt geht an den Aufrufer statt als job kind fetch.
 // Achtung Aufrufer: fetchVideo-Promise immer mit catch, sonst beendet ein Fehlschlag den Node-Prozess.
 // =====================================================================
 const FETCH_PRIO = { select: 0, fetch: 0, newbank: 1, fetchall: 2 };
-const edQueue = [];
-let edJob = null, edSeq = 0;
+const ED_PAR = 3;
+const edQueue = [], edJobs = [];
+let edSeq = 0;
 
-function fetchVideo(video, kind) {
+// Fortschritt an alle, die auf dieses Video warten
+function edPhase(e, phase, progress) {
+  if (e.waiters.some((w) => !w.onPhase)) libEvents.emit('job', { kind: 'fetch', video: e.video, phase, progress, left: edQueue.length });
+  e.waiters.forEach((w) => w.onPhase && w.onPhase(phase, progress));
+}
+
+function fetchVideo(video, kind, onPhase) {
   const prio = FETCH_PRIO[kind];
   return new Promise((resolve, reject) => {
-    let e = edJob && edJob.video === video ? edJob : edQueue.find((x) => x.video === video);
-    if (e) { e.prio = Math.min(e.prio, prio); if (!prio) e.seq = ++edSeq; e.waiters.push({ resolve, reject }); }
-    else { e = { video, prio, seq: ++edSeq, waiters: [{ resolve, reject }] }; edQueue.push(e); }
-    if (edJob && edJob !== e && (prio < edJob.prio || prio + edJob.prio === 0)) abort(edJob);   // edRun reiht ihn wieder ein
-    else edNext();
+    let e = edJobs.find((x) => x.video === video) || edQueue.find((x) => x.video === video);
+    if (e) { e.prio = Math.min(e.prio, prio); if (!prio) e.seq = ++edSeq; e.waiters.push({ resolve, reject, onPhase }); }
+    else { e = { video, prio, seq: ++edSeq, waiters: [{ resolve, reject, onPhase }] }; edQueue.push(e); }
+    if (edJobs.includes(e)) return;
+    if (edJobs.length >= ED_PAR) {
+      const v = edJobs.reduce((a, b) => (b.prio > a.prio || (b.prio === a.prio && b.seq < a.seq) ? b : a));
+      if (e.prio < v.prio || e.prio + v.prio === 0) abort(v);   // edRun reiht ihn wieder ein und startet den nächsten
+    } else edNext();
+    if (edQueue.includes(e)) edPhase(e, 'queue', 0);
   });
 }
 
 function edNext() {
-  if (edJob || !edQueue.length) return;
   edQueue.sort((a, b) => a.prio - b.prio || (a.prio ? a.seq - b.seq : b.seq - a.seq));
-  edRun(edQueue.shift());
+  while (edJobs.length < ED_PAR && edQueue.length) edRun(edQueue.shift());
 }
 
 async function edRun(e) {
-  edJob = e; e.aborted = false; e.child = null;
-  const kind = e.prio === 1 ? 'newbank' : 'fetch';
-  const job = (phase, progress) => libEvents.emit('job', { kind, video: e.video, phase, progress, left: edQueue.length });
+  edJobs.push(e); e.aborted = false; e.child = null;
+  const drop = () => edJobs.splice(edJobs.indexOf(e), 1);
   if (has(videoFail, e.video)) { delete videoFail[e.video]; libEvents.emit('status'); }
   try {
-    const info = await download(e.video, e, (ph, p) => { if (!e.aborted) job(ph, p); });
-    edJob = null;
-    if (kind === 'fetch') job('done', 100);   // newbank meldet selbst weiter
+    const info = await download(e.video, e, (ph, p) => { if (!e.aborted) edPhase(e, ph, p); });
+    drop();
+    if (e.waiters.some((w) => !w.onPhase)) libEvents.emit('job', { kind: 'fetch', video: e.video, phase: 'done', progress: 100, left: edQueue.length });   // newbank meldet selbst weiter
     libEvents.emit('cache', cacheSize());
     libEvents.emit('status');
     snipRefresh(e.video);
     e.waiters.forEach((w) => w.resolve(info));
   } catch (err) {
-    edJob = null;
-    if (e.aborted) edQueue.push(e);
+    drop();
+    if (e.aborted) { edQueue.push(e); edPhase(e, 'queue', 0); }
     else {
       const reason = errMsg(err).replace(/^Fehler: /, '');
       videoFail[e.video] = reason;
       const title = libNow.lib && libNow.lib.videos[e.video] ? libNow.lib.videos[e.video].title : e.video;
       const le = libErr('loadfail', `${title} – ${reason}`);
-      job('fail', 0);
+      edPhase(e, 'fail', 0);
       libEvents.emit('msg', { level: 'error', code: le.code, text: le.text });
       libEvents.emit('status');
       e.waiters.forEach((w) => w.reject(le));
@@ -1381,10 +1401,17 @@ function fetchAll() {
 
 // newbank (Spec 3.3): Track laden → Analyse → 16 Starts würfeln → Bank am Ende → schneiden. -> Bank-ID.
 // Aktiv machen (bank … an [js]) macht der Aufrufer. Wirft libErr (loadfail, libbroken, …).
-async function newBank(video, by) {
-  const job = (phase, progress, bankId) => libEvents.emit('job', { kind: 'newbank', video, bankId, phase, progress, left: edQueue.length });
+// tag (vom Editor) kommt in jedem job zurück: so findet jede ausgegraute Zeile ihren Fortschritt.
+// Geladen wird parallel, angelegt in der Reihenfolge der Aufrufe (nbChain).
+let nbChain = Promise.resolve();
+async function newBank(video, by, tag) {
+  const job = (phase, progress, bankId) => libEvents.emit('job', { kind: 'newbank', video, tag, bankId, phase, progress, left: edQueue.length });
+  const turn = nbChain;
+  let next;
+  nbChain = new Promise((r) => { next = r; });
   try {
-    const info = (hasWav(video) && readJson(path.join(CACHE, `${video}.json`))) || await fetchVideo(video, 'newbank');
+    const info = (hasWav(video) && readJson(path.join(CACHE, `${video}.json`))) || await fetchVideo(video, 'newbank', job);
+    await turn;
     job('analyse', 0);
     await new Promise((r) => setTimeout(r, 0));
     const starts = rollBank(video);
@@ -1396,6 +1423,8 @@ async function newBank(video, by) {
   } catch (e) {
     job('fail', 0);
     throw e;
+  } finally {
+    next();
   }
 }
 
@@ -1641,9 +1670,9 @@ const CMD = {
   },
   search: (q) => edSearch(q.q),
   newbank(q, by) {
-    need(isVideo(q.video));
+    need(isVideo(q.video) && (q.tag === undefined || (typeof q.tag === 'string' && /^[\w-]{1,40}$/.test(q.tag))));
     if (!libNow.lib) throw libBroken();
-    newBank(q.video, by).then((id) => sendBank(bankById(id))).catch((e) => {
+    newBank(q.video, by, q.tag).then((id) => sendBank(bankById(id))).catch((e) => {
       if (e.code !== 'loadfail') edEmit('msg', { level: 'error', code: e.code || 'cutfail', text: e.text || e.message });   // loadfail meldet der Download selbst
     });
   },
@@ -1866,7 +1895,7 @@ Max.outlet('needsession');
 
 // Für tools/tests/ (unter Max ohne Wirkung)
 module.exports = {
-  DATA, LOCAL, CACHE, SESSIONS, LIB_FILE, LIB_LOCK, BACKUP_DIR, ERR, LIB, libErr, libParse, libRead, libChange, libBackup, libEvents, get libNow() { return libNow; },
+  errMsg, DATA, LOCAL, CACHE, SESSIONS, LIB_FILE, LIB_LOCK, BACKUP_DIR, ERR, LIB, libErr, libParse, libRead, libChange, libBackup, libEvents, get libNow() { return libNow; },
   AN, SNIP_DIR, SNIP_MS, computeAnalysis, tempoFromOnset, saveAnalysis, readAnalysis, getAnalysis, ensureAnalysis, trackBeats, silentRanges,
   hasWav, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, cacheSize, videoFail,
   beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, newBank, get analysis() { return analysis; },

@@ -28,41 +28,73 @@ function setup(delay = 120) {
   return { node, max, log, until, events, leftovers, done: () => fs.rmSync(home, { recursive: true, force: true }) };
 }
 
-t('Editor: neuer Wunsch bricht den laufenden ab, keine halbe WAV, der abgebrochene lädt danach', async () => {
+// höchstens wie viele gleichzeitig laufen, aus dem Protokoll der Attrappe
+const maxRunning = (log) => { let n = 0, m = 0; for (const l of log) { n += l.startsWith('start') ? 1 : -1; m = Math.max(m, n); } return m; };
+const before = (log, x, y) => log.indexOf(x) >= 0 && log.indexOf(x) < log.indexOf(y);
+
+t('Editor: drei parallel, ein neuer Wunsch bricht den ältesten ab, keine halbe WAV, der abgebrochene lädt danach', async () => {
   const { node, log, until, leftovers, done } = setup();
-  const A = ID('A'), B = ID('B');
-  const pa = node.fetchVideo(A, 'fetch');
-  await until(() => log().includes('start ' + A));
-  const pb = node.fetchVideo(B, 'select');
+  const [A, B, C, D] = ['A', 'B', 'C', 'D'].map(ID);
+  const ps = [A, B, C].map((v) => node.fetchVideo(v, 'fetch'));
+  await until(() => [A, B, C].every((v) => log().includes('start ' + v)));
+  ps.push(node.fetchVideo(D, 'select'));
   await until(() => log().includes('kill ' + A));
   await sleep(50);
   assert.ok(!fs.existsSync(path.join(node.CACHE, `${A}.wav`)));
   assert.deepStrictEqual(leftovers().filter((n) => n.startsWith(A)), []);
-  const [ia, ib] = await Promise.all([pa, pb]);
-  assert.deepStrictEqual(log(), [`start ${A}`, `kill ${A}`, `start ${B}`, `end ${B}`, `start ${A}`, `end ${A}`], log().join(", "));
+  const [ia] = await Promise.all(ps);
+  const l = log();
+  assert.ok(before(l, `kill ${A}`, `start ${D}`) && l.lastIndexOf(`start ${A}`) > l.indexOf(`start ${D}`), l.join(', '));
+  assert.ok(maxRunning(l) <= 3, l.join(', '));
   assert.strictEqual(ia.raw, `Titel; ${A}`);
   assert.strictEqual(ia.title, `Titel ${A}`);
-  assert.ok(fs.existsSync(path.join(node.CACHE, `${A}.wav`)) && fs.existsSync(path.join(node.CACHE, `${B}.json`)));
-  assert.strictEqual(ib.id, B);
+  assert.ok([A, B, C, D].every((v) => fs.existsSync(path.join(node.CACHE, `${v}.wav`))));
   assert.deepStrictEqual(leftovers(), []);
   done();
 });
 
-t('Editor-Reihenfolge: select/fetch vor newbank vor fetchall, newbank und fetchall der Reihe nach', async () => {
+t('Editor-Reihenfolge: bei vollen Plätzen verdrängt select/fetch newbank verdrängt fetchall', async () => {
   const { node, log, until, done } = setup();
   const [X, Y, Z1, Z2, W] = ['X', 'Y', 'Z', 'Q', 'W'].map(ID);
   for (const v of [X, Y]) node.libChange('create', { video: v, title: v, starts: Array(16).fill(0).map((_, i) => i) }, 't');
   assert.deepStrictEqual(node.fetchAll(), { todo: 2 });
-  await until(() => log().includes('start ' + X));
-  const pz1 = node.fetchVideo(Z1, 'newbank'), pz2 = node.fetchVideo(Z2, 'newbank');
+  await until(() => log().includes('start ' + X) && log().includes('start ' + Y));
+  const pz1 = node.fetchVideo(Z1, 'newbank');
   await until(() => log().includes('start ' + Z1));
+  const pz2 = node.fetchVideo(Z2, 'newbank');
+  await until(() => log().includes('start ' + Z2));
   const pw = node.fetchVideo(W, 'fetch');
   await Promise.all([pz1, pz2, pw]);
-  await until(() => log().includes('end ' + Y));
-  assert.deepStrictEqual(log(), [
-    `start ${X}`, `kill ${X}`, `start ${Z1}`, `kill ${Z1}`, `start ${W}`, `end ${W}`,
-    `start ${Z1}`, `end ${Z1}`, `start ${Z2}`, `end ${Z2}`, `start ${X}`, `end ${X}`, `start ${Y}`, `end ${Y}`,
-  ]);
+  await until(() => log().filter((x) => x.startsWith('end')).length === 5);
+  const l = log();
+  assert.ok(before(l, `kill ${X}`, `start ${Z2}`) && before(l, `kill ${Y}`, `start ${W}`), l.join(', '));
+  assert.ok(!l.includes(`kill ${Z1}`) && !l.includes(`kill ${Z2}`), l.join(', '));
+  assert.ok(maxRunning(l) <= 3, l.join(', '));
+  done();
+});
+
+t('newbank parallel: eigene job-Zeile pro tag, vierte wartet sichtbar, Bänke in Klickfolge', async () => {
+  const { node, log, events, done } = setup(60);
+  const [V1, V2, V3, V4, V5] = ['1', '2', '3', '4', '5'].map(ID);
+  await node.fetchVideo(V2, 'fetch');   // V2 liegt schon im Cache und wäre sofort fertig
+  const ids = await Promise.all([V1, V2, V3, V4, V5].map((v, i) => node.newBank(v, 'c', 't' + i)));
+  const banks = node.libNow.lib.banks;
+  assert.deepStrictEqual(banks.map((b) => b.video), [V1, V2, V3, V4, V5]);
+  assert.deepStrictEqual(banks.map((b) => b.id), ids);
+  assert.ok(maxRunning(log().slice(2)) <= 3, log().join(', '));
+  const nb = events.filter(([ev, d]) => ev === 'job' && d.kind === 'newbank').map(([, d]) => d);
+  assert.ok(nb.some((d) => d.tag === 't4' && d.phase === 'queue'), 'fünfte wartet');
+  [0, 1, 2, 3, 4].forEach((i) => assert.strictEqual(nb.filter((d) => d.tag === 't' + i && d.phase === 'done').pop().bankId, ids[i]));
+  assert.ok(!events.some(([ev, d]) => ev === 'job' && d.kind === 'fetch' && d.video !== V2), 'newbank meldet nicht doppelt');
+  done();
+});
+
+t('errMsg: verständliche Hinweise für veraltetes yt-dlp, fehlendes ffmpeg/yt-dlp', () => {
+  const { node, done } = setup();
+  assert.match(node.errMsg(new Error('ERROR: [youtube] x: No video formats found!; please report this issue')), /yt-dlp veraltet.*brew upgrade yt-dlp/);
+  assert.match(node.errMsg(new Error('WAV fehlt – ist ffmpeg installiert?')), /ffmpeg fehlt/);
+  assert.match(node.errMsg(Object.assign(new Error('spawn yt-dlp ENOENT'), { code: 'ENOENT' })), /yt-dlp nicht gefunden/);
+  assert.strictEqual(node.errMsg(new Error('ERROR: Video unavailable')), 'Fehler: ERROR: Video unavailable');
   done();
 });
 

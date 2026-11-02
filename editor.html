@@ -295,7 +295,7 @@ const CLIENT = Math.random().toString(36).slice(2, 10);
 const HIST_MAX = 100, LAYOUT_KEY = 'ytsampler.editor.layout';
 const S = {
   conn: false, hello: null, lib: null, dev: null, beats: null, cache: null,
-  jobs: {}, newbank: null, sel: 0, zoom: 1, peaks: new Map(), play: null, drag: null,
+  jobs: {}, newbanks: [], sel: 0, zoom: 1, peaks: new Map(), play: null, drag: null,
 };
 
 // ---------- Hilfen ----------
@@ -313,7 +313,7 @@ function toast(text, opt = {}) {
 }
 // Fortschritt kommt von Node in Prozent (0–100), nicht als Anteil
 const pct = (p) => Math.round(Math.max(0, Math.min(100, Number(p) || 0))) + ' %';
-const JOB_TEXT = { info: 'lädt …', long: 'lädt …', convert: 'konvertiert', analyse: 'analysiert', cut: 'schneidet' };
+const JOB_TEXT = { queue: 'wartet', info: 'lädt …', long: 'lädt …', convert: 'konvertiert', analyse: 'analysiert', cut: 'schneidet' };
 const jobText = (j) => JOB_TEXT[j.phase] || 'lädt ' + pct(j.progress);
 let savedT;
 function flashSaved() { $('saved').textContent = 'gespeichert ✓'; clearTimeout(savedT); savedT = setTimeout(() => { $('saved').textContent = 'automatisch gespeichert'; }, 900); }
@@ -426,10 +426,15 @@ async function move(b, to) {
   const r = await cmd('move', { id, to });
   if (r.ok) pushStep({ label: 'Bank „' + b.name + '“ verschoben', undo: onBank(id, () => ['move', { id, to: from }]), redo: onBank(id, () => ['move', { id, to }]) });
 }
+newBank.n = 0;
 async function newBank(video, title) {
   closeSearch();
-  const r = await cmd('newbank', { video });
-  if (r.ok) { S.newbank = { video, title, phase: 'info', progress: 0 }; toast('Lädt „' + title + '“ …'); render(); }
+  // eigene ausgegraute Zeile pro Klick, Node schickt den tag in jedem job zurück
+  const nb = { tag: CLIENT + '-' + (++newBank.n), video, title, phase: 'queue', progress: 0 };
+  S.newbanks.push(nb); render();
+  const r = await cmd('newbank', { video, tag: nb.tag });
+  if (r.ok) toast('Lädt „' + title + '“ …');
+  else { S.newbanks = S.newbanks.filter((x) => x !== nb); render(); }
 }
 let holding = -1;
 // Pads per Tastatur, nach physischer Lage (KeyboardEvent.code) wie das 4×4, Pad 1 unten links. Beschriftung für deutsche Tastatur
@@ -468,12 +473,12 @@ function renderList() {
   if (editing != null || (S.drag && S.drag.kind === 'bank')) return; // Umbenennen oder Ziehen läuft
   const ul = $('banklist'), w = writable(), cb = curBank();
   // nur neu bauen, wenn sich etwas geändert hat: sonst gehen Klicks verloren, die auf ein play-Event fallen
-  const sig = JSON.stringify([S.lib, S.jobs, S.newbank, cb && cb.id, w, S.cache, S.beats && S.beats.bpm]);
+  const sig = JSON.stringify([S.lib, S.jobs, S.newbanks, cb && cb.id, w, S.cache, S.beats && S.beats.bpm]);
   if (sig === renderList.sig) return;
   renderList.sig = sig;
   ul.innerHTML = '';
   $('count').textContent = banks().length || '';
-  if (!banks().length && !S.newbank) {
+  if (!banks().length && !S.newbanks.length) {
     const li = document.createElement('li'); li.className = 'empty';
     li.innerHTML = S.lib && (S.lib.state === 'kaputt' || S.lib.state === 'neuer') ? 'Bibliothek nicht lesbar' : 'Noch keine Bank.<br><button class="small" style="margin-top:8px">Video suchen</button>';
     const sb = li.querySelector('button'); if (sb) { sb.disabled = !w; sb.onclick = openSearch; }
@@ -515,12 +520,12 @@ function renderList() {
     };
     ul.appendChild(li);
   });
-  if (S.newbank) {
+  S.newbanks.forEach((nb, i) => {
     const li = document.createElement('li'); li.className = 'pending';
-    li.innerHTML = '<span class="nr num">' + (banks().length + 1) + '</span><span class="name"></span><span></span>';
-    li.querySelector('.name').innerHTML = esc(S.newbank.title) + '<span class="sub">Neue Bank · ' + jobText(S.newbank) + '</span>';
+    li.innerHTML = '<span class="nr num">' + (banks().length + 1 + i) + '</span><span class="name"></span><span></span>';
+    li.querySelector('.name').innerHTML = esc(nb.title) + '<span class="sub">Neue Bank · ' + jobText(nb) + '</span>';
     ul.appendChild(li);
-  }
+  });
   $('fetchall').style.display = banks().some((b) => !b.wav) ? '' : 'none';
   $('fetchall').disabled = !w;
   const c = S.cache || (S.lib && S.lib.cache);
@@ -955,12 +960,11 @@ function connect() {
   on('msg', (m) => toast(m.text, { err: m.level === 'error' }));
   on('job', (j) => {
     const key = j.kind + ':' + (j.video || j.bankId);
-    if (j.kind === 'newbank' && S.newbank && j.video === S.newbank.video) {
-      S.newbank.progress = j.progress || 0; S.newbank.phase = j.phase;
-      if (j.phase === 'done') {
-        const nb = S.newbank; S.newbank = null;
-        if (j.bankId) { pushStep(creationStep('Neue Bank „' + nb.title + '“', j.bankId)); toast('Neue Bank angelegt'); }
-      }
+    const nb = j.kind === 'newbank' && S.newbanks.find((x) => x.tag === j.tag);
+    if (nb) {
+      nb.progress = j.progress || 0; nb.phase = j.phase;
+      if (j.phase === 'done' || j.phase === 'fail') S.newbanks = S.newbanks.filter((x) => x !== nb);   // fail meldet msg
+      if (j.phase === 'done' && j.bankId) { pushStep(creationStep('Neue Bank „' + nb.title + '“', j.bankId)); toast('Neue Bank angelegt'); }
     }
     if (j.phase === 'done' || j.phase === 'fail') delete S.jobs[key]; else S.jobs[key] = j;
   });

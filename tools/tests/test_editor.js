@@ -538,7 +538,11 @@ t('Fortschritt in Prozent, begrenzt auf 0–100, Phase als Text', async () => {
   await b.waitFor(`document.querySelectorAll('#results li img').length === 1`); await b.click('#results li');
   await b.waitFor(`/Neue Bank · lädt (25|50|75) %/.test($('banklist').textContent)`);
   const seen = await b.eval(`$('banklist').textContent.match(/lädt (\\d+) %/)[1]`); assert(+seen <= 100, seen);
-  await b.waitFor(`S.newbank === null && S.dev.bankId === 13`, 4000);
+  await b.waitFor(`!S.newbanks.length && S.dev.bankId === 13`, 4000);
+  // zwei neue Bänke gleichzeitig: zwei ausgegraute Zeilen mit eigenem Fortschritt
+  await b.eval(`newBank('Cy5BraBra00', 'Erste'); newBank('Cy5BraBra00', 'Zweite')`);
+  await b.waitFor(`document.querySelectorAll('#banklist li.pending').length === 2 && /Erste/.test($('banklist').textContent) && /Zweite/.test($('banklist').textContent)`);
+  await b.waitFor(`!S.newbanks.length && !document.querySelector('#banklist li.pending')`, 4000);
 });
 
 t('Bank wechseln mit ↑/↓ und ◀ ▶', async () => {

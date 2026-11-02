@@ -456,6 +456,7 @@ t('newbank: {} sofort, job bis done mit bankId, Bank am Ende wird aktiv; fetch u
   assert.strictEqual(node.libNow.lib.banks[3].name, `Titel; ${V3}`);
   await a.wait((ev, d) => ev === 'lib' && d.banks.length === 4 && d.by === 'c1');
   assert.strictEqual((await cmd({ cmd: 'newbank', video: 'kurz' })).code, 'badreq');
+  assert.strictEqual((await cmd({ cmd: 'newbank', video: V3, tag: 'a b' })).code, 'badreq');
 
   // gescheiterter Download: msg loadfail, fail im lib
   const F = 'FAILFAILFAI';

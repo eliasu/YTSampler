@@ -66,6 +66,7 @@ git clone https://github.com/eliasu/YTSampler.git ~/Sites/YTSampler
 cd ~/Sites/YTSampler && tools/deploy.sh
 ```
 - Gebraucht werden Ableton Live 12 mit Max 9 und für die Editor-Tests Chrome unter /Applications.
+- **`yt-dlp` aktuell halten:** YouTube bricht ältere Versionen nach wenigen Wochen. Typische Meldung „No video formats found“ / HTTP 403, im Editor „yt-dlp veraltet → brew upgrade yt-dlp“. Abhilfe: `brew upgrade yt-dlp` (Apple Silicon: `/opt/homebrew/bin`, steht in `EXTRA_PATHS`). So war es nach dem Umzug auf den M-Mac (2026.08.19 → 2026.10.26).
 - **Intel-Mac mit macOS 14:** Homebrew kann `yt-dlp` und `deno` dort nicht bauen. Stattdessen fertige Programme von den GitHub-Releases: **`yt-dlp_macos.zip`** (entpackte Fassung, nicht die Einzeldatei `yt-dlp_macos`: die entpackt sich bei jedem Start neu, braucht dann bis zu 1 min und staute sich hier zu über 160 hängenden Prozessen) nach `~/.local/yt-dlp-dir/`, Symlink `~/.local/bin/yt-dlp` → `../yt-dlp-dir/yt-dlp_macos`; `deno-x86_64-apple-darwin.zip` nach `~/.local/bin` (entpackt `deno`). `ffmpeg` geht weiter über brew. `~/.local/bin` steht in `EXTRA_PATHS` von Node, so findet das Device die Programme auch unter Live.
 - Bibliothek, Snippets und Sessions kommen über iCloud Drive (`YTSampler/`, dort „Geladen lassen“). Derselbe Apple-Account muss angemeldet sein.
 - Lokal bleibt `cache/` mit den ganzen WAVs (er baut sich beim Bearbeiten im Editor neu auf).
@@ -154,6 +155,7 @@ So geschrieben bleiben beide Dateien byte-identisch zum bisherigen Format. Aus d
 - **Analyseformat (`AN.VERSION`) nur abwärtskompatibel ändern.** Analysen in `D/snippets/` lassen sich nicht neu rechnen, wenn die ganze WAV fehlt. Neue Felder anhängen, `AN.VERSION` erhöhen und die alte Version in `AN_READABLE` behalten. Unbekannte Version = „Analyse fehlt“ (im Cache wird neu gerechnet, in D nie überschrieben).
 - **`library.json`** nur über `libChange()` schreiben (Sperre, frisch lesen, `rev + 1`, tmp + `fsync` + `rename`). Unbekannte Felder bleiben erhalten. Kaputt oder `format > 1` → nie anfassen.
 - **Node-Downloads immer mit `.catch`** (`fetchVideo`, `newBank`), sonst beendet ein Fehlschlag den Prozess.
+- **Downloads im Editor:** bis `ED_PAR` (3) laufen parallel, der Rest wartet (job-Phase `queue`, im Editor „wartet“). Volle Plätze: select/fetch verdrängt newbank verdrängt fetchall. `newbank` trägt ein `tag` vom Editor, das in jedem `job` zurückkommt (eine ausgegraute Zeile pro Klick). Angelegt werden die Bänke trotzdem in Klickfolge (`nbChain`). Bekannte yt-dlp-Fehler übersetzt `errMsg` per `YT_HINTS`.
 - **Suche:** erst direkt über die YouTube-Ergebnisseite (`fastSearch`, unter 1 s), bei Fehler oder ohne Treffer `yt-dlp`. Tests setzen `YTS_NO_FAST_SEARCH` und starten nie das echte `yt-dlp` (`harness.js`).
 - **Würfeln (`roller`):** immer aufs Raster, solange Beats da sind, auch bei unsicherem Tempo: erst Taktanfänge, dann Schläge.
 - **Webserver:** Ist 8765 belegt (zweites Device), weicht er auf bis zu 8770 aus. Der Editor kennt nur 8765 (= erstes Device).

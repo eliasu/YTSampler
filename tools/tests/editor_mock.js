@@ -191,7 +191,7 @@ function createMock(opts = {}) {
       }
       case 'newbank': {
         const v = q.video; if (!VIDEOS[v]) return fail('badreq');
-        job('newbank', { video: v }, () => {
+        job('newbank', { video: v, tag: q.tag }, () => {
           const k = { id: m.lib.nextId++, name: VIDEOS[v][0], video: v, starts: makeStarts(v, m.lib.nextId), snip: 'ok', wav: true };
           if (!m.lib.videos[v]) m.lib.videos[v] = { title: VIDEOS[v][0] };
           m.lib.banks.push(k); m.lib.state = 'ok'; changed(q.client); activate(k);
