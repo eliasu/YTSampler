@@ -124,22 +124,22 @@ t('ohne Snippets und ohne WAV: nosnip; mit WAV schneidet snipEnsure sofort', () 
   done();
 });
 
-t('Entprellen: mehrere Änderungen -> einmal geschnitten, 500 ms nach der letzten', async () => {
+t('Entprellen: mehrere Änderungen -> einmal geschnitten, kurz nach der letzten', async () => {
   const { node, id, bank, done } = setup();
   const cuts = [];
   node.libEvents.on('job', (j) => { if (j.kind === 'cut' && j.phase === 'done') cuts.push(Date.now()); });
   await sleep(100);
   const t0 = Date.now();
   node.libChange('setstart', { id, pad: 1, ms: 1100 }, 'c');
-  await sleep(300);
+  await sleep(70);
   node.libChange('setstart', { id, pad: 2, ms: 2600 }, 'c');
   const t1 = Date.now();
-  await sleep(300);
+  await sleep(70);
   assert.strictEqual(cuts.length, 0);
   assert.strictEqual(node.snipStatus(bank()).snip, 'stale');
   await sleep(1500);   // erster Schnitt rechnet auch die Analyse
   assert.strictEqual(cuts.length, 1);
-  assert.ok(cuts[0] - t1 >= 490 && cuts[0] - t0 > 700, `geschnitten nach ${cuts[0] - t1} ms`);
+  assert.ok(cuts[0] - t1 >= 140 && cuts[0] - t0 > 200, `geschnitten nach ${cuts[0] - t1} ms`);
   assert.ok(node.snipCurrent(bank()));
   done();
 });

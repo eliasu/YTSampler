@@ -1076,7 +1076,7 @@ const SNIP_DIR = path.join(DATA, 'snippets');
 const SNIP_MS = 16000;
 const SNIP_SR = 44100, BPF = 4;                      // 16 Bit Stereo: 4 Byte pro Frame
 const SLOT_BYTES = SNIP_MS * SNIP_SR / 1000 * BPF;   // ein Fach
-const SNIP_DEBOUNCE = 500;
+const SNIP_DEBOUNCE = 150;
 const SNIP_KEEP_MS = 7 * 86400000;                   // Snippets gelöschter Bänke (Undo)
 const CACHE_WARN = 10000000000;
 fs.mkdirSync(SNIP_DIR, { recursive: true });
@@ -1191,7 +1191,7 @@ function snipEnsure(bank) {
   return { path: snipWav(bank.id), ...j };
 }
 
-// Neu schneiden, 500 ms nach der letzten Änderung der Bank
+// Neu schneiden, kurz nach der letzten Änderung der Bank
 function snipSchedule(id) {
   clearTimeout(snipTimers.get(id));
   snipTimers.set(id, setTimeout(() => {
@@ -1446,7 +1446,15 @@ function sendLibstate() {
 }
 const bpmToDevice = (v, bpm) => { const b = bankById(activeId); if (b && b.video === v) Max.outlet('bpm', v, bpm); };
 
-libEvents.on('change', (stand, by) => { libBy = by; sendLibstate(); edDirty('lib'); edDirty('device'); edDirty('beats'); });
+// Aktive Bank wird gleich neu geschnitten: [js] hält Anschläge zurück, bis die neuen Snippets im Buffer sind
+function busyIfStale(by) {
+  const b = bankById(activeId);
+  if (!b || by === 'extern' || snipCurrent(b)) return;
+  let ok;
+  try { ok = !!snipSource(b); } catch (e) { ok = false; }
+  if (ok) Max.outlet('bankbusy');
+}
+libEvents.on('change', (stand, by) => { busyIfStale(by); libBy = by; sendLibstate(); edDirty('lib'); edDirty('device'); edDirty('beats'); });
 libEvents.on('status', () => edDirty('lib'));
 libEvents.on('cache', () => edDirty('cache'));
 libEvents.on('job', (j) => edEmit('job', j));

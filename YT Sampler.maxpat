@@ -1995,6 +1995,24 @@
    },
    {
     "box": {
+     "id": "obj-211",
+     "maxclass": "message",
+     "numinlets": 2,
+     "numoutlets": 1,
+     "outlettype": [
+      ""
+     ],
+     "patching_rect": [
+      2880.0,
+      630.0,
+      70.0,
+      22.0
+     ],
+     "text": "bufloaded"
+    }
+   },
+   {
+    "box": {
      "id": "obj-180",
      "maxclass": "jsui",
      "numinlets": 1,
@@ -3128,6 +3146,30 @@
     "patchline": {
      "source": [
       "obj-210",
+      0
+     ],
+     "destination": [
+      "obj-1",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-4",
+      1
+     ],
+     "destination": [
+      "obj-211",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-211",
       0
      ],
      "destination": [

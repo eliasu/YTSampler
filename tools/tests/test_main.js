@@ -597,6 +597,27 @@ t('Catch: bei 1/8 und 1/4 später einsteigen, Ende bleibt; bei 1/16 und aus wie 
     assert.strictEqual(m.on(1, 'playing')[0][3], S0, 'kurzer Slice: Ton vom Anfang statt Stille');
 });
 
+t('bankbusy: Anschlag wartet auf neue Snippets im Buffer und spielt dann die neue Stelle', function () {
+    var m = load(SRC);
+    startDevice(m);
+    m.send.apply(null, bankMsg(7, 1, 100, '/x/7.wav'));
+    m.send('bpm', 120); m.take();
+    m.send('bankbusy');
+    m.send('padhit', 2); m.send('padup', 2);
+    assert.strictEqual(m.on(1, 'playing').length, 0, 'wartet');
+    m.send('bufloaded');                   // alter Ladevorgang: zählt erst nach bank
+    assert.strictEqual(m.on(1, 'playing').length, 0, 'noch keine neue Bank');
+    var neu = bankMsg(7, 1, 100, '/x/7.wav'); neu[3 + 1 + 2] = 77777;   // ['bank', id, nr, bpm, s0, s1, s2 …]
+    m.send.apply(null, neu);
+    assert.strictEqual(m.on(1, 'playing').length, 0, 'Buffer lädt noch');
+    m.send('bufloaded');
+    var p = m.on(1, 'playing');
+    assert.strictEqual(p.length, 1, 'jetzt');
+    assert.strictEqual(p[0][3], 77777, 'neue Stelle');
+    m.take(); m.send('padhit', 3);
+    assert.strictEqual(m.on(1, 'playing').length, 1, 'danach wieder sofort');
+});
+
 var bad = 0;
 tests.forEach(function (x) {
     try { x[1](); console.log('ok   ' + x[0]); }

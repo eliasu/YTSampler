@@ -78,7 +78,7 @@ t('Fehlschlag: loadfail mit Titel und Grund, fail gesetzt, fetchall überspringt
   await until(() => log().includes('end ' + C));
   assert.ok(!log().some((l) => l.includes(F)));
   const p = node.fetchVideo(F, 'fetch').catch(() => {});
-  assert.ok(!(F in node.videoFail), 'gilt bis zum nächsten Versuch');
+  await until(() => !(F in node.videoFail));   // gilt bis der nächste Versuch startet
   await p;
   assert.ok(F in node.videoFail);
   done();

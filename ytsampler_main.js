@@ -456,6 +456,19 @@ function padup(i) { hit(clamp(Math.floor(i), 0, NPADS - 1), 0); }
 // Läuft der Transport nicht, kommen keine Ticks und alles spielt sofort.
 var qTick = 0, qQueue = [];
 function quantize(v) { P.quant = v ? 1 : 0; if (!P.quant) tick(); sendBankstate(); }
+// Editor hat die aktive Bank geändert: Anschläge warten, bis die neu geschnittenen Snippets im Buffer sind,
+// sonst klingt die alte Stelle. Node meldet bankbusy, dann kommt bank, dann der Buffer (bufloaded). BUSY_MAX_MS als Sicherung.
+var BUSY_MAX_MS = 3000;
+var bankBusy = 0, busyGotBank = 0, busyQueue = [];
+var busyTask = new Task(function () { busyDone(); }, this);
+function bankbusy() { bankBusy = 1; busyGotBank = 0; busyTask.cancel(); busyTask.schedule(BUSY_MAX_MS); }
+function bufloaded() { if (bankBusy && busyGotBank) busyDone(); }
+function busyDone() {
+    busyTask.cancel();
+    bankBusy = 0; busyGotBank = 0;
+    var q = busyQueue; busyQueue = [];
+    for (var n = 0; n < q.length; n++) hit(q[n][0], q[n][1]);
+}
 function quantcatch(v) { P.qcatch = v ? 1 : 0; sendBankstate(); }
 function quantdiv(v) {
     P.qdiv = clamp(Math.floor(v), 0, QDIV_BEATS.length - 1);
@@ -473,6 +486,7 @@ function flushQueue() {
 }
 function hit(i, v) {
     if (muted || durMs <= 0) return;           // stumm oder nichts geladen
+    if (bankBusy) { busyQueue.push([i, v]); return; }
     var beat = 60000 / Math.max(20, P.bpm), step = beat * QDIV_BEATS[P.qdiv], since = nowMs() - qTick;
     // Catch (nur Raster 1/8 und 1/4): bis zu einer Achtel zu spät klingt sofort, an der Stelle, die auf dem Raster schon erreicht wäre
     var catchWin = P.quant && P.qcatch && P.qdiv >= 2 ? beat / 2 : 0;
@@ -570,6 +584,7 @@ function loadTarget() {
 function bank() {
     var a = arrayfromargs(arguments), i;
     var id = Math.floor(a[0]), nr = Math.floor(a[1]), bp = a[2];
+    if (bankBusy) busyGotBank = 1;
     var lens = a.slice(19, 35);
     st.bankId = id;
     videoId = String(a[36]);
