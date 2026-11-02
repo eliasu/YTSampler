@@ -2,10 +2,10 @@ import json, sys
 sys.path.insert(0, 'tools')
 from patchlib import Patch
 
-# ---------- Sampler-Voice: exakt der zuletzt funktionierende Stand ----------
+# ---------- Sampler-Voice: zuletzt funktionierender Stand + ext (Division live) ----------
 v = Patch()
 vin = v.obj("in 1", 0, 1, 30, 20)
-vrt = v.obj("route env pos rel gateoff", 2, 5, 30, 60)
+vrt = v.obj("route env pos rel gateoff ext", 2, 6, 30, 60)
 vposmsg = v.msg("$1, $2 $3", 160, 95)
 vposline = v.obj("line~", 2, 2, 160, 118, otypes=["signal", "bang"])
 vplay = v.obj("play~ #1 2", 1, 3, 160, 160, otypes=["signal", "signal", "signal"])
@@ -24,6 +24,8 @@ vo2 = v.obj("out~ 2", 1, 0, 230, 300)
 v.con(vin, 0, vrt, 0)
 v.con(vrt, 0, vline, 0)
 v.con(vrt, 1, vposmsg, 0); v.con(vposmsg, 0, vposline, 0); v.con(vposline, 0, vplay, 0)
+# ext <bis> <dauer>: ohne Sprung vom aktuellen Wert weiter (Division live)
+v.con(vrt, 4, vposline, 0)
 v.con(vrt, 2, vunp, 0); v.con(vunp, 1, vf, 1); v.con(vunp, 0, vdel, 0); v.con(vdel, 0, vf, 0)
 v.con(vf, 0, vpre, 0); v.con(vpre, 0, vline, 0)
 v.con(vrt, 3, vtfb, 0); v.con(vtfb, 1, vstop, 0); v.con(vstop, 0, vdel, 0)

@@ -19,6 +19,7 @@ Erst `tools/deploy.sh`, Device neu auf die Spur ziehen, dann:
 - Icons am Pad im Editor (Würfel, „leeren“) auf kleinen Pads: treffbar, überdecken sie Nummer und Startzeit nicht?
 - Bühne ohne Cache: Mix-Bank aus Pads anderer Bänke legen geht.
 - Zweiter Mac mit 3.x zeigt „Bibliothek aus neuerer Version“ (beide Macs gleichzeitig auf 4.0).
+- **Division live** (Zweig `mix-livediv`): Pad mit 1/8 anschlagen, auf 1 Takt drehen: läuft weiter, ohne Knacken? Zurückdrehen nach dem neuen Ende: kurzes Ausblenden statt Abriss? Mit Warp: Release neu terminiert (endet am neuen Ende, wird danach stumm)? Rückwärts?
 - Danach `release.sh 4.0.0`.
 
 Bekannte Grenze: „Leeren“ rückgängig machen ohne den ganzen Track im Cache geht nur, wenn eine andere Bank dasselbe Pad noch hat (sonst „nur spielbar“).

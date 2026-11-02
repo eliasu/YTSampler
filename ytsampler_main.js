@@ -346,7 +346,32 @@ function watchTrack() {
 // bpm <tempo> = Lives Tempo (Observer). Das Tempo der Videos kommt per padana
 function bpm(v) { P.bpm = v; updateSel(); }
 // Regler: jeder Handler meldet am Ende per bankstate an den Editor (direkt oder über updateSel)
-function division(v) { P.div = clamp(Math.floor(v), 0, DIVS.length - 1); updateSel(); }
+function division(v) { P.div = clamp(Math.floor(v), 0, DIVS.length - 1); if (ready()) retime(); updateSel(); }
+
+// Division live: klingende Trigger-Stimmen bekommen nur ein neues Ende (Position, Tempo, Tonhöhe bleiben)
+function retime() {
+    var t = nowMs();
+    for (var k = 0; k < VMAX; k++) {
+        var v = voices[k], i = v.pad;
+        if (i < 0 || v.hold || t >= v.end - v.rel || !B) continue;   // Hold, frei oder schon im Release
+        var lo = effStart(i), to = clamp(v.a + v.dir * sliceMs() * v.speed, lo, lo + B.lens[i]);
+        var p = v.from + v.dir * v.speed * (t - v.t);                    // aktuelle Position, Song-ms
+        var dur = v.dir * (to - p) / v.speed, o = engOut(v.eng);
+        outlet(o, "target", k + 1);
+        if (dur <= v.rel) {                                              // neues Ende schon (fast) vorbei: kurz ausblenden
+            outlet(o, "gateoff", v.rel);
+            v.end = t + v.rel;
+            outlet(2, "padflash", i, v.rel);
+            outlet(1, "playstop", i);
+            continue;
+        }
+        if (!v.eng) outlet(o, "ext", toBuf(i, to), dur);               // Sampler: line~ fährt von hier zum neuen Ende
+        outlet(o, "rel", dur - v.rel, v.rel);                           // Release neu terminieren
+        v.end = t + dur;
+        outlet(2, "padflash", i, dur);
+        outlet(1, "playing", i, p, to, dur);
+    }
+}
 function rate(v) { P.rate = clamp(v, 0.1, 4); updateSel(); }
 function playmode(v) { P.mode = v ? 1 : 0; updateSel(); }   // 0 = Trigger, 1 = Hold
 function reverse(v) { P.rev = v ? 1 : 0; sendBankstate(); }
@@ -494,6 +519,9 @@ function trigger(i, vel, late) {
         outlet(engOut(voices[k].eng), "gateoff", 5);
     }
     voices[k].pad = i; voices[k].end = t + dur; voices[k].t = t; voices[k].eng = eng;
+    // für retime(): Anker (Slice-Anfang vor Catch), Richtung, Quell-ms pro ms, Position bei t, Release
+    voices[k].hold = P.mode; voices[k].a = pr.from; voices[k].dir = to >= from ? 1 : -1;
+    voices[k].speed = speed; voices[k].from = from; voices[k].rel = rel;
 
     var o = engOut(eng);
     outlet(o, "target", k + 1);

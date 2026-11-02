@@ -736,6 +736,88 @@ t('Mix: padana vor bank verfällt, nach bank gilt, einzeln nach Tempo-Korrektur'
     assert.strictEqual(m.ctx.PA.length, 16);
 });
 
+// Division live: klingende Trigger-Stimmen bekommen nur ein neues Ende (ext/rel bzw. gateoff)
+function liveDev() {
+    var m = load(SRC);
+    startDevice(m);
+    sendBank(m, 7, 1, 100, '/x/7.wav');            // Video 100 BPM -> Warp-Faktor 1,2 bei Live 120
+    m.send('bpm', 120); m.send('division', 5);      // 1/8 = 250 ms
+    m.take();
+    return m;
+}
+function near(a, b) { assert.ok(Math.abs(a - b) < 1e-6, a + ' != ' + b); }
+function sig(m, n) { return m.on(n).map(function (o) { return o.slice(1).map(function (x) { return typeof x === 'number' ? Math.round(x * 1000) / 1000 : x; }); }); }
+
+t('Division live: Sampler verlängern und verkürzen vor der Position, ohne Sprung', function () {
+    var m = liveDev();
+    m.send('note', 36, 100, 1); m.take();           // Pad 0: 10000 -> 10250 in 250 ms
+    m.clock += 100; m.send('division', 7);          // 1/4: Ende 10500, jetzt bei 10100
+    assert.deepStrictEqual(sig(m, 0), [['target', 1], ['ext', 500, 400], ['rel', 380, 20]]);
+    assert.deepStrictEqual(m.on(1, 'playing').map(function (o) { return o.slice(2); }), [[0, 10100, 10500, 400]]);
+    assert.deepStrictEqual(m.on(2, 'padflash'), [[2, 'padflash', 0, 400]]);
+    m.take(); m.clock += 100; m.send('division', 5);   // zurück auf 1/8: Ende 10250, jetzt bei 10200
+    assert.deepStrictEqual(sig(m, 0), [['target', 1], ['ext', 250, 50], ['rel', 30, 20]]);
+    assert.deepStrictEqual(sig(m, 3), []);
+});
+
+t('Division live: neues Ende schon vorbei -> gateoff mit Release, danach nichts mehr', function () {
+    var m = liveDev();
+    m.send('division', 7); m.send('note', 36, 100, 1); m.take();
+    m.clock += 300; m.send('division', 5);          // Ende 10250, Position 10300
+    assert.deepStrictEqual(sig(m, 0), [['target', 1], ['gateoff', 20]]);
+    assert.deepStrictEqual(m.on(1, 'playstop'), [[1, 'playstop', 0]]);
+    m.take(); m.clock += 5; m.send('division', 9);  // im Release: bleibt aus
+    assert.deepStrictEqual(sig(m, 0), []);
+});
+
+t('Division live: rückwärts verkürzen und wieder verlängern, Klammer am Fachanfang', function () {
+    var m = liveDev();
+    m.send('reverse', 1); m.send('division', 7);
+    m.send('note', 37, 100, 1); m.take();           // Pad 1: 30500 -> 30000
+    m.clock += 100; m.send('division', 5);          // Ende 30250, Position 30400
+    assert.deepStrictEqual(sig(m, 0), [['target', 1], ['ext', 16250, 150], ['rel', 130, 20]]);
+    m.take(); m.clock += 50; m.send('division', 6); // 1/4T: Ende 30500 − 333,3, Position 30350
+    var e = m.on(0, 'ext')[0];
+    near(e[2], 16500 - 1000 / 3); near(e[3], 1000 / 3 - 150);   // Position 30350 bis 30166,7
+    m.take(); m.send('division', 10);               // 2 Takte: nie vor den Fachanfang
+    assert.deepStrictEqual(sig(m, 0), [['target', 1], ['ext', 16000, 350], ['rel', 330, 20]]);
+});
+
+t('Division live: Klammer am Snippet-Ende', function () {
+    var m = liveDev();
+    m.send('division', 9); m.send('note', 41, 100, 1); m.take();   // Pad 5: l = 3000, 1 Takt = 2000 ms
+    m.clock += 100; m.send('division', 10);         // 2 Takte wären 4000, Fach endet bei 3000
+    assert.deepStrictEqual(sig(m, 0), [['target', 1], ['ext', 83000, 2900], ['rel', 2880, 20]]);
+});
+
+t('Division live: Warp nur rel neu, Position/Tempo/Tonhöhe bleiben', function () {
+    var m = liveDev();
+    m.send('warp', 1); m.send('note', 36, 100, 1); m.take();   // R = 1,2: 300 Quell-ms in 250 ms
+    m.clock += 100; m.send('division', 7);          // Ende 10600, Position 10120 -> 400 ms
+    assert.deepStrictEqual(sig(m, 3), [['target', 1], ['rel', 380, 20]]);
+    assert.deepStrictEqual(sig(m, 0), []);
+    assert.deepStrictEqual(m.on(1, 'playing').map(function (o) { return o.slice(2); }), [[0, 10120, 10600, 400]]);
+});
+
+t('Division live: Hold unberührt, Rate wirkt nicht live, vor ready() nichts', function () {
+    var m = liveDev();
+    m.send('playmode', 1); m.send('note', 36, 100, 1); m.take();
+    m.clock += 100; m.send('division', 7);
+    assert.deepStrictEqual(sig(m, 0).concat(sig(m, 3)), []);
+
+    m = liveDev();
+    m.send('rate', 2); m.send('note', 36, 100, 1); m.take();   // 500 Quell-ms in 250 ms
+    m.send('rate', 1);
+    assert.deepStrictEqual(sig(m, 0), []);
+    m.clock += 100; m.send('division', 7);          // Geschwindigkeit bleibt 2: Ende 11000, Position 10200
+    assert.deepStrictEqual(sig(m, 0), [['target', 1], ['ext', 1000, 400], ['rel', 380, 20]]);
+
+    m = liveDev();
+    m.send('note', 36, 100, 1); m.take();
+    m.ctx.initDone = 0; m.clock += 100; m.send('division', 7);
+    assert.deepStrictEqual(sig(m, 0), []);
+});
+
 // Golden-Test (Spec Mix 4.5): Track-Bank, Anschläge und Reglerwechsel. Die Ausgänge 0, 2, 3 und playing/playstop
 // müssen gleich bleiben wie in 3.0 (aufgenommen in golden_trackbank.json). Nur das Laden unterscheidet sich.
 // Aufgenommen mit dem 3.0-Stand (Commit „Golden-Aufnahme“, Laden per bank/tuning/beats*), nicht neu aufnehmen.
@@ -807,6 +889,7 @@ function closeEnough(a, b, where) {
 }
 function goldenRun(loader) {
     var m = load(SRC);
+    m.ctx.retime = function () {};                 // Division live (4.x) gab es in 3.0 nicht, eigener Test oben
     startDevice(m);
     loader(m);
     return goldenScenario(m);

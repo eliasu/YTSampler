@@ -39,7 +39,7 @@ Seit 3.0 ist das Device nur noch das Bühneninstrument: Bank wählen und spielen
 | Bank | 1–128 direkt anwählen, z. B. per Encoder oder CC (CC 0 = Bank 1). Beim Drehen zeigt die Anzeige das Ziel, geladen wird erst, wenn der Regler 350 ms ruht. Über der letzten Bank steht „leer“, dann lädt nichts. |
 | ◀ ▶ | vorherige/nächste Bank, bleibt an der ersten und letzten stehen. Geht auch über 128 hinaus (der Regler bleibt auf 128, die Anzeige zeigt die echte Nummer). |
 | Pads | Noten ab Base Note (Standard C1 = 36) spielen Pad 1–16, Pad 1 unten links. **Alle MIDI-Kanäle** spielen Pads, welcher Controller ankommt, regelt der MIDI-Eingang der Spur. Maus-Klick geht auch. |
-| Slice | Notenwert 1/64 … 2 Takte, rechnet mit dem aktuellen Live-Tempo |
+| Slice | Notenwert 1/64 … 2 Takte, rechnet mit dem aktuellen Live-Tempo. Drehst du ihn, während Pads klingen (Trigger), endet der klingende Slice gleich am neuen Ende |
 | Rate | 0.25–2×, ändert Tonhöhe, die rhythmische Länge bleibt gleich |
 | Trigger / Hold | Trigger: spielt genau einen Slice (Notenwert). Hold: spielt, solange gedrückt, längstens 16 s (Ende des Snippets) |
 | Rev | rückwärts |

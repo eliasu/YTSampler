@@ -47,11 +47,11 @@
      "id": "obj-2",
      "maxclass": "newobj",
      "numinlets": 2,
-     "numoutlets": 5,
+     "numoutlets": 6,
      "patching_rect": [
       30.0,
       60.0,
-      187.0,
+      215.0,
       22.0
      ],
      "outlettype": [
@@ -59,9 +59,10 @@
       "",
       "",
       "",
+      "",
       ""
      ],
-     "text": "route env pos rel gateoff"
+     "text": "route env pos rel gateoff ext"
     }
    },
    {
@@ -392,6 +393,18 @@
      ],
      "destination": [
       "obj-5",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-2",
+      4
+     ],
+     "destination": [
+      "obj-4",
       0
      ]
     }

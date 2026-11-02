@@ -94,7 +94,8 @@ Vollständig in Spec 2.0 Abschnitt 6, Änderungen in Spec 3.0 Abschnitt 3. Freit
 
 **An die Stimmen** (immer erst `target <k>`, k = 1…16), Positionen in Buffer-ms:
 - beide: `env <wert> [<ms>]`, `rel <verzögerung> <releasezeit>`, `gateoff <releasezeit>`. Attack 2 ms, Release 20 ms fest (`ATK_MS`, `REL_MS`).
-- Sampler: `pos <von> <bis> <dauer>` (ms) → `line~` fährt die Leseposition, `play~` liest.
+- Sampler: `pos <von> <bis> <dauer>` (ms) → `line~` fährt die Leseposition, `play~` liest. `ext <bis> <dauer>` → dasselbe `line~` ohne Startwert, fährt also von der aktuellen Position zum neuen Ende.
+- **Division live** (`retime()`, nur nach `ready()`): Dreht man `Division`, während Trigger-Pads klingen, bekommt jede Stimme vor ihrem Release nur ein neues Ende: Anker (Slice-Anfang vor Catch, rückwärts das obere Ende) + Richtung × `sliceMs()` × gemerkte Geschwindigkeit, geklammert aufs Fach. Sampler `ext` + `rel`, Warp nur `rel` (alter Faktor R, auch mit Raster). Neues Ende schon vorbei → `gateoff` mit der Release-Zeit und `playstop`. Sonst `playing <pad> <jetzt> <bis> <rest>` neu. Rate, Tune, Warp wirken weiter erst beim nächsten Anschlag, Hold ist nie betroffen. Rückwärts endet ein Slice am Pad-Start, länger als der ursprüngliche Slice geht dann nicht. Der Golden-Test schaltet `retime` ab (gab es in 3.0 nicht).
 - Warp: `wplay <position> <tempo> <tonhöhe>` → `groove~ @timestretch 1`, Tempo als `sig~` (negativ = rückwärts), Tonhöhe per `pitchshift`. Die Stimme mutet sich via `thispoly~` 50 ms nach dem Release-Ende.
 
 **Song-ms / Buffer-ms:** Im Buffer liegt Fach *i* ab `i × 16000`. `[js]` rechnet intern in Song-ms und rechnet nur an den Ausgängen um (`toBuf`): Stimmen, `wsel`, `grid` (`dur 256000`, `pads` = 16 Fachgrenzen, `beats`/`bars` pro Fach). Song-ms bleiben: Infozeile, `padana`-Schläge, `bankstate`, `playing`. Song-ms sind die des Videos von Pad *i*. Ohne Bank (`B === null`) ist nichts geladen, `durMs = 0`, Pads tun nichts.
