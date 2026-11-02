@@ -230,7 +230,8 @@ function createMock(opts = {}) {
         b.pads[q.pad] = { video: q.video, start: q.start }; changed(q.client); syncDev(); return { ok: true };
       }
       case 'newmix': {
-        const k = { id: m.lib.nextId++, name: 'Neue Bank', pads: Array(16).fill(null), snip: 'ok', stage: false };
+        if (q.name !== undefined && typeof q.name !== 'string') return fail('badreq');
+        const k = { id: m.lib.nextId++, name: (q.name && q.name.trim().slice(0, 100)) || 'Neue Bank', pads: Array(16).fill(null), snip: 'ok', stage: false };
         m.lib.banks.push(k); m.lib.state = 'ok'; changed(q.client); activate(k); return { ok: true, id: k.id };
       }
       case 'hit': case 'up': {

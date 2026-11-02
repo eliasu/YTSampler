@@ -948,10 +948,11 @@ const LIB = {
     lib.banks.push({ id, name: bankName(name === undefined ? lib.videos[video].title : name), pads: starts.map((start) => ({ video, start })) });
     return { id };
   },
-  // Neue Bank: 16 leere Plätze am Ende (Flow-Nachtrag: jede neue Bank startet leer)
-  newmix(lib) {
+  // Neue Bank: 16 leere Plätze am Ende der Ablage (Flow-Nachtrag: jede neue Bank startet leer). name fehlt: „Neue Bank“
+  newmix(lib, { name }) {
+    need(name === undefined || typeof name === 'string');
     const id = lib.nextId++;
-    lib.banks.push({ id, name: 'Neue Bank', pads: Array(16).fill(null), stage: false });
+    lib.banks.push({ id, name: (name !== undefined && bankName(name)) || 'Neue Bank', pads: Array(16).fill(null), stage: false });
     return { id };
   },
   // Pad kopieren (video + start) oder Platz leeren (video null). Unbekanntes Video braucht info {title, bpm?}
@@ -1799,7 +1800,7 @@ const CMD = {
     sendBank(b);
   },
   newmix(q, by) {
-    const r = libChange('newmix', {}, by);
+    const r = libChange('newmix', { name: q.name }, by);
     trySend(bankById(r.id));
     return r;
   },

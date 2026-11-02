@@ -725,6 +725,26 @@ t('Suche → Pad: Treffer aufs Pad ziehen (überschreibt, Ladezustand), „Leere
   assert.deepStrictEqual(b.errors, []);
 });
 
+t('Suchtreffer → „Neue Bank“: Bank mit Videotitel in der Ablage, 16 Plätze aus dem Track, aktiv, ein Undo-Schritt', async () => {
+  await open('normal');
+  await b.key('k', 'KeyK', 75, CTRL); await b.type('Cymande'); await b.key('Enter', 'Enter', 13);
+  await b.waitFor(`!!$('results').querySelector('.newfrom') && !$('results').querySelector('.newfrom').disabled`);
+  m.log = []; await b.click('#results li .newfrom');
+  assert.deepStrictEqual(await waitLog((x) => x.cmd === 'newmix'), { client: last().client, cmd: 'newmix', name: 'Cymande – Bra' });
+  const fp = await waitLog((x) => x.cmd === 'fillpads');
+  assert.deepStrictEqual([fp.id, fp.video, fp.pads], [13, 'Cy5BraBra00', [...Array(16).keys()]]);
+  await b.waitFor(`S.dev.bankId === 13 && document.querySelectorAll('.pad.loading').length === 16 && !!document.querySelector('#shelflist li.on')`);
+  await b.waitFor(`!document.querySelector('.pad.loading') && !document.querySelector('.pad.empty') && /^Ablage/.test($('navname').textContent)`, 4000);
+  assert.strictEqual(await b.eval(`document.querySelector('#libscroll li.on .name').firstChild.textContent`), 'Cymande – Bra');
+  assert.strictEqual(await b.eval(`$('undo').title`), 'Rückgängig: Neue Bank „Cymande – Bra“ (⌘Z)', 'Füllen ohne eigenen Schritt');
+  m.log = []; await undoKey(b); assert.strictEqual((await waitLog((x) => x.cmd === 'delete')).id, 13);
+  await b.waitFor(`!S.lib.banks.some((x) => x.id === 13) && !histBusy`);
+  m.log = []; await redoKey(b);
+  const rs = await waitLog((x) => x.cmd === 'restore');
+  assert.deepStrictEqual([rs.bank.name, rs.bank.stage, rs.bank.pads.filter(Boolean).length], ['Cymande – Bra', false, 16]);
+  assert.deepStrictEqual(b.errors, []);
+});
+
 t('Cache leeren: Rückfrage mit Größe, gesperrt bei Download, danach nur spielbar und 0 GB', async () => {
   await open('normal');
   assert.strictEqual(await b.eval(`$('clearcache').disabled`), false);

@@ -209,6 +209,7 @@
   #results img { width:96px; height:54px; object-fit:cover; border-radius:5px; background:var(--raise); }
   #results .t { font-weight:500; } #results .m { color:var(--dim); font-size:12px; display:flex; gap:6px; align-items:center; margin-top:3px; }
   #results .fill { margin-left:auto; }
+  #results .m { flex-wrap:wrap; } #results .m button { white-space:nowrap; }
   #results .info { cursor:default; color:var(--dim); grid-template-columns:1fr; border-color:transparent; }
 
   /* Toast, kein Device */
@@ -324,7 +325,7 @@
 <aside id="panel">
   <div class="h"><b>Video suchen</b><button class="ghost" id="closesearch" title="Schließen (Esc)"><svg class="i"><use href="#i-x"/></svg></button></div>
   <input id="q" placeholder="Suchbegriff oder YouTube-URL …" autocomplete="off">
-  <div class="hint">Treffer anklicken: kommt auf das gewählte Pad. Auf ein Pad ziehen: kommt dorthin. „Leere Plätze füllen“: alle leeren Plätze der Bank. Die Stelle im Track wird gewürfelt.</div>
+  <div class="hint">Treffer anklicken: kommt auf das gewählte Pad. Auf ein Pad ziehen: kommt dorthin. „Leere Plätze füllen“: alle leeren Plätze der Bank. „Neue Bank“: neue Bank in der Ablage, alle 16 Plätze aus dem Track. Die Stelle im Track wird gewürfelt.</div>
   <ul id="results"></ul>
 </aside>
 <div id="toast"></div>
@@ -494,6 +495,14 @@ async function clearPad(i) {
   const r = await cmd('setpad', { id, pad: i, video: null });
   if (r.ok) pushStep(step);
 }
+// Knopf „Neue Bank“ am Suchtreffer: Bank mit dem Videotitel in der Ablage, alle 16 Plätze aus dem Track. Ein Undo-Schritt (= löschen)
+async function newFromVideo(video, title) {
+  if (!writable()) return;
+  const r = await cmd('newmix', { name: title });
+  if (!r.ok) return;
+  pushStep(creationStep('Neue Bank „' + title + '“', r.id));
+  fillVideo(video, title, [...Array(16).keys()], r.id);
+}
 async function newEmptyBank() {
   const r = await cmd('newmix');
   if (r.ok) { pushStep(creationStep('Neue Bank', r.id)); toast('Neue Bank angelegt'); }
@@ -530,12 +539,13 @@ const loadingPad = (i, id = S.dev && S.dev.bankId) => S.fills.some((f) => f.id =
 const fillOf = (i, id) => S.fills.find((f) => f.id === id && f.pads.includes(i));
 const emptyPads = (b) => (b ? [...Array(16).keys()].filter((i) => !b.pads[i] && !loadingPad(i, b.id)) : []);
 fillVideo.n = 0;
-async function fillVideo(video, title, pads) {
-  const b = curBank(); if (!b || !writable()) return;
+// id: Bank, die gerade angelegt wurde (newFromVideo), dann ohne eigenen Undo-Schritt
+async function fillVideo(video, title, pads, id) {
+  const b = id ? { id } : curBank(); if (!b || !writable()) return;
   if (!pads.length) { toast('Keine leeren Plätze', { err: true }); return; }
-  if (pads.some((i) => loadingPad(i))) { toast('Pad lädt gerade', { err: true }); return; }
+  if (pads.some((i) => loadingPad(i, b.id))) { toast('Pad lädt gerade', { err: true }); return; }
   closeSearch();
-  const f = { tag: CLIENT + '-' + (++fillVideo.n), id: b.id, video, title, pads, phase: 'queue', progress: 0 };
+  const f = { tag: CLIENT + '-' + (++fillVideo.n), id: b.id, video, title, pads, phase: 'queue', progress: 0, noStep: !!id };
   S.fills.push(f); render();
   const r = await cmd('fillpads', { id: b.id, video, pads, tag: f.tag });
   if (!r.ok) { S.fills = S.fills.filter((x) => x !== f); render(); }
@@ -856,6 +866,7 @@ function renderPads() {
   $('padhint').textContent = 'Klick oder Taste spielt · auf anderes Pad ziehen tauscht · aus Quelle oder Suche ziehen setzt ein';
   const many = bankVideos(vw.bank).length > 1, nEmpty = emptyPads(vw.bank).length;
   document.querySelectorAll('#results .fill').forEach((x) => { x.disabled = !nEmpty || !writable(); });
+  document.querySelectorAll('#results .newfrom').forEach((x) => { x.disabled = !writable(); });
   for (let i = 0; i < 16; i++) {
     const p = $('pad' + i), pd = vw.bank.pads[i], e = pd ? vinfo(pd.video) : {}, dur = e.dur, f = fillOf(i, vw.bank.id);
     p.classList.toggle('sel', i === S.sel); p.classList.toggle('empty', !pd); p.classList.toggle('loading', !!f); p.draggable = swappable;
@@ -1026,11 +1037,13 @@ async function runSearch() {
   r.results.forEach((x) => {
     const li = document.createElement('li'); li.draggable = true;
     li.innerHTML = '<img loading="lazy" alt=""><div><div class="t"></div><div class="m num">' + fmtDur(x.dur) + (x.long ? '<span class="tag">nur 10 min</span>' : '')
-      + '<button class="small fill" title="Alle leeren Plätze der Bank mit Stellen aus diesem Track füllen">Leere Plätze füllen</button></div></div>';
+      + '<button class="small fill" title="Alle leeren Plätze der Bank mit Stellen aus diesem Track füllen">Leere Plätze füllen</button>'
+      + '<button class="small newfrom" title="Neue Bank (Ablage) mit 16 Stellen aus diesem Track">Neue Bank</button></div></div>';
     li.querySelector('img').src = 'https://i.ytimg.com/vi/' + encodeURIComponent(x.id) + '/mqdefault.jpg';
     li.querySelector('.t').textContent = x.title;
     li.onclick = (e) => { if (!e.target.closest('button')) fillVideo(x.id, x.title, [S.sel]); };
     li.querySelector('.fill').onclick = () => fillVideo(x.id, x.title, emptyPads(curBank()));
+    li.querySelector('.newfrom').onclick = () => newFromVideo(x.id, x.title);
     li.ondragstart = (e) => { S.drag = { kind: 'video', id: x.id, title: x.title }; e.dataTransfer.setData('text/plain', x.title); setTimeout(() => { if (S.drag) document.body.classList.add('dragging'); }, 0); };
     li.ondragend = () => { S.drag = null; document.body.classList.remove('dragging'); };
     ul.appendChild(li);
@@ -1141,7 +1154,8 @@ function connect() {
       const f = S.fills.find((x) => x.tag === j.tag); if (!f) return;
       f.progress = j.progress || 0; f.phase = j.phase;
       if (j.phase === 'done' || j.phase === 'fail') S.fills = S.fills.filter((x) => x !== f);   // fail meldet msg
-      if (j.phase === 'done') {
+      if (j.phase === 'done' && f.noStep) toast('Neue Bank „' + f.title + '“ gefüllt');
+      else if (j.phase === 'done') {
         const label = (f.pads.length === 1 ? 'Pad ' + (f.pads[0] + 1) : f.pads.length + ' Plätze') + ' aus „' + f.title + '“';
         pushStep(fillStep(label, f.id, f.pads, j.before, j.after, j.videos)); toast(label);
       }

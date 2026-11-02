@@ -579,6 +579,12 @@ t('newmix, setpad (mit/ohne info, null), leerer Platz badreq, device.video und b
   await until(() => on('analysisready').length, 'analysisready leer');
   assert.deepStrictEqual(on('padana'), []);
 
+  // newmix mit Name (Knopf „Neue Bank“ am Suchtreffer); Name kein Text: badreq
+  assert.deepStrictEqual(await cmd({ cmd: 'newmix', name: '  Titel; Track  ' }), { ok: true, id: 5 });
+  assert.deepStrictEqual([node.libNow.lib.banks[4].name, node.libNow.lib.banks[4].stage], ['Titel; Track', false]);
+  assert.strictEqual((await cmd({ cmd: 'newmix', name: 3 })).code, 'badreq');
+  await cmd({ cmd: 'delete', id: 5 });
+  await cmd({ cmd: 'select', id: 4 });
   // Pad aus Bank 1 (V1, WAV da) und aus Bank 2 (V2, ohne WAV, aus deren Snippets)
   assert.deepStrictEqual(await cmd({ cmd: 'setpad', id: 4, pad: 0, video: V1, start: STARTS[2] }), { ok: true });
   assert.deepStrictEqual(await cmd({ cmd: 'setpad', id: 4, pad: 1, video: V2, start: STARTS[15] }), { ok: true });
