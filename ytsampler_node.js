@@ -919,7 +919,7 @@ function libWrite(lib) {
   } catch (e) { throw libErr('writefail', clean(e.message).slice(0, 80)); }
 }
 
-// videos-Eintrag lebt nur, solange ein Pad ihn benutzt
+// videos-Eintrag ohne Pad: bleibt während der Sitzung (Undo), fällt erst beim Start weg (keepCleanup)
 function dropOrphans(lib) {
   const used = new Set(lib.banks.flatMap(padVideos));
   for (const v of Object.keys(lib.videos)) if (!used.has(v)) delete lib.videos[v];
@@ -963,6 +963,8 @@ const LIB = {
     }
     lib.banks[i].pads[pad] = { video, start };
   },
+  // beim Start: videos-Einträge ohne Pad weg
+  prune(lib) { dropOrphans(lib); },
   // fillpads: mehrere Plätze aus einem Video in einem Schritt
   fill(lib, { id, pads, video, starts, info }) {
     need(Array.isArray(pads) && Array.isArray(starts) && pads.length === starts.length);
@@ -1048,7 +1050,6 @@ function libChange(op, args, by) {
     // libNow bleibt: libWatch merkt den Wechsel und meldet ihn an [js] und Editor
     if (!r.lib) throw libErr(r.state === 'neuer' ? 'libnewer' : 'libbroken');
     res = LIB[op](r.lib, args) || {};
-    dropOrphans(r.lib);
     r.lib.rev++;
     libWrite(r.lib);
     libNow = { state: libState(r.lib), lib: r.lib, error: '', text: null };
@@ -1157,7 +1158,51 @@ function findSlot(p, bankId, memo) {
     const k = m ? m.j.pads.findIndex((q) => samePad(p, q)) : -1;
     if (k >= 0) return { id, k, ...m };
   }
+  // Ablage (geleerte/überschriebene Pads, Flow-Nachtrag): ein Fach pro {video, start}
+  const kb = keepBase(p), kj = kb && readJson(kb + '.json');
+  if (isObj(kj) && isInt(kj.len, 0)) {
+    try { return { file: kb + '.wav', k: 0, j: { lens: [kj.len], durs: typeof kj.dur === 'number' ? { [p.video]: kj.dur } : {} }, w: wavInfo(kb + '.wav') }; } catch (e) { /* WAV fehlt */ }
+  }
   return null;
+}
+
+// Ablage D/snippets/keep/<video>_<start>.wav (+ .json {len, dur}): Audio eines Pads, das geleert oder überschrieben
+// wird. So geht Undo auch ohne ganzen Track im Cache. Aufgeräumt nur beim Start (keepCleanup).
+const KEEP_DIR = path.join(SNIP_DIR, 'keep');
+const keepBase = (p) => (/^[\w-]{11}$/.test(p.video) ? path.join(KEEP_DIR, `${p.video}_${p.start}`) : null);
+function keepPad(p, bankId) {
+  const kb = p && keepBase(p);
+  if (!kb || fs.existsSync(kb + '.json')) return;
+  const tmp = path.join(KEEP_DIR, `keep.${process.pid}.tmp`);
+  try {
+    const src = snipSource({ id: bankId, pads: [p, ...Array(15).fill(null)] });
+    if (!src) return;   // keine Quelle: dann ging es vorher auch nicht
+    const [file, pos, bytes] = src.slots[0], buf = Buffer.alloc(SLOT_BYTES);
+    const fd = fs.openSync(file, 'r');
+    try { fs.readSync(fd, buf, 0, bytes, pos); } finally { fs.closeSync(fd); }
+    fs.mkdirSync(KEEP_DIR, { recursive: true });
+    fs.writeFileSync(tmp, Buffer.concat([wavHeader(SLOT_BYTES), buf]));
+    fs.renameSync(tmp, kb + '.wav');
+    fs.writeFileSync(tmp, JSON.stringify({ len: src.lens[0], dur: src.durs[p.video] }));
+    fs.renameSync(tmp, kb + '.json');
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (e2) { /* weg */ }
+    Max.post(`YT Sampler: Pad nicht abgelegt: ${e.message}`);
+  }
+}
+
+// Beim Start: Ablage, Analysen in D (.chroma) und videos-Einträge, die kein Pad irgendeiner Bank mehr braucht.
+// Der Cache in L bleibt, Snippets gelöschter Bänke regelt snipCleanup (7 Tage).
+function keepCleanup() {
+  if (!libNow.lib) return;
+  const pads = libNow.lib.banks.flatMap((b) => b.pads.filter(Boolean));
+  const used = new Set(pads.map((p) => p.video)), keep = new Set(pads.map((p) => `${p.video}_${p.start}`));
+  const rm = (f) => { try { fs.unlinkSync(f); } catch (e) { /* weg */ } };
+  let names = [];
+  try { names = fs.readdirSync(KEEP_DIR); } catch (e) { /* keine Ablage */ }
+  for (const n of names) { const m = /^(.+_\d+)\.(wav|json)$/.exec(n); if (m && !keep.has(m[1])) rm(path.join(KEEP_DIR, n)); }
+  for (const n of fs.readdirSync(SNIP_DIR)) { const m = /^(.+)\.chroma$/.exec(n); if (m && !used.has(m[1])) rm(path.join(SNIP_DIR, n)); }
+  if (Object.keys(libNow.lib.videos).some((v) => !used.has(v))) libChange('prune', {}, 'start');
 }
 // Gibt es für ein Pad eine Quelle zum Schneiden (ganze WAV oder ein passendes Fach)?
 const padSource = (p, bankId, memo = new Map()) => hasWav(p.video) || !!findSlot(p, bankId, memo);
@@ -1187,7 +1232,7 @@ function snipSource(bank) {
     if (!s) return null;
     if (!has(durs, p.video) && typeof s.j.durs[p.video] === 'number') durs[p.video] = s.j.durs[p.video];
     lens.push(s.j.lens[s.k]);
-    slots.push([snipWav(s.id), s.w.offset + s.k * SLOT_BYTES, Math.max(0, Math.min(SLOT_BYTES, s.w.dataSize - s.k * SLOT_BYTES))]);
+    slots.push([s.file || snipWav(s.id), s.w.offset + s.k * SLOT_BYTES, Math.max(0, Math.min(SLOT_BYTES, s.w.dataSize - s.k * SLOT_BYTES))]);
   }
   return { slots, lens, durs, whole: [...whole.keys()] };
 }
@@ -1463,6 +1508,7 @@ async function fillPads(q, by) {
     const before = q.pads.map((k) => (b.pads[k] ? { ...b.pads[k] } : null));
     const videos = {};
     for (const p of before) if (p && has(libNow.lib.videos, p.video)) videos[p.video] = videoEntry(libNow.lib.videos[p.video]);
+    before.forEach((p) => keepPad(p, q.id));
     libChange('fill', { id: q.id, pads: q.pads, video: q.video, starts, info: { title: info.raw || info.title || q.video } }, by);
     videos[q.video] = videoEntry(libNow.lib.videos[q.video]);
     job('done', 100, { before, after: starts.map((start) => ({ video: q.video, start })), videos });
@@ -1751,6 +1797,7 @@ const CMD = {
     const b = libBank(q.id);
     need(isPad(q.pad) && (q.video === null || (isVideo(q.video) && isInt(q.start, 0))));
     if (q.video !== null && !padSource({ video: q.video, start: q.start }, b.id)) throw libErr('playonly');
+    if (!samePad(b.pads[q.pad], q.video === null ? null : { video: q.video, start: q.start })) keepPad(b.pads[q.pad], b.id);
     libChange('setpad', { id: q.id, pad: q.pad, video: q.video, start: q.start, info: q.info }, by);
   },
   rename(q, by) {
@@ -2015,7 +2062,7 @@ startWeb(WEB_PORT, 5);
 
 try { libBackup(); } catch (e) { Max.post(`YT Sampler: Sicherung fehlgeschlagen: ${e.message}`); }
 libWatch();
-try { snipCleanup(); } catch (e) { Max.post(`YT Sampler: Aufräumen fehlgeschlagen: ${e.message}`); }
+try { snipCleanup(); keepCleanup(); } catch (e) { Max.post(`YT Sampler: Aufräumen fehlgeschlagen: ${e.message}`); }
 
 // Startcheck; Session vom Device anfordern
 if (DATA_SETUP.error) status(DATA_SETUP.error);
@@ -2033,7 +2080,7 @@ Max.outlet('needsession');
 module.exports = {
   errMsg, DATA, LOCAL, CACHE, SESSIONS, LIB_FILE, LIB_LOCK, BACKUP_DIR, ERR, LIB, libErr, libParse, libRead, libChange, libBackup, libEvents, get libNow() { return libNow; },
   AN, SNIP_DIR, SNIP_MS, computeAnalysis, tempoFromOnset, saveAnalysis, readAnalysis, getAnalysis, trackBeats, silentRanges,
-  hasWav, readSnip, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, cacheSize, videoFail,
+  hasWav, readSnip, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, keepCleanup, KEEP_DIR, cacheSize, videoFail,
   beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, fillPads, get anaMap() { return anaMap; },
   parseSearchPage, runCmd, peaks, get webPort() { return webPort; }, get activeId() { return activeId; },
 };

@@ -208,10 +208,10 @@ t('nextId, delete samt videos, restore, idtaken', () => {
   const { removed } = node.libChange('delete', { id: 1 });
   assert.deepStrictEqual(removed, { bank: VALID2().banks[0], at: 1, videos: { AAAAAAAAAAA: { title: 'A', bpm: 99.5 } } });
   let r = readLib(node);
-  assert.ok(!('AAAAAAAAAAA' in r.videos), 'letzte Bank des Videos weg -> Eintrag weg');
+  assert.ok('AAAAAAAAAAA' in r.videos, 'letzte Bank des Videos weg -> Eintrag bleibt bis zum Start');
   assert.strictEqual(r.nextId, 4);
   assert.deepStrictEqual(node.libChange('create', { video: 'AAAAAAAAAAA', title: 'A neu', starts: S(5) }), { id: 4 });
-  assert.ok(!('bpm' in readLib(node).videos.AAAAAAAAAAA), 'bpm ist mit dem Eintrag gelöscht');
+  assert.strictEqual(readLib(node).videos.AAAAAAAAAAA.bpm, 99.5, 'Eintrag blieb samt bpm');
   node.libChange('delete', { id: 4 });
   node.libChange('restore', removed);
   r = readLib(node);
@@ -245,20 +245,22 @@ t('newmix, setpad (mit info, null), Leeres: setstart badreq, setstarts/swap; del
   assert.deepStrictEqual(starts(readLib(node).banks[2]).slice(0, 4), [2000, 2001, 2002, null]);
   node.libChange('swap', { id: 4, a: 0, b: 5 });
   assert.deepStrictEqual([readLib(node).banks[2].pads[0], readLib(node).banks[2].pads[5]], [null, { video: 'AAAAAAAAAAA', start: 2000 }]);
-  // Platz leeren: letztes Pad von C weg -> videos-Eintrag weg
+  // Platz leeren: letztes Pad von C weg -> videos-Eintrag bleibt bis zum Start
   node.libChange('setpad', { id: 4, pad: 1, video: null });
   r = readLib(node);
   assert.strictEqual(r.banks[2].pads[1], null);
-  assert.ok(!('CCCCCCCCCCC' in r.videos));
+  assert.ok('CCCCCCCCCCC' in r.videos);
   node.libChange('setpad', { id: 4, pad: 1, video: 'CCCCCCCCCCC', start: 500, info: { title: 'C', bpm: 88 } });
   node.libChange('setpad', { id: 4, pad: 3, video: 'BBBBBBBBBBB', start: 1 });
   // delete der Mix-Bank: videos aller Pads, restore bringt die fehlenden zurück
   node.libChange('delete', { id: 3 });
   const { removed } = node.libChange('delete', { id: 4 });
   assert.deepStrictEqual(removed.videos, { AAAAAAAAAAA: { title: 'A', bpm: 99.5 }, CCCCCCCCCCC: { title: 'C', bpm: 88 }, BBBBBBBBBBB: { title: 'B' } });
-  assert.deepStrictEqual(Object.keys(readLib(node).videos), ['AAAAAAAAAAA']);
-  throwsCode(() => node.libChange('restore', { ...removed, videos: { CCCCCCCCCCC: { title: 'C' } } }), 'badreq');
-  node.libChange('restore', removed);
+  assert.deepStrictEqual(Object.keys(readLib(node).videos).sort(), ['AAAAAAAAAAA', 'BBBBBBBBBBB', 'CCCCCCCCCCC'], 'bis zum Start');
+  const n2 = loadNode(process.env.HOME).node;   // Start räumt verwaiste Einträge auf
+  assert.deepStrictEqual(Object.keys(readLib(n2).videos), ['AAAAAAAAAAA']);
+  throwsCode(() => n2.libChange('restore', { ...removed, videos: { CCCCCCCCCCC: { title: 'C' } } }), 'badreq');
+  n2.libChange('restore', removed);
   r = readLib(node);
   assert.deepStrictEqual(r.banks[1], removed.bank);
   assert.deepStrictEqual(r.videos, { AAAAAAAAAAA: { title: 'A', bpm: 99.5 }, CCCCCCCCCCC: { title: 'C', bpm: 88 }, BBBBBBBBBBB: { title: 'B' } });
@@ -267,12 +269,14 @@ t('newmix, setpad (mit info, null), Leeres: setstart badreq, setstarts/swap; del
   assert.strictEqual(loadNode(process.env.HOME).node.libNow.state, 'ok');
 });
 
-t('verwaiste videos fallen beim nächsten Schreiben weg', () => {
+t('verwaiste videos fallen beim Start weg, nicht beim Schreiben', () => {
   const l = VALID(); l.videos.ZZZZZZZZZZZ = { title: 'weg' };
   const { node } = loadNode(home(l));
   assert.strictEqual(node.libNow.state, 'ok');
-  node.libChange('rename', { id: 1, name: 'x' });
   assert.ok(!('ZZZZZZZZZZZ' in readLib(node).videos));
+  node.libChange('setpad', { id: 1, pad: 0, video: 'YYYYYYYYYYY', start: 1, info: { title: 'y' } });
+  node.libChange('setpad', { id: 1, pad: 0, video: null });
+  assert.ok('YYYYYYYYYYY' in readLib(node).videos);
 });
 
 t('Sperre: tote PID wird übernommen, alte Datei auch, lebendige -> libbusy', () => {

@@ -637,7 +637,7 @@ t('Quell-Grid: rechts 4×4 (Pad 1 unten links), Bank wählen (gemerkt), Pad auf 
   assert.deepStrictEqual(b.errors, []);
 });
 
-t('Icon „leeren“: setpad mit null, auch ohne WAV, Undo mit info nach Wegfall des Videos', async () => {
+t('Icon „leeren“: setpad mit null, auch ohne WAV, Undo mit info, videos-Eintrag bleibt', async () => {
   await open('mix');
   await b.click('#pad10'); await waitLog((x) => x.cmd === 'hit' && x.pad === 10);
   assert.strictEqual(await b.eval(`getComputedStyle($('pad10').querySelector('.clr')).opacity`), '1', 'am gewählten Pad sichtbar');
@@ -645,7 +645,7 @@ t('Icon „leeren“: setpad mit null, auch ohne WAV, Undo mit info nach Wegfall
   m.log = []; await b.click('#pad10 .clr');
   assert.deepStrictEqual(await waitLog((x) => x.cmd === 'setpad'), { client: last().client, cmd: 'setpad', id: 13, pad: 10, video: null });
   assert(!m.log.some((x) => x.cmd === 'hit'), 'Icon spielt nicht an');
-  await b.waitFor(`$('pad10').classList.contains('empty') && !S.lib.videos.Cy5BraBra00 && $('undo').title === 'Rückgängig: Pad 11 geleert (⌘Z)'`);
+  await b.waitFor(`$('pad10').classList.contains('empty') && !!S.lib.videos.Cy5BraBra00 && $('undo').title === 'Rückgängig: Pad 11 geleert (⌘Z)'`);
   m.log = []; await undoKey(b);
   assert.deepStrictEqual(await waitLog((x) => x.cmd === 'setpad'), { client: last().client, cmd: 'setpad', id: 13, pad: 10, video: 'Cy5BraBra00', start, info: { title: 'Cymande – Bra' } });
   await b.waitFor(`!$('pad10').classList.contains('empty') && !!S.lib.videos.Cy5BraBra00`);

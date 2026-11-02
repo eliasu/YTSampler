@@ -325,7 +325,7 @@ t('rename, move, duplicate, delete, restore: Antworten, by/rev in lib, Nachricht
   const del2 = await cmd({ client: 'c1', cmd: 'delete', id: ids[1] });
   assert.deepStrictEqual(on('bank'), []);
   assert.deepStrictEqual(del2.removed.videos, { [V2]: { title: 'Titel ' + V2 } });
-  assert.deepStrictEqual(Object.keys(node.libNow.lib.videos), [V1], 'verwaister videos-Eintrag weg');
+  assert.deepStrictEqual(Object.keys(node.libNow.lib.videos), [V1, V2], 'verwaister videos-Eintrag bleibt bis zum Start');
   // restore: alte ID, videos zurück; vergebene ID → idtaken
   assert.deepStrictEqual(await cmd({ client: 'c1', cmd: 'restore', ...del2.removed }), { ok: true });
   assert.deepStrictEqual(node.libNow.lib.banks.map((b) => b.id), [ids[1], ids[2]]);
@@ -617,7 +617,7 @@ t('newmix, setpad (mit/ohne info, null), leerer Platz badreq, device.video und b
   // delete/restore mit mehreren Videos; V3 lebt nur in der Mix-Bank
   const del = await cmd({ cmd: 'delete', id: 4 });
   assert.deepStrictEqual(del.removed.videos, { [V2]: { title: 'Titel ' + V2 }, [V3]: { title: 'Drei', bpm: 90 } });
-  assert.ok(!(V3 in node.libNow.lib.videos));
+  assert.ok(V3 in node.libNow.lib.videos, 'bleibt bis zum Start');
   assert.deepStrictEqual(await cmd({ cmd: 'restore', ...del.removed }), { ok: true });
   assert.deepStrictEqual(node.libNow.lib.banks[3], del.removed.bank);
   assert.deepStrictEqual(node.libNow.lib.videos[V3], { title: 'Drei', bpm: 90 });

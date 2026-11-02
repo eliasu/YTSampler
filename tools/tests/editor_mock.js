@@ -102,7 +102,7 @@ function createMock(opts = {}) {
   const byId = (id) => m.lib.banks.find((b) => b.id === id);
   const bankWav = (b) => videosOf(b).every((v) => m.lib.videos[v] && m.lib.videos[v].wav);
   // ein videos-Eintrag lebt, solange ein Pad ihn benutzt
-  function dropOrphans() { const used = new Set(m.lib.banks.flatMap(videosOf)); for (const v of Object.keys(m.lib.videos)) if (!used.has(v)) delete m.lib.videos[v]; }
+  // videos-Einträge ohne Pad bleiben wie bei Node bis zum Start (Flow-Nachtrag)
   function libMsg(by) {
     const { rev, state, error, banks, videos } = m.lib;
     return { rev, by, state, error, cache: cacheMsg(), banks: banks.map((b) => ({ ...b, mix: isMix(b), wav: bankWav(b) })), videos };
@@ -164,7 +164,7 @@ function createMock(opts = {}) {
       case 'delete': {
         const at = m.lib.banks.indexOf(b) + 1, videos = {};
         for (const v of videosOf(b)) { const e = m.lib.videos[v]; videos[v] = { title: e.title }; if (e.bpm) videos[v].bpm = e.bpm; }
-        m.lib.banks.splice(at - 1, 1); dropOrphans();
+        m.lib.banks.splice(at - 1, 1);
         if (!m.lib.banks.length) m.lib.state = 'leer';
         changed(q.client);
         if (m.dev.bankId === b.id) activate(m.lib.banks[Math.min(at - 1, m.lib.banks.length - 1)] || null); else syncDev();
@@ -203,14 +203,14 @@ function createMock(opts = {}) {
       }
       case 'setpad': { // Spec 3.1: Pad auf einen Platz kopieren, video null leert
         if (!isPad(q.pad)) return fail('badreq');
-        if (q.video === null) { b.pads[q.pad] = null; dropOrphans(); changed(q.client); syncDev(); return { ok: true }; }
+        if (q.video === null) { b.pads[q.pad] = null; changed(q.client); syncDev(); return { ok: true }; }
         const e = m.lib.videos[q.video];
         if (typeof q.video !== 'string' || !Number.isInteger(q.start) || q.start < 0) return fail('badreq');
         if (!e && !(q.info && typeof q.info.title === 'string')) return fail('badreq');
         const wav = e ? e.wav : !!VIDEOS[q.video];                                // gelöschtes Video: WAV liegt noch im Cache
         if (!wav && !known(q.video, q.start)) return fail('playonly');
         if (!e) { m.lib.videos[q.video] = { ...videoEntry(q.video, q.info.title), wav }; if (q.info.bpm) m.lib.videos[q.video].bpm = q.info.bpm; }
-        b.pads[q.pad] = { video: q.video, start: q.start }; dropOrphans(); changed(q.client); syncDev(); return { ok: true };
+        b.pads[q.pad] = { video: q.video, start: q.start }; changed(q.client); syncDev(); return { ok: true };
       }
       case 'newmix': {
         const k = { id: m.lib.nextId++, name: 'Neue Bank', pads: Array(16).fill(null), snip: 'ok' };
@@ -244,7 +244,7 @@ function createMock(opts = {}) {
           for (const p of before) if (p) { const e = m.lib.videos[p.video]; videos[p.video] = { title: e.title }; if (e.bpm) videos[p.video].bpm = e.bpm; }
           if (!m.lib.videos[v]) m.lib.videos[v] = videoEntry(v);
           q.pads.forEach((k, n) => { b.pads[k] = { video: v, start: starts[n] }; });
-          dropOrphans(); changed(q.client); syncDev();
+          changed(q.client); syncDev();
           videos[v] = { title: m.lib.videos[v].title };
           return { before, after: starts.map((start) => ({ video: v, start })), videos };
         });
