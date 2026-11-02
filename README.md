@@ -36,8 +36,8 @@ Seit 3.0 ist das Device nur noch das Bühneninstrument: Bank wählen und spielen
 | Bereich | Funktion |
 |---|---|
 | Anzeige links | große Banknummer und Name, darunter `Bank` mit ◀ ▶, darunter die Statuszeile |
-| Bank | 1–128 direkt anwählen, z. B. per Encoder oder CC (CC 0 = Bank 1). Beim Drehen zeigt die Anzeige das Ziel, geladen wird erst, wenn der Regler 350 ms ruht. Über der letzten Bank steht „leer“, dann lädt nichts. |
-| ◀ ▶ | vorherige/nächste Bank, bleibt an der ersten und letzten stehen. Geht auch über 128 hinaus (der Regler bleibt auf 128, die Anzeige zeigt die echte Nummer). |
+| Bank | 1–128 direkt anwählen, z. B. per Encoder oder CC (CC 0 = Bank 1). Gezählt werden nur die Bänke auf der **Bühne** (siehe Editor). Beim Drehen zeigt die Anzeige das Ziel, geladen wird erst, wenn der Regler 350 ms ruht. Über der letzten Bank steht „leer“, dann lädt nichts. |
+| ◀ ▶ | vorherige/nächste Bank der Bühne, bleibt an der ersten und letzten stehen. Geht auch über 128 hinaus (der Regler bleibt auf 128, die Anzeige zeigt die echte Nummer). Steht „-“ in der Anzeige (Bank aus der Ablage), holen ◀ und ▶ die Bühnen-Bank, auf der der Regler steht. |
 | Pads | Noten ab Base Note (Standard C1 = 36) spielen Pad 1–16, Pad 1 unten links. **Alle MIDI-Kanäle** spielen Pads, welcher Controller ankommt, regelt der MIDI-Eingang der Spur. Maus-Klick geht auch. |
 | Slice | Notenwert 1/64 … 2 Takte, rechnet mit dem aktuellen Live-Tempo. Drehst du ihn, während Pads klingen (Trigger), endet der klingende Slice gleich am neuen Ende |
 | Rate | 0.25–2×, ändert Tonhöhe, die rhythmische Länge bleibt gleich |
@@ -67,13 +67,15 @@ Solange das Device läuft: Button **Editor** im Device drücken, oder **http://l
 
 | Aktion | Wie |
 |---|---|
-| Neue Bank | „Neue Bank“ im Listenfuß: Bank mit 16 leeren Plätzen am Ende, sie wird aktiv |
+| Bühne und Ablage | Die Liste hat zwei Bereiche. **Bühne** (mit Nummern): nur diese Bänke schaltet das Device mit `Bank` und ◀ ▶ durch, ihre Reihenfolge ergibt die Nummern. **Ablage** (ohne Nummer): zum Weiterbauen und als Quelle. Umschalten mit dem Pfeil am Ende der Zeile (landet am Ende des anderen Bereichs) oder Zeile in den anderen Bereich ziehen. Eine Ablage-Bank anklicken lädt sie trotzdem im Device, die Anzeige zeigt „-“. Jede Änderung lässt sich rückgängig machen. Bänke aus älteren Versionen stehen alle auf der Bühne. |
+| Neue Bank | „Neue Bank“ im Listenfuß: Bank mit 16 leeren Plätzen in der Ablage, sie wird aktiv |
 | Track aus YouTube aufs Pad | „Video suchen“ oder ⌘K, Begriff oder YouTube-URL. Treffer auf ein Pad ziehen oder anklicken (kommt auf das gewählte Pad). Ein belegtes Pad wird überschrieben. Die Stelle im Track wird gewürfelt (Taktanfang, keine Stille, kein Start doppelt). Danach anspielen, würfeln oder den Start ziehen. |
 | leere Plätze füllen | Knopf „Leere Plätze füllen“ am Suchtreffer: alle leeren Plätze der Bank bekommen zufällige Stellen aus diesem Track |
+| Bank aus einem Track | Knopf „Neue Bank“ am Suchtreffer: neue Bank mit dem Videotitel in der Ablage, alle 16 Plätze bekommen zufällige Stellen aus diesem Track. Sie wird aktiv. ⌘Z entfernt sie wieder. |
 | Ladezustand | Solange der Track lädt (bis 3 gleichzeitig, der Rest wartet), zeigt das Pad „wartet“ bzw. „lädt n %“. Danach wird geschnitten und das Device lädt die Bank neu. |
 | Bank wählen | Klick in der Liste, ◀ ▶ oder ↑/↓ |
-| umbenennen, duplizieren, löschen | Icons an der Zeile, umbenennen auch per Doppelklick. Löschen fragt nicht, dafür 5 s „Rückgängig“. |
-| verschieben | Zeile in der Liste ziehen |
+| umbenennen, duplizieren, löschen | Icons an der Zeile, umbenennen auch per Doppelklick. Die Kopie landet in der Ablage. Löschen fragt nicht, dafür 5 s „Rückgängig“. Wird die aktive Bühnen-Bank gelöscht, rückt die nächste der Bühne nach. |
+| verschieben | Zeile in der Liste ziehen: innerhalb der Bühne ändert das die Nummern. Auf die Überschrift „Bühne“/„Ablage“ = an den Anfang, auf die freie Fläche darunter = ans Ende. |
 | Start setzen | Marker in der Waveform ziehen. Rastet auf Schläge, mit Alt frei. |
 | neues Snippet | Würfel am Pad oder „Neues Snippet“ |
 | Pads tauschen | Pad auf Pad ziehen (auch mit leeren Plätzen) |
@@ -111,7 +113,7 @@ Alles wird sofort gespeichert. Fehlt ein Track einer Bank im Cache, heißt sie �
 
 ## Speichern
 
-Das Device merkt sich automatisch die aktive Bank. Beim Öffnen des Sets wird sie wieder geladen, auch wenn sie inzwischen auf einem anderen Platz steht. Kennt das Device keine Bank (neues Device, altes Set, Bank gelöscht), lädt es die Bank, auf der der Regler `Bank` steht.
+Das Device merkt sich automatisch die aktive Bank. Beim Öffnen des Sets wird sie wieder geladen, auch wenn sie inzwischen auf einem anderen Platz oder in der Ablage steht (dann zeigt die Anzeige „-“). Kennt das Device keine Bank (neues Device, altes Set, Bank gelöscht), lädt es die Bank, auf der der Regler `Bank` steht.
 
 Technisch steckt im Set nur eine unsichtbare Session-Nummer, der Zustand liegt in `sessions/<nummer>.json` im Datenordner. Dupliziert man die Spur, bekommt die Kopie eine eigene Nummer samt Kopie des Zustands. Achtung bei „Speichern unter“: Beide Sets teilen sich danach dieselbe Session-Datei.
 

@@ -298,7 +298,7 @@ Ersetzt, was oben über Track-/Mix-Bank, „Neue Mix-Bank“, Quellleiste und `n
 - Undo/Redo im Editor: `setpad` pro Platz mit `before` bzw. `after` (+ `info` aus `videos`).
 - `newbank` (Bank aus einem Video) entfällt. `LIB.create` bleibt nur als Hilfe für Tests.
 
-**Ablage statt sofort löschen (Nutzer, gleicher Tag):** Nichts, was zu einem Track gehört, wird gelöscht, nur weil das letzte Pad mit diesem Track verschwindet.
+**Ablage statt sofort löschen (Nutzer, gleicher Tag; heißt seit Abschnitt 11 „Undo-Vorrat“):** Nichts, was zu einem Track gehört, wird gelöscht, nur weil das letzte Pad mit diesem Track verschwindet.
 - `setpad` und `fillpads` legen das alte Pad vor dem Überschreiben/Leeren als `D/snippets/keep/<video>_<start>.wav` (ein Fach, 16 s) + `.json` (`{len, dur}`) ab (`keepPad`, Quelle wie beim Schneiden). Die Ablage ist die letzte Quelle beim Schneiden (2.2). Damit geht Undo ohne Cache.
 - `videos`-Einträge ohne Pad und `D/snippets/<video>.chroma` bleiben während der Sitzung (`dropOrphans` nicht mehr in `libChange`).
 - Beim Start von Node (`keepCleanup`): Ablage, `.chroma` in D und `videos`-Einträge ohne Pad in irgendeiner Bank fliegen raus. 7-Tage-Regel für Snippets gelöschter Bänke bleibt, der Cache in L wird weiter nie automatisch gelöscht.
@@ -310,4 +310,33 @@ Ersetzt, was oben über Track-/Mix-Bank, „Neue Mix-Bank“, Quellleiste und `n
 - Klick auf einen Treffer schließt die Suche (wie früher), damit der Ladezustand am Pad sichtbar ist.
 - Ohne aktive Bank (leere Bibliothek) ist die Suche gesperrt, „Neue Bank“ ist der Einstieg.
 - Ladende Pads sperren nur Ablagen, keine anderen Schritte (Undo/Redo können sie trotzdem ändern; `fillpads` überschreibt dann beim Fertigwerden).
+
+## 11. Nachtrag Bühne und Ablage (Nutzer, 2026-11-02)
+
+Ergänzt Abschnitt 10. Der Rest gilt weiter.
+
+**Entscheidungen (fest):**
+1. Jede Bank steht auf der **Bühne** oder in der **Ablage**. Nur Bühnen-Bänke schaltet das Device mit `Bank` und Prev/Next durch, ihre Reihenfolge ergibt die Nummern 1…n. Ablage-Bänke haben keine Nummer, zum Weiterbauen oder als Quelle im Quell-Grid.
+2. Neue Bänke („Neue Bank“, Duplizieren, „Neue Bank“ am Suchtreffer) landen in der Ablage.
+3. Bestehende Bänke stehen nach dem Update auf der Bühne.
+4. Editor, linke Liste: oben „Bühne“ (mit Nummern), darunter „Ablage“. Umschalten per Schalter in jeder Zeile und per Ziehen zwischen die Bereiche. Ziehen innerhalb der Bühne ändert die Nummern. Jede Änderung ist ein Undo-Schritt.
+5. Ablage-Bank im Editor anklicken: lädt im Device, Anzeige „-“. Der nächste Dreh am Regler lädt die Bühnen-Bank seines Werts.
+6. Ein Set, das sich eine Ablage-Bank gemerkt hat, lädt sie beim Öffnen trotzdem (per ID), Anzeige „-“.
+7. Die alte technische „Ablage“ `snippets/keep/` heißt jetzt **Undo-Vorrat** (Ordnername bleibt).
+
+**Datei:** `banks[].stage = false` = Ablage, Feld fehlt = Bühne. `format` bleibt 2: Unbekannte Felder bleiben erhalten (`libChange` liest und schreibt das ganze Objekt), ein älteres 4.0-Device ignoriert das Feld und nummeriert einfach alle Bänke durch. Ein neues `format` hätte nur ältere Devices stumm geschaltet, ohne dass etwas kaputtgehen kann. Auf der Bühne wird das Feld gelöscht, nicht `true` geschrieben. Die Reihenfolge in `banks[]` ist gemischt, jeder Bereich zählt für sich.
+
+**Protokoll:**
+- `/cmd stage {id, on, at?}` → `{at}`: Bank in den Bereich `on` (true = Bühne) an Platz `at` des Bereichs, ohne `at` ans Ende, `at` hinter dem Ende = ans Ende. `badreq` bei `on` kein Boolean oder `at` keine ganze Zahl ≥ 1.
+- `move {id, to}` → `{at}`: `to` ist jetzt der Platz im eigenen Bereich (bisher: in der ganzen Liste). Mit allen Bänken auf der Bühne wie vorher.
+- `newmix {name?}` → `{id}`: optionaler Name (Knopf „Neue Bank“ am Suchtreffer).
+- `bank <id> <nr> …`, `libstate <anzahl> <nr> …`, `bankpeek`, `banksel`, `bankload`, SSE `device.nr`: nur Bühne, `nr 0` = Ablage. `libstate leer` nur, wenn es gar keine Bank gibt (eine Ablage-Bank darf klingen, auch wenn die Bühne leer ist).
+- SSE `lib`: `banks[].stage` (Boolean).
+- `delete` der aktiven Bank: Bühnen-Bank → Nachrücker auf demselben Bühnenplatz, sonst der davor. Ablage-Bank oder Bühne danach leer → `bankgone <id>`, `[js]` lädt die Bank am Regler (`bankload`, bei leerer Bühne nichts).
+
+**`[js]`:** `libstate` setzt `B.nr` auch auf 0 (aktive Bank in die Ablage geschoben → „-“). Prev/Next von „-“ aus (Entscheidung der Arbeitssession, einfach gehalten): beide holen die Bühnen-Bank, auf der der Regler steht, statt von einer Nummer aus zu zählen, die es nicht gibt. Der Regler springt beim Drehen auf die Bank seines Werts. Kein neuer Selektor, der Patch bleibt.
+
+**Editor:** zwei Listen (`#banklist` Bühne, `#shelflist` Ablage) in `#libscroll`, je mit Überschrift und Anzahl. Pfeil am Zeilenende (↓ in die Ablage, ↑ auf die Bühne, jeweils ans Ende). Ziehen: auf eine Zeile = deren Platz, auf die Überschrift = Platz 1, auf die freie Fläche = ans Ende; im selben Bereich `move`, sonst `stage`. Undo `stage` mit altem Bereich und Platz, Redo mit dem gemeldeten `at`. Kopfzeile „n / Anzahl Bühne“ bzw. „Ablage“. ↑/↓ und ◀ ▶ im Editor gehen durch beide Bereiche (Bühne, dann Ablage). Quell-Grid-Auswahl: Nummer bzw. „–“.
+
+**„Neue Bank“ am Suchtreffer (Nutzer, gleicher Tag):** zweiter Knopf neben „Leere Plätze füllen“. `newmix {name: Videotitel}` (Ablage, wird aktiv, Anzeige „-“), dann `fillpads` mit allen 16 Plätzen. Ein Undo-Schritt „Neue Bank „Titel““ = `delete`, Redo = `restore`. Das Füllen bekommt keinen eigenen Schritt. Undo während des Ladens: die Bank ist weg, das spätere Füllen meldet „Bank gibt es nicht mehr“.
 

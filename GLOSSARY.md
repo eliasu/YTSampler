@@ -17,12 +17,20 @@ Das 4×4-Raster rechts neben den Pads im Editor, das die Pads einer anderen Bank
 _Avoid_: Quellleiste, Browser, Pool
 
 **Füllen**:
-Einen Track aus der Suche auf Plätze bringen: auf ein Pad ziehen oder anklicken (ein Platz) oder „Leere Plätze füllen“ (alle leeren Plätze der Bank). Die Stelle im Track wird gewürfelt.
+Einen Track aus der Suche auf Plätze bringen: auf ein Pad ziehen oder anklicken (ein Platz), „Leere Plätze füllen“ (alle leeren Plätze der Bank) oder „Neue Bank“ am Treffer (neue Bank in der Ablage, alle 16 Plätze). Die Stelle im Track wird gewürfelt.
 _Avoid_: Bank aus Video anlegen
 
+**Bühne**:
+Die Bänke, die das Device mit `Bank` und ◀ ▶ durchschaltet. Ihre Reihenfolge ergibt die Nummern 1…n. Bänke aus der Zeit vor Bühne/Ablage stehen alle hier.
+_Avoid_: Setlist, Favoriten
+
 **Ablage**:
-Audio eines Pads, das geleert oder überschrieben wurde, damit Rückgängig auch ohne Cache geht. Wird erst beim Start aufgeräumt, wenn keine Bank das Pad mehr hat.
-_Avoid_: Papierkorb
+Bänke ohne Nummer, zum Weiterbauen oder als Quelle im Quell-Grid. Neue Bänke und Kopien landen hier. Im Editor angeklickt, lädt eine Ablage-Bank trotzdem im Device (Anzeige „-“).
+_Avoid_: Archiv, Papierkorb, Entwürfe
+
+**Undo-Vorrat**:
+Audio eines Pads, das geleert oder überschrieben wurde, damit Rückgängig auch ohne Cache geht (Ordner `snippets/keep/`). Wird erst beim Start aufgeräumt, wenn keine Bank das Pad mehr hat.
+_Avoid_: Ablage (das sind Bänke ohne Nummer), Papierkorb
 
 **Snippet**:
 Der gespeicherte Audioausschnitt eines Pads ab seinem Startpunkt, mehr als das spielt das Pad nie.

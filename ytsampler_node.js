@@ -15,7 +15,7 @@ const https = require('https');
 const EXTRA_PATHS = ['/opt/homebrew/bin', '/usr/local/bin', '/opt/local/bin', path.join(os.homedir(), '.local/bin')];
 const ENV = { ...process.env, PATH: [...EXTRA_PATHS, process.env.PATH || '/usr/bin:/bin'].join(':') };
 
-// Ablage (Spec 2.1): D = Datenordner in iCloud Drive (sonst lokal), L = lokal, nur Cache und Chrome-Profil
+// Speicherorte (Spec 2.1): D = Datenordner in iCloud Drive (sonst lokal), L = lokal, nur Cache und Chrome-Profil
 const LOCAL = path.join(os.homedir(), 'Music', 'YTSampler');
 const LOCAL_ONLY = new Set(['cache', 'chrome-profile']);
 
@@ -1177,7 +1177,7 @@ function findSlot(p, bankId, memo) {
     const k = m ? m.j.pads.findIndex((q) => samePad(p, q)) : -1;
     if (k >= 0) return { id, k, ...m };
   }
-  // Ablage (geleerte/überschriebene Pads, Flow-Nachtrag): ein Fach pro {video, start}
+  // Undo-Vorrat (geleerte/überschriebene Pads, Flow-Nachtrag): ein Fach pro {video, start}
   const kb = keepBase(p), kj = kb && readJson(kb + '.json');
   if (isObj(kj) && isInt(kj.len, 0)) {
     try { return { file: kb + '.wav', k: 0, j: { lens: [kj.len], durs: typeof kj.dur === 'number' ? { [p.video]: kj.dur } : {} }, w: wavInfo(kb + '.wav') }; } catch (e) { /* WAV fehlt */ }
@@ -1185,7 +1185,7 @@ function findSlot(p, bankId, memo) {
   return null;
 }
 
-// Ablage D/snippets/keep/<video>_<start>.wav (+ .json {len, dur}): Audio eines Pads, das geleert oder überschrieben
+// Undo-Vorrat D/snippets/keep/<video>_<start>.wav (+ .json {len, dur}): Audio eines Pads, das geleert oder überschrieben
 // wird. So geht Undo auch ohne ganzen Track im Cache. Aufgeräumt nur beim Start (keepCleanup).
 const KEEP_DIR = path.join(SNIP_DIR, 'keep');
 const keepBase = (p) => (/^[\w-]{11}$/.test(p.video) ? path.join(KEEP_DIR, `${p.video}_${p.start}`) : null);
@@ -1210,7 +1210,7 @@ function keepPad(p, bankId) {
   }
 }
 
-// Beim Start: Ablage, Analysen in D (.chroma) und videos-Einträge, die kein Pad irgendeiner Bank mehr braucht.
+// Beim Start: Undo-Vorrat, Analysen in D (.chroma) und videos-Einträge, die kein Pad irgendeiner Bank mehr braucht.
 // Der Cache in L bleibt, Snippets gelöschter Bänke regelt snipCleanup (7 Tage).
 function keepCleanup() {
   if (!libNow.lib) return;
@@ -1218,7 +1218,7 @@ function keepCleanup() {
   const used = new Set(pads.map((p) => p.video)), keep = new Set(pads.map((p) => `${p.video}_${p.start}`));
   const rm = (f) => { try { fs.unlinkSync(f); } catch (e) { /* weg */ } };
   let names = [];
-  try { names = fs.readdirSync(KEEP_DIR); } catch (e) { /* keine Ablage */ }
+  try { names = fs.readdirSync(KEEP_DIR); } catch (e) { /* kein Undo-Vorrat */ }
   for (const n of names) { const m = /^(.+_\d+)\.(wav|json)$/.exec(n); if (m && !keep.has(m[1])) rm(path.join(KEEP_DIR, n)); }
   for (const n of fs.readdirSync(SNIP_DIR)) { const m = /^(.+)\.chroma$/.exec(n); if (m && !used.has(m[1])) rm(path.join(SNIP_DIR, n)); }
   if (Object.keys(libNow.lib.videos).some((v) => !used.has(v))) libChange('prune', {}, 'start');

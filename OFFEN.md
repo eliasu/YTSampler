@@ -19,16 +19,25 @@ Erst `tools/deploy.sh`, Device neu auf die Spur ziehen, dann:
 - Icons am Pad im Editor (Würfel, „leeren“) auf kleinen Pads: treffbar, überdecken sie Nummer und Startzeit nicht?
 - Editor-Flow: „Neue Bank“ → leere Bank im Device (alle Pads dunkel, Status „· leer“). Treffer auf ein Pad ziehen und anklicken: Pad zeigt „wartet“/„lädt n %“, danach lädt das Device die Bank neu und das Pad spielt eine Stelle auf einem Taktanfang.
 - „Leere Plätze füllen“ mit einem langen Track: alle leeren Pads laden, klingen danach, kein Start doppelt. Drei Tracks gleichzeitig: der vierte wartet.
-- Belegtes Pad überschreiben, ⌘Z: das alte Pad klingt wieder, auch nach „Cache leeren“ (Ablage).
+- Belegtes Pad überschreiben, ⌘Z: das alte Pad klingt wieder, auch nach „Cache leeren“ (Undo-Vorrat).
 - Quell-Grid rechts: auf dem Laptop-Bildschirm groß genug zum Ziehen? Detailspalte darunter lesbar?
 - „Cache leeren“: Rückfrage mit Größe, danach spielen alle Bänke weiter, Anzeige 0 GB, „Track laden“ holt den Track. Während eines Downloads ausgegraut.
 - Nach Neustart von Live: `iCloud Drive/YTSampler/snippets/keep/` enthält nur noch Pads, die eine Bank benutzt.
 - Bühne ohne Cache: Mix-Bank aus Pads anderer Bänke legen geht.
 - Zweiter Mac mit 3.x zeigt „Bibliothek aus neuerer Version“ (beide Macs gleichzeitig auf 4.0).
 - **Division live** (Zweig `mix-livediv`): Pad mit 1/8 anschlagen, auf 1 Takt drehen: läuft weiter, ohne Knacken? Zurückdrehen nach dem neuen Ende: kurzes Ausblenden statt Abriss? Mit Warp: Release neu terminiert (endet am neuen Ende, wird danach stumm)? Rückwärts?
+- **Bühne und Ablage** (Zweig `mix-stage`, Spec 11):
+  - Nach dem Update stehen alle Bänke auf der Bühne, Nummern wie vorher, MIDI-Mapping auf `Bank` unverändert.
+  - Bank im Editor in die Ablage schieben: Device zeigt „-“, wenn sie aktiv war. Danach `Bank`-Regler drehen: lädt die Bühnen-Bank seines Werts. ◀ / ▶ von „-“ aus: beide laden die Bank am Regler.
+  - Ablage-Bank im Editor anklicken: spielt, Anzeige „-“, Regler bleibt stehen.
+  - Reihenfolge der Bühne per Ziehen ändern: Nummern im Device folgen sofort (auch die gerade aktive).
+  - Set speichern mit einer Ablage-Bank, Set neu öffnen: dieselbe Bank lädt, „-“.
+  - Aktive Bühnen-Bank löschen: die nächste der Bühne rückt nach, nicht eine Ablage-Bank. Aktive Ablage-Bank löschen: Device lädt die Bank am Regler.
+  - „Neue Bank“ am Suchtreffer: Bank mit Videotitel in der Ablage, alle 16 Pads laden, danach spielt sie; ⌘Z entfernt sie.
+  - Pfeil am Zeilenende im Editor auf dem Laptop groß genug? Ziehen auf die Überschriften gut treffbar?
 - Danach `release.sh 4.0.0`.
 
-Bekannte Grenze: Die Ablage für Undo räumt jeder Node-Start auf. Startet ein zweites Device, kann das erste ein Leeren ohne Cache danach nicht mehr rückgängig machen.
+Bekannte Grenze: Den Undo-Vorrat räumt jeder Node-Start auf. Startet ein zweites Device, kann das erste ein Leeren ohne Cache danach nicht mehr rückgängig machen.
 
 ## Offene Entscheidungen
 
