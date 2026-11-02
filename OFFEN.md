@@ -8,6 +8,21 @@
 
 Auf einem neuen Rechner: siehe `CLAUDE.md` „Neuer Rechner“, dann das Device in Live neu auf die Spur ziehen.
 
+Zweig `mix`: **Mix-Bänke (4.0.0)**, geplant in `.scratch/mix-banks/spec.md`, gebaut in den Paketen N, J, E, I. Alle Tests grün, in Live noch nicht geprüft, noch nicht released.
+
+## Mix-Bänke: in Live zu prüfen (Spec 6)
+
+Erst `tools/deploy.sh`, Device neu auf die Spur ziehen, dann:
+- Alte Bänke spielen wie in 3.0 (Warp, Raster, Tune), ohne Neuschnitt.
+- Mix-Bank aus zwei Tracks mit verschiedenem Tempo: Beide Pads laufen mit Warp im Live-Tempo, Linien pro Fach stimmen.
+- Leere Plätze stumm, am Device erkennbar: Pad dunkel ohne Nummer. Wie sieht das dunkle Pad in echtem Max aus (Farbe, Kontrast zum normalen Pad)?
+- Icons am Pad im Editor (Würfel, „leeren“) auf kleinen Pads: treffbar, überdecken sie Nummer und Startzeit nicht?
+- Bühne ohne Cache: Mix-Bank aus Pads anderer Bänke legen geht.
+- Zweiter Mac mit 3.x zeigt „Bibliothek aus neuerer Version“ (beide Macs gleichzeitig auf 4.0).
+- Danach `release.sh 4.0.0`.
+
+Bekannte Grenze: „Leeren“ rückgängig machen ohne den ganzen Track im Cache geht nur, wenn eine andere Bank dasselbe Pad noch hat (sonst „nur spielbar“).
+
 ## Offene Entscheidungen
 
 - **Suche nur mit Enter** statt beim Tippen (heute: 400 ms nach dem letzten Tastendruck)? Mit der schnellen Suche vermutlich unnötig.

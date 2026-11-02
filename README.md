@@ -57,7 +57,7 @@ Alle Regler und Buttons sind `live.*`-Objekte: MIDI-Map-Modus (Cmd+M) funktionie
 
 ## Bänke und Bibliothek
 
-Eine **Bank** sind 16 Pads aus genau einem Track. Gespeichert werden Video, Name und die 16 Startpunkte. Die Slice-Länge kommt immer von den Reglern am Device. Alle Bänke zusammen sind die **Bibliothek**, geordnet und für alle Live-Sets gleich. Die Banknummer ist der Platz in der Liste und ändert sich beim Umsortieren.
+Eine **Bank** sind 16 Plätze. Jedes Pad bringt seinen Track und seinen Startpunkt mit, ein Platz darf leer sein. Kommen alle 16 Pads aus einem Track, ist es eine **Track-Bank**, sonst eine **Mix-Bank** (in der Liste mit dem Zeichen „Mix“). Das Device spielt beide gleich: Tempo, Stimmung, Raster und Warp gelten pro Pad, aus dem Track des Pads. Leere Plätze sind stumm und am Device dunkel ohne Nummer. Die Slice-Länge kommt immer von den Reglern am Device. Alle Bänke zusammen sind die **Bibliothek**, geordnet und für alle Live-Sets gleich. Die Banknummer ist der Platz in der Liste und ändert sich beim Umsortieren.
 
 Pro Bank liegen die 16 Pads als **Snippets** à 16 s in einer eigenen Datei. Auf der Bühne lädt das Device nur diese Datei: kein Internet, kein Warten, Bankwechsel klickfrei. Mehr als 16 s spielt ein Pad nie, auch nicht im Hold-Modus.
 
@@ -73,15 +73,20 @@ Solange das Device läuft: Button **Editor** im Device drücken, oder **http://l
 | verschieben | Zeile in der Liste ziehen |
 | Start setzen | Marker in der Waveform ziehen. Rastet auf Schläge, mit Alt frei. |
 | neues Snippet | Würfel am Pad oder „Neues Snippet“ |
-| Pads tauschen | Pad auf Pad ziehen |
+| Pads tauschen | Pad auf Pad ziehen (auch mit leeren Plätzen) |
+| Neue Mix-Bank | „Neue Mix-Bank“ im Listenfuß: Bank mit 16 leeren Plätzen am Ende, sie wird aktiv |
+| Pad aus einer anderen Bank | **Quellleiste** unter den Pads (einklappbar): Bank wählen, ihre 16 Pads erscheinen, eins auf einen Platz ziehen. Kopiert Track und Start, spätere Änderungen an der Quelle wirken nicht. Geht auch ohne Cache. Vorhören gibt es nicht: reinziehen, anspielen, ⌘Z. |
+| Platz leeren | Icon „leeren“ am Pad (bei Hover und am gewählten Pad) |
 | anspielen | Pad klicken, klingt am Device |
-| Tempo | Zahlenfeld, ½×, 2×, „Tempo stimmt“ (gilt für alle Bänke des Videos) |
+| Tempo | Zahlenfeld, ½×, 2×, „Tempo stimmt“ für das Video des gewählten Pads (gilt für alle Bänke mit diesem Video) |
 | Device-Regler | Leiste über den Pads, siehe unten |
 | Rückgängig | ⌘Z / ⇧⌘Z oder ↶ ↷ (100 Schritte, nur in diesem Fenster) |
 
 **Device-Regler im Editor:** Die Leiste über den Pads zeigt die Regler des Device: links die Bühne (Slice, Rate, Trigger/Hold, Rev, Tune, Warp, Quant, Raster, Catch), rechts gedämpft die Einrichtung (Base Note, Voices, Volume). Es ist derselbe Zustand wie im Device: Dreht man am Device (oder per MIDI), folgt der Editor. Stellt man im Editor, bewegt sich der Regler im Device und wird mit dem Set gespeichert. Doppelklick auf Rate bzw. Volume setzt 1× bzw. 0 dB. Die Regler sind kein Schritt im Rückgängig des Editors. Ohne laufendes Device ist die Leiste ausgegraut.
 
-Alles wird sofort gespeichert. Ist der ganze Track nicht im Cache, heißt die Bank „nur spielbar“: Starts lassen sich dann nicht ändern, „Track laden“ holt ihn. „Alle nachladen“ im Listenfuß holt alle fehlenden Tracks.
+Die Waveform zeigt immer den Track des gewählten Pads, mit den Markern aller Pads aus diesem Track.
+
+Alles wird sofort gespeichert. Fehlt ein Track einer Bank im Cache, heißt sie „nur spielbar“: Starts von Pads aus diesem Track lassen sich dann nicht ändern, „Track laden“ holt ihn. „Alle nachladen“ im Listenfuß holt alle fehlenden Tracks.
 
 ### Am Device
 
@@ -92,9 +97,12 @@ Alles wird sofort gespeichert. Ist der ganze Track nicht im Cache, heißt die Ba
 | Nummer + Name | Bank aktiv |
 | „-“ | nichts geladen, Pads stumm |
 | „Bibliothek leer“ | noch keine Bank, Pads stumm. Im Editor eine anlegen. |
+| „Bibliothek aus neuerer Version“ | die Bibliothek stammt von einem neueren Device (z. B. 4.0 auf dem anderen Mac). Pads stumm, nichts wird angefasst. Device updaten. |
 | „Bibliothek kaputt“ | `library.json` unlesbar (oder iCloud hat sie noch nicht geladen). Pads stumm, nichts wird gespeichert. Geht von selbst weiter, sobald die Datei wieder lesbar ist. |
 | „nicht ladbar“ | Snippets fehlen und der Track auch. Lief vorher eine Bank, spielt sie weiter (nur kurz eingeblendet). Sonst stumm, Status „Bank im Editor prüfen“. |
 | kurz „Bank gelöscht“ | die im Set gespeicherte Bank gibt es nicht mehr. Das Device lädt die Bank, die jetzt auf ihrem Platz steht (hinter der letzten: die letzte). |
+
+**Update auf 4.0 (Mix-Bänke):** Die Bibliothek bekommt ein neues Format. Ein Device in 3.x liest sie als „Bibliothek aus neuerer Version“ und bleibt stumm, damit es nichts falsch schneidet. **Beide Macs gleichzeitig auf 4.0 bringen**, sonst bleibt der alte stumm. Bestehende Bänke spielen ohne Neuschnitt weiter.
 
 **Update auf 3.0:** Die Regler Tonal, Attack, Release, Source BPM, ÷2, ×2, Grid und Snap gibt es nicht mehr, ihre MIDI-Mappings gehen verloren. Alle anderen Mappings bleiben. Teletext-Seite, IR-Fernbedienung, Schreibmaschine (Kanal 16) und das Spielen eines ganzen Videos ohne Bank sind weggefallen. Ein Set, das ohne Bank gespeichert war (Teletext oder 1.x), lädt beim Öffnen die Bank, auf der der Regler `Bank` steht.
 
@@ -120,7 +128,7 @@ Beim ersten Laden eines Videos wird ein Chromagramm berechnet (ca. 3 s bei 10 Mi
 
 ## Tempo, Beats und Warp
 
-Beim ersten Laden eines Videos werden Tempo, Schläge und die „1“ erkannt und gecacht. Der Status zeigt z. B. „94 BPM“. Ist das Tempo falsch (typisch: halb/doppelt, z. B. 172 → 86 bei Drum & Bass), korrigiert man es **im Editor** (Zahlenfeld, ½×, 2×, „Tempo stimmt“). Das Tempo steht dann in der Bibliothek und gilt für alle Bänke des Videos, das Raster wird sofort neu berechnet.
+Beim ersten Laden eines Videos werden Tempo, Schläge und die „1“ erkannt und gecacht. Der Status zeigt z. B. „94 BPM“, bei einer Mix-Bank „Mix aus 3 Tracks“. Jedes Pad warpt aus dem Tempo seines eigenen Tracks. Ist das Tempo falsch (typisch: halb/doppelt, z. B. 172 → 86 bei Drum & Bass), korrigiert man es **im Editor** (Zahlenfeld, ½×, 2×, „Tempo stimmt“). Das Tempo steht dann in der Bibliothek und gilt für alle Bänke des Videos, das Raster wird sofort neu berechnet.
 
 Der Beat-Tracker folgt leichten Tempo-Schwankungen, eine echte Band ist also kein Problem. Die „1“ jedes Takts schätzt er aus der Kick und aus Harmoniewechseln. Ein Intro ohne Beat (Stille, Gerede, Flächen) wird übersprungen, Takt 1 ist dort, wo der Beat einsetzt.
 
