@@ -1010,7 +1010,7 @@ t('Trim und Norm (Nachtrag 14): Trim-Regler in den Details, Doppelklick 0, je ei
   await b.eval(`localStorage.clear()`);
   await open('mix');                                 // erstes Quell-Grid: Bank 7
   await b.eval(`cmd('trim', { id: 7, pad: 2, trim: 3 })`);
-  await b.waitFor(`S.lib.banks.find((x) => x.id === 7).pads[2].trim === 3`);
+  await b.waitFor(`S.lib.banks.find((x) => x.id === 7).pads[2]?.trim === 3`);
   await b.click('#srcpads .st[data-pad="2"]'); await b.waitFor(`S.prev && !!S.prev.src`);
   assert.ok(Math.abs(await b.eval('S.prev.amp') - Math.pow(10, 4 / 20)) < 1e-9, 'Ausgleich + Trim');
   await b.click('#srcpads .st[data-pad="2"]'); await b.waitFor(`!S.prev`);
@@ -1021,7 +1021,7 @@ t('Trim und Norm (Nachtrag 14): Trim-Regler in den Details, Doppelklick 0, je ei
   // Kopie aus dem Quell-Grid nimmt den Trim mit
   m.log = []; await b.eval(dnd('#srcpads .st[data-pad="2"]', '#pad9'));
   assert.strictEqual((await waitLog((x) => x.cmd === 'setpad' && x.pad === 9)).trim, 3);
-  await b.waitFor(`S.lib.banks.find((x) => x.id === 13).pads[9].trim === 3`);
+  await b.waitFor(`S.lib.banks.find((x) => x.id === 13).pads[9]?.trim === 3`);
   m.params = { ...require('./editor_mock').PARAMS_START };
   await b.eval(`localStorage.clear()`);
   assert.deepStrictEqual(b.errors, []);
