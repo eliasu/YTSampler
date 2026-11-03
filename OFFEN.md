@@ -4,57 +4,9 @@
 
 ## Wo der Code steht
 
-`main` mit Tag `v3.0.0` ist der aktuelle Stand: nur noch kuratierte Bänke (geplant in `.scratch/device-3/`), in Live geprüft und released. Teletext, IR und Schreibmaschine liegen im Archiv-Tag `v2.1.0` und in `.scratch/archiv/teletext-ir-schreibmaschine.md`.
+`main` mit Tag `v4.0.0` ist der aktuelle Stand, in Live geprüft und released: Mix-Bänke (Video pro Pad), jede neue Bank leer, Suchtreffer aufs Pad, „Leere Plätze füllen“, „Neue Bank“ am Treffer, Quell-Grids mit Vorhören im Browser, Bühne/Ablage, Alt-Drag und Pads in andere Bänke ziehen, Lautstärke angleichen (Norm + Trim), Division live und bis 4 Bars, parallele Downloads, „Cache leeren“, Undo-Vorrat. Geplant in `.scratch/mix-banks/spec.md` (mit Nachträgen 10–14). 3.0 steht in `.scratch/device-3/`, Teletext/IR/Schreibmaschine im Archiv-Tag `v2.1.0`.
 
-Auf einem neuen Rechner: siehe `CLAUDE.md` „Neuer Rechner“, dann das Device in Live neu auf die Spur ziehen.
-
-Zweig `mix`: **Mix-Bänke (4.0.0)**, geplant in `.scratch/mix-banks/spec.md`, gebaut in den Paketen N, J, E, I. Zweig `mix-flow` darauf: Nachtrag „Editor-Flow“ (Spec 10): jede neue Bank leer, Suchtreffer aufs Pad, „Leere Plätze füllen“, Quell-Grid, Ablage für Undo, „Cache leeren“. Alle Tests grün, in Live noch nicht geprüft, noch nicht released.
-
-## Mix-Bänke: in Live zu prüfen (Spec 6)
-
-Erst `tools/deploy.sh`, Device neu auf die Spur ziehen, dann:
-- Alte Bänke spielen wie in 3.0 (Warp, Raster, Tune), ohne Neuschnitt.
-- Mix-Bank aus zwei Tracks mit verschiedenem Tempo: Beide Pads laufen mit Warp im Live-Tempo, Linien pro Fach stimmen.
-- Leere Plätze stumm, am Device erkennbar: Pad dunkel ohne Nummer. Wie sieht das dunkle Pad in echtem Max aus (Farbe, Kontrast zum normalen Pad)?
-- Editor-Flow: „Neue Bank“ → leere Bank im Device (alle Pads dunkel, Status „· leer“). Treffer auf ein Pad ziehen und anklicken: Pad zeigt „wartet“/„lädt n %“, danach lädt das Device die Bank neu und das Pad spielt eine Stelle auf einem Taktanfang.
-- „Leere Plätze füllen“ mit einem langen Track: alle leeren Pads laden, klingen danach, kein Start doppelt. Drei Tracks gleichzeitig: der vierte wartet.
-- Belegtes Pad überschreiben, ⌘Z: das alte Pad klingt wieder, auch nach „Cache leeren“ (Undo-Vorrat).
-- „Cache leeren“: Rückfrage mit Größe, danach spielen alle Bänke weiter, Anzeige 0 GB, „Track laden“ holt den Track. Während eines Downloads ausgegraut.
-- Nach Neustart von Live: `iCloud Drive/YTSampler/snippets/keep/` enthält nur noch Pads, die eine Bank benutzt.
-- Bühne ohne Cache: Mix-Bank aus Pads anderer Bänke legen geht.
-- Zweiter Mac mit 3.x zeigt „Bibliothek aus neuerer Version“ (beide Macs gleichzeitig auf 4.0).
-- **Division live** (Zweig `mix-livediv`): Pad mit 1/8 anschlagen, auf 1 Takt drehen: läuft weiter, ohne Knacken? Zurückdrehen nach dem neuen Ende: kurzes Ausblenden statt Abriss? Mit Warp: Release neu terminiert (endet am neuen Ende, wird danach stumm)? Rückwärts?
-- **Bühne und Ablage** (Zweig `mix-stage`, Spec 11):
-  - Nach dem Update stehen alle Bänke auf der Bühne, Nummern wie vorher, MIDI-Mapping auf `Bank` unverändert.
-  - Bank im Editor in die Ablage schieben: Device zeigt „-“, wenn sie aktiv war. Danach `Bank`-Regler drehen: lädt die Bühnen-Bank seines Werts. ◀ / ▶ von „-“ aus: beide laden die Bank am Regler.
-  - Ablage-Bank im Editor anklicken: spielt, Anzeige „-“, Regler bleibt stehen.
-  - Reihenfolge der Bühne per Ziehen ändern: Nummern im Device folgen sofort (auch die gerade aktive).
-  - Set speichern mit einer Ablage-Bank, Set neu öffnen: dieselbe Bank lädt, „-“.
-  - Aktive Bühnen-Bank löschen: die nächste der Bühne rückt nach, nicht eine Ablage-Bank. Aktive Ablage-Bank löschen: Device lädt die Bank am Regler.
-  - „Neue Bank“ am Suchtreffer: Bank mit Videotitel in der Ablage, alle 16 Pads laden, danach spielt sie; ⌘Z entfernt sie.
-  - Pfeil am Zeilenende im Editor auf dem Laptop groß genug? Ziehen auf die Überschriften gut treffbar?
-- **Editor-Design und 4 Takte** (Zweig `mix-design`, Spec 12):
-  - Device neu auf die Spur ziehen. „Division“ zeigt hinten „4 Bars“, gespeicherte Sets haben dieselbe Division wie vorher, MIDI-Mapping auf „Division“ fährt jetzt bis 4 Bars.
-  - 4 Bars bei 120 BPM: Pad spielt 8 s. Bei 50 BPM: endet sauber am Snippet-Ende (16 s), kein Knacken. Mit Warp und einem Track unter 60 BPM ebenso.
-  - Division live von 1/8 auf 4 Bars und zurück, auch mit Warp.
-  - Editor auf dem Laptop (1440×900): × und Würfel am Pad immer zu sehen, treffbar, Nummer und Startzeit lesbar; Klick in die Mitte spielt.
-  - Quell-Pad anklicken: klingt aus den Mac-Lautsprechern (nicht in Live), Länge passt zur Slice-Einstellung und zum Set-Tempo; zweiter Klick stoppt, anderes Pad wechselt, Pad leuchtet. Ziehen geht weiter. Klingt der Anfang/das Ende sauber?
-  - Fenster breiter ziehen: mehr Quell-Grids, jedes mit eigener Bank, Auswahl bleibt nach Neuladen. Detailzeilen darunter lesbar?
-  - Unbestätigtes Tempo: Hinweis rechts neben „Tempo stimmt“.
-- **Pads ziehen** (Zweig `mix-drag`, Spec 13):
-  - Pad mit ⌥ auf ein anderes Pad ziehen: Plus am Zeiger, Ziel wird Kopie, ⌘Z holt das alte zurück. ⌥ erst während des Ziehens drücken bzw. loslassen: zählt der Stand beim Loslassen? Ohne ⌥ wird wie bisher getauscht.
-  - Pad über eine andere Bank links halten: öffnet sich nach gut einer halben Sekunde, Device lädt sie, das Ziehen läuft weiter. Kurz drüberwischen öffnet nichts. Auch in der Ablage.
-  - Dort auf ein Pad loslassen: alter Platz leer (Device dunkel nach dem Neuschnitt der alten Bank), neues Pad klingt. Mit ⌥: alte Bank unverändert. Ein ⌘Z stellt beide her, auch nach „Cache leeren“.
-  - Esc während des Ziehens: geöffnete Bank bleibt aktiv, nichts geändert.
-  - Bänke umsortieren und zwischen Bühne/Ablage ziehen geht wie vorher.
-- **Lautstärke angleichen** (Zweig `mix-norm`, Spec 14):
-  - Device neu auf die Spur ziehen: „Norm“ rechts neben Catch, steht auf an, MIDI-mappbar. Altes Set: „Norm“ ist an (Standardwert), der Klang bestehender Bänke ändert sich.
-  - Beim ersten Start: Werden alle Snippets nachgemessen, ohne Hänger? `iCloud Drive/YTSampler/snippets/<id>.json` hat danach `gain`, die WAV ist unverändert.
-  - Bank mit leisen und lauten Tracks: Pads klingen ähnlich laut. Norm aus: wie vorher. Verzerrt oder knackt etwas bei +12 dB (`env` > 1, Sampler und Warp)? Max-Fenster ohne Fehler?
-  - Editor: Trim-Schieber am gewählten Pad wirkt beim nächsten Anschlag, ⌘Z nimmt ihn zurück, Doppelklick = 0. Kopieren, Verschieben, ⌥-Ziehen nehmen den Trim mit. „Norm“ im Editor schaltet das Device und umgekehrt. Reglerleiste auf dem Laptop einzeilig?
-  - Vorhören im Quell-Grid: Lautstärke passt zum Device (Norm an/aus, Trim)?
-  - Trifft die Messung (2 s ab Start) echtes Material? Ein Pad, das leise anfängt, wird lauter, als der Rest des Slices klingt.
-- Danach `release.sh 4.0.0`.
+Auf einem neuen Rechner: siehe `CLAUDE.md` „Neuer Rechner“, dann das Device in Live neu auf die Spur ziehen. **Beide Macs gleichzeitig auf 4.0**, sonst bleibt der alte stumm („Bibliothek aus neuerer Version“).
 
 Bekannte Grenze: Den Undo-Vorrat räumt jeder Node-Start auf. Startet ein zweites Device, kann das erste ein Leeren ohne Cache danach nicht mehr rückgängig machen.
 
