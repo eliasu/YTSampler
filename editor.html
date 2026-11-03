@@ -150,10 +150,10 @@
   /* Pads */
   #padarea { flex:1; display:flex; gap:18px; min-height:0; position:relative; }
   #grid { height:100%; aspect-ratio:1; max-width:62%; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); grid-template-rows:repeat(4,minmax(0,1fr)); gap:8px; }
-  .pad { position:relative; background:var(--raise); border:1px solid var(--line2); border-radius:10px; cursor:pointer; padding:8px 10px; display:flex; flex-direction:column; justify-content:space-between; user-select:none; min-height:0; transition:background .08s; touch-action:none; }
+  .pad { position:relative; background:var(--raise); border:1px solid var(--line2); border-radius:10px; cursor:pointer; padding:8px 8px 8px 10px; display:flex; flex-direction:column; justify-content:space-between; user-select:none; min-height:0; transition:background .08s; touch-action:none; }
   .pad:hover { border-color:#4a4d55; }
   .pad .n { font-weight:600; font-size:14px; color:var(--dim); }
-  .pad .k { margin-left:7px; font-weight:400; vertical-align:1px; color:var(--faint); }
+  .pad .k { margin-left:4px; padding:0 3px; font-weight:400; vertical-align:1px; color:var(--faint); }
   .pad.hit .k { color:#1a1200; border-color:#1a1200; }
   .pad .s { font-size:11.5px; color:var(--dim); }
   .pad .bar { position:absolute; left:10px; right:10px; bottom:26px; height:3px; border-radius:2px; background:var(--line2); }
@@ -161,11 +161,12 @@
   .pad.sel { border-color:var(--sel); } .pad.sel .n { color:var(--sel); }
   .pad.hit { background:var(--acc); } .pad.hit .n, .pad.hit .s { color:#1a1200; }
   .pad.over { outline:2px dashed var(--sel); outline-offset:2px; }
-  .pad .roll, .pad .clr { position:absolute; top:4px; right:4px; opacity:0; padding:2px 3px; }
-  .pad .clr { top:27px; }  /* unter dem Würfel, rechts von der Mitte (Klick spielt) */
-  .pad:hover .roll, .pad:hover .clr, .pad.sel .clr { opacity:1; }
+  /* Icons immer sichtbar, rechts oben übereinander: × leeren, darunter Würfel. Nummer (.top margin-right) und Startzeit (unten) bleiben frei, Klick in die Mitte spielt */
+  .pad .roll, .pad .clr { position:absolute; top:3px; right:2px; padding:1px; display:flex; }
+  .pad .roll { top:22px; }
+  .pad .roll svg.i, .pad .clr svg.i { width:13px; height:13px; vertical-align:top; }
   .pad .clr:hover:not(:disabled) { color:var(--danger); }
-  .pad .top { display:flex; align-items:baseline; gap:7px; min-width:0; margin-right:22px; }
+  .pad .top { display:flex; align-items:baseline; gap:7px; min-width:0; margin-right:12px; }   /* Platz für die Icons (rechts 2–19 px) */
   .pad .vt { flex:1; min-width:0; font-size:10.5px; color:var(--faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .pad { overflow:hidden; }
   .pad.empty { background:none; border-style:dashed; }
@@ -175,24 +176,29 @@
   .pad.loading .s { color:var(--sel); }
   /* rechts neben den Pads: Quell-Grid (Pads einer anderen Bank, auf Plätze ziehen = Kopie), darunter das gewählte Pad */
   #aside { flex:1; min-width:190px; display:flex; flex-direction:column; gap:10px; min-height:0; }
-  #src { flex:1; min-height:110px; display:flex; flex-direction:column; gap:6px; }
-  #srchead { display:flex; align-items:center; gap:8px; }
-  #srcsel { font:inherit; font-size:12px; color:var(--text); background:var(--bg); border:1px solid var(--line2); border-radius:7px; padding:3px 6px; outline:none; flex:1; min-width:0; }
-  #srcsel:focus { border-color:var(--sel); }
-  #srcbox { flex:1; min-height:0; container-type:size; }
-  #srcpads { width:min(100cqw, 100cqh); height:min(100cqw, 100cqh); display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); grid-template-rows:repeat(4, minmax(0, 1fr)); gap:4px; }
+  /* so viele Quell-Grids nebeneinander, wie die Breite zulässt (renderSrc), jedes mit eigener Quellbank */
+  #srcs { flex:1; min-height:110px; display:flex; gap:14px; overflow:hidden; }
+  .src { flex:none; display:flex; flex-direction:column; gap:6px; min-width:0; }
+  .srchead { display:flex; align-items:center; gap:8px; height:26px; }
+  .srcsel { font:inherit; font-size:12px; color:var(--text); background:var(--bg); border:1px solid var(--line2); border-radius:7px; padding:3px 6px; outline:none; flex:1; min-width:0; }
+  .srcsel:focus { border-color:var(--sel); }
+  .srcpads { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); grid-template-rows:repeat(4, minmax(0, 1fr)); gap:4px; }
   .st { background:var(--raise); border:1px solid var(--line2); border-radius:6px; padding:2px 4px; font-size:10.5px; line-height:1.25; color:var(--dim); cursor:grab; user-select:none; overflow:hidden; white-space:nowrap; display:flex; flex-direction:column; justify-content:center; align-items:center; }
   .st b { font-size:11.5px; font-weight:600; color:var(--text); }
+  .st.playing { background:var(--acc); border-color:var(--acc); color:#1a1200; } .st.playing b { color:#1a1200; }
   .st.empty { opacity:.35; cursor:default; border-style:dashed; }
   .st.off { cursor:default; }
-  #insp { flex:none; display:flex; flex-direction:column; gap:5px; }
-  #insp .big { font-size:15px; font-weight:600; }
+  /* gewähltes Pad, kompakt unter den Quell-Grids: Zeile 1 Pad und Track, Zeile 2 Knöpfe und Tempo */
+  #insp { flex:none; display:flex; flex-direction:column; gap:6px; border-top:1px solid var(--line); padding-top:8px; }
+  #insp .line { display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; min-width:0; }
+  #insp .big { font-size:15px; font-weight:600; white-space:nowrap; }
   #insp .big span { font-weight:400; color:var(--dim); margin-left:6px; }
-  #insp .row { display:flex; justify-content:space-between; gap:10px; color:var(--dim); border-bottom:1px solid var(--line); padding:2px 0 4px; }
+  #insp .row { flex:1; min-width:0; display:flex; }
   #insp .row b { color:var(--text); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
   #insp .btns { display:flex; gap:6px; flex-wrap:wrap; }
   #tempo { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
   #tempo input { width:72px; padding:4px 7px; }
+  #tempo .ok { display:flex; gap:8px; align-items:center; }   /* Hinweis rechts neben „Tempo stimmt“ */
 
   /* Slide-in Suche */
   #shade { position:fixed; inset:0; background:rgba(0,0,0,.45); opacity:0; pointer-events:none; transition:opacity .2s; z-index:20; }
@@ -308,10 +314,7 @@
         <div id="padarea">
           <div id="grid"></div>
           <div id="aside">
-            <div id="src">
-              <div id="srchead"><span class="lbl" title="Pads einer anderen Bank auf Plätze ziehen (Kopie)">Quelle</span><select id="srcsel" aria-label="Quellbank"></select></div>
-              <div id="srcbox"><div id="srcpads"></div></div>
-            </div>
+            <div id="srcs"></div>
             <div id="insp"></div>
           </div>
         </div>
@@ -338,7 +341,7 @@ const CLIENT = Math.random().toString(36).slice(2, 10);
 const HIST_MAX = 100, LAYOUT_KEY = 'ytsampler.editor.layout';
 const S = {
   conn: false, hello: null, lib: null, dev: null, beats: null, cache: null,
-  jobs: {}, fills: [], sel: 0, zoom: 1, peaks: new Map(), play: null, drag: null,
+  jobs: {}, fills: [], sel: 0, zoom: 1, peaks: new Map(), play: null, drag: null, prev: null,
 };
 
 // ---------- Hilfen ----------
@@ -843,7 +846,7 @@ for (let row = 3; row >= 0; row--) for (let col = 0; col < 4; col++) {
   p.className = 'pad'; p.id = 'pad' + i;
   p.title = 'Taste ' + PAD_LABEL[i];
   p.innerHTML = '<div class="top"><span class="n">' + (i + 1) + '<kbd class="k">' + PAD_LABEL[i] + '</kbd></span><span class="vt"></span></div><div class="bar"><i></i></div><span class="s num"></span>'
-    + '<button class="ghost clr" title="Pad leeren">' + icon('x') + '</button><button class="ghost roll" title="Neues Snippet">' + icon('dice') + '</button>';
+    + '<button class="ghost clr" title="Pad leeren">' + icon('x') + '</button><button class="ghost roll" title="Neues Snippet (würfeln)">' + icon('dice') + '</button>';
   p.onpointerdown = (e) => { if (e.button || e.target.closest('.roll,.clr') || !view()) return; hit(i); };
   p.querySelector('.roll').onclick = () => { S.sel = i; roll(i); };
   p.querySelector('.clr').onclick = () => clearPad(i);
@@ -882,19 +885,19 @@ function renderPads() {
   if (document.activeElement === $('bpm')) return; // Tempo wird gerade getippt
   if (!vw.pad) {
     const sig = JSON.stringify(['leer', S.sel]); if (sig === renderPads.sig) return; renderPads.sig = sig;
-    $('insp').innerHTML = '<div class="big">Pad ' + (S.sel + 1) + '<span>leer</span></div>';
+    $('insp').innerHTML = '<div class="line"><div class="big">Pad ' + (S.sel + 1) + '<span>leer</span></div></div>';
     return;
   }
   const v = vw.video, vt = vtitle(v), tb = videoBpm(v), tempoOn = !!vw.bank && writable();
   const sig = JSON.stringify([v, vt, tb, tempoOn, vw.edit, S.sel, vw.pad.start]);
   if (sig === renderPads.sig) return;
   renderPads.sig = sig;
-  $('insp').innerHTML = '<div class="big">Pad ' + (S.sel + 1) + '<span class="num">' + fmt(vw.pad.start) + '</span></div>'
-    + '<div class="row"><b id="inspvideo"></b></div>'
-    + '<div class="btns"><button class="small" id="rollbtn">' + icon('dice') + ' Neues Snippet</button><button class="small" id="hitbtn">Anspielen</button></div>'
+  $('insp').innerHTML = '<div class="line"><div class="big">Pad ' + (S.sel + 1) + '<span class="num">' + fmt(vw.pad.start) + '</span></div>'
+    + '<div class="row"><b id="inspvideo"></b></div></div>'
+    + '<div class="line"><div class="btns"><button class="small" id="rollbtn">' + icon('dice') + ' Neues Snippet</button><button class="small" id="hitbtn">Anspielen</button></div>'
     + '<div id="tempo"><span class="lbl">Tempo</span><input id="bpm" type="number" min="30" max="300" step="0.1" class="num"><button class="small" id="half">½×</button><button class="small" id="double">2×</button>'
-    + (tb.confirmed ? '' : '<button class="small" id="tempook">Tempo stimmt</button>') + '</div>'
-    + (!tb.confirmed && tb.bpm ? '<span class="hint">Tempo aus der Analyse, nicht bestätigt</span>' : '');
+    + (tb.confirmed ? '' : '<span class="ok"><button class="small" id="tempook">Tempo stimmt</button>'
+      + (tb.bpm ? '<span class="hint" id="tempohint">Tempo aus der Analyse, nicht bestätigt</span>' : '') + '</span>') + '</div></div>';
   $('inspvideo').textContent = vt + (tb.bpm ? ' · ' + fmtBpm(tb.bpm) + ' BPM' : '');
   $('rollbtn').disabled = !vw.edit; $('rollbtn').onclick = () => roll(S.sel);
   $('hitbtn').onpointerdown = (e) => { e.stopPropagation(); hit(S.sel); };
@@ -910,36 +913,106 @@ function renderPads() {
   const ok = $('tempook'); if (ok) { ok.disabled = !tempoOn; ok.onclick = () => cmd('tempook', { video: v }); }
 }
 
-// ---------- Quell-Grid (Flow-Nachtrag): 4×4 wie die eigenen Pads, Pad 1 unten links ----------
+// ---------- Quell-Grids (Flow-Nachtrag, Nachtrag 12): je 4×4 wie die eigenen Pads, Pad 1 unten links ----------
+// So viele nebeneinander, wie die Breite bei voller Höhe zulässt, höchstens eins pro anderer Bank. Gemerkt: layout.srcIds[k]
+const SRC_GAP = 14, SRC_HEAD = 32;
+function srcFit(n) {
+  const box = $('srcs'), h = Math.max(60, box.clientHeight - SRC_HEAD), w = box.clientWidth;
+  const k = Math.max(1, Math.min(n || 1, Math.floor((w + SRC_GAP) / (h + SRC_GAP))));
+  return { k, side: Math.floor(Math.max(60, Math.min(h, (w - (k - 1) * SRC_GAP) / k))) };
+}
+// Quellbank pro Grid: gemerkte, sonst die nächsten Bänke nach der aktiven (Bühne, dann Ablage), keine doppelt
+function srcBanks(cb, others, k) {
+  const L = ordered(), at = L.indexOf(cb), rot = [...L.slice(at + 1), ...L.slice(0, Math.max(0, at))].filter((x) => x !== cb), out = [];
+  for (let g = 0; g < k; g++) {
+    const want = others.find((x) => x.id === layout.srcIds[g]);
+    out.push(want || rot.find((x) => !out.includes(x) && !layout.srcIds.slice(g + 1, k).includes(x.id)) || others[0]);
+  }
+  return out;
+}
 function renderSrc() {
-  const cb = curBank(), w = writable(), others = banks().filter((x) => x !== cb);
-  const src = others.find((x) => x.id === layout.srcId) || others[0] || null;
-  const sig = JSON.stringify([others.map((x) => [x.id, x.name]), src, w, S.lib && S.lib.videos]);
+  const cb = curBank(), w = writable(), others = banks().filter((x) => x !== cb), fit = srcFit(others.length);
+  const srcs = others.length ? srcBanks(cb, others, fit.k) : [null];
+  const sig = JSON.stringify([others.map((x) => [x.id, x.name, stageNr(x)]), srcs, w, S.conn, fit, S.lib && S.lib.videos]);
   if (sig === renderSrc.sig) return;
   renderSrc.sig = sig;
-  const sel = $('srcsel'); sel.innerHTML = '';
-  others.forEach((x) => sel.add(new Option((stageNr(x) || '–') + '  ' + x.name, x.id)));
-  sel.disabled = !others.length; if (src) sel.value = src.id;
-  const box = $('srcpads'); box.innerHTML = '';
-  if (!src) { box.innerHTML = '<span class="hint" style="grid-column:1/-1">Keine andere Bank</span>'; return; }
-  for (let row = 3; row >= 0; row--) for (let col = 0; col < 4; col++) {
-    const k = row * 4 + col, p = src.pads[k], d = document.createElement('div');
-    d.className = 'st num' + (p ? (w ? '' : ' off') : ' empty'); d.dataset.pad = k;
-    d.innerHTML = '<b>' + (k + 1) + '</b>' + (p ? fmtDur(p.start / 1000) : 'leer');
-    if (p) {
-      d.title = vtitle(p.video) + ' · ' + fmt(p.start); d.draggable = w;
-      d.ondragstart = (e) => { S.drag = { kind: 'src', id: src.id, pad: k }; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', 'Pad ' + (k + 1)); };
-      d.ondragend = () => { S.drag = null; };
+  const root = $('srcs'); root.innerHTML = '';
+  srcs.forEach((src, g) => {
+    const col = document.createElement('div'), n = g || '';
+    col.className = 'src'; col.style.width = fit.side + 'px';
+    col.innerHTML = '<div class="srchead">' + (g ? '' : '<span class="lbl" title="Pads einer anderen Bank auf Plätze ziehen (Kopie), anklicken: vorhören">Quelle</span>')
+      + '<select class="srcsel" id="srcsel' + n + '" aria-label="Quellbank ' + (g + 1) + '"></select></div><div class="srcpads" id="srcpads' + n + '"></div>';
+    root.appendChild(col);
+    const sel = col.querySelector('select'), box = col.querySelector('.srcpads');
+    box.style.width = box.style.height = fit.side + 'px';
+    others.forEach((x) => sel.add(new Option((stageNr(x) || '–') + '  ' + x.name, x.id)));
+    sel.disabled = !others.length; if (src) sel.value = src.id;
+    sel.onchange = () => { if (!sel.value) return; layout.srcIds[g] = +sel.value; saveLayout(); sel.blur(); render(); };
+    if (!src) { box.innerHTML = '<span class="hint" style="grid-column:1/-1">Keine andere Bank</span>'; return; }
+    for (let row = 3; row >= 0; row--) for (let col4 = 0; col4 < 4; col4++) {
+      const k = row * 4 + col4, p = src.pads[k], d = document.createElement('div');
+      d.className = 'st num' + (p ? (w ? '' : ' off') : ' empty'); d.dataset.pad = k; d.dataset.bank = src.id;
+      d.innerHTML = '<b>' + (k + 1) + '</b>' + (p ? fmtDur(p.start / 1000) : 'leer');
+      if (p) {
+        d.title = vtitle(p.video) + ' · ' + fmt(p.start) + ' · Klick: vorhören'; d.draggable = w;
+        d.onclick = () => preview(src, k);
+        d.ondragstart = (e) => { stopPreview(); S.drag = { kind: 'src', id: src.id, pad: k }; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', 'Pad ' + (k + 1)); };
+        d.ondragend = () => { S.drag = null; };
+      }
+      box.appendChild(d);
     }
-    box.appendChild(d);
+  });
+  markPrev();
+}
+new ResizeObserver(later).observe($('srcs'));
+
+// ---------- Vorhören (Mix-Spec Nachtrag 12): Snippet eines Quell-Pads im Browser, nicht über Live ----------
+// Ab Start, so lang wie der Slice des Device in Lives Tempo (ohne Warp, Rate, Tune), ohne Device-Regler 2 s
+let actx = null;
+const prevBufs = new Map();   // bank/pad/video/start -> AudioBuffer
+function previewMs() { const p = S.dev && S.dev.params; return p && p.bpm > 0 && DIVS[p.div] ? 60000 / p.bpm * 4 * DIVS[p.div][1] : 2000; }
+function markPrev() {
+  document.querySelectorAll('.srcpads .st').forEach((d) => d.classList.toggle('playing', !!S.prev && +d.dataset.bank === S.prev.id && +d.dataset.pad === S.prev.pad));
+}
+function stopPreview() {
+  const p = S.prev; S.prev = null;
+  if (p && p.src) { const t = actx.currentTime; p.src.onended = null; p.gain.gain.setTargetAtTime(0, t, 0.003); p.src.stop(t + 0.02); }   // kurz ausblenden statt Knacken
+  markPrev();
+}
+async function preview(bank, k) {
+  const old = S.prev; stopPreview();
+  if (old && old.id === bank.id && old.pad === k) return;   // zweiter Klick aufs selbe Pad stoppt
+  const pd = bank.pads[k]; if (!pd) return;
+  const me = S.prev = { id: bank.id, pad: k, ms: previewMs(), src: null, gain: null }, key = [bank.id, k, pd.video, pd.start].join('/');
+  markPrev();
+  try {
+    actx = actx || new AudioContext();
+    if (actx.state === 'suspended') actx.resume();
+    let buf = prevBufs.get(key);
+    if (!buf) {
+      const r = await fetch('/snip/' + bank.id + '/' + k);
+      if (!r.ok) throw new Error(r.status);
+      buf = await actx.decodeAudioData(await r.arrayBuffer());
+      if (prevBufs.size >= 48) prevBufs.clear();   // shortcut: Cache einfach leeren statt LRU, reicht fürs Vorhören
+      prevBufs.set(key, buf);
+    }
+    if (S.prev !== me) return;
+    const t = actx.currentTime, dur = Math.min(me.ms / 1000, buf.duration), src = actx.createBufferSource(), g = actx.createGain();
+    src.buffer = buf; src.connect(g); g.connect(actx.destination);
+    g.gain.setValueAtTime(1, t + Math.max(0, dur - 0.01)); g.gain.linearRampToValueAtTime(0, t + dur);
+    src.onended = () => { if (S.prev === me) { S.prev = null; markPrev(); } };
+    src.start(t, 0, dur); me.src = src; me.gain = g; me.dur = dur;
+  } catch (e) {
+    if (S.prev === me) { S.prev = null; markPrev(); toast('Vorhören geht nicht (Snippet fehlt)', { err: true }); }
   }
 }
-$('srcsel').onchange = () => { if (!$('srcsel').value) return; layout.srcId = +$('srcsel').value; saveLayout(); $('srcsel').blur(); render(); };
 
 // ---------- Device-Regler (Spec 3.0, 5.1) ----------
 // Ein Zustand: die echten Live-Parameter aus device.params. Bedienung schickt /cmd param, die Anzeige folgt dem Echo.
 // Kein Schritt in der Historie, kein „gespeichert ✓“.
-const DIV_NAMES = ['1/64', '1/32', '1/16T', '1/16', '1/8T', '1/8', '1/4T', '1/4', '1/2', '1 Bar', '2 Bars']; // wie DIVS in [js]
+const DIVS = [['1/64', 1 / 64], ['1/32', 1 / 32], ['1/16T', 1 / 24], ['1/16', 1 / 16], ['1/8T', 1 / 12], ['1/8', 1 / 8], ['1/4T', 1 / 6], ['1/4', 1 / 4],
+  ['1/2', 1 / 2], ['1 Bar', 1], ['2 Bars', 2], ['4 Bars', 4]];                                              // wie DIVS in [js], Index = Live-Parameter
+const DIV_NAMES = DIVS.map((d) => d[0]);
 const VOICE_NAMES = ['Mono', '2', '3', '4', '5', '8', '16'];                                               // wie VOICE_OPTS
 const NOTE = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
 const noteName = (n) => NOTE[n % 12] + (Math.floor(n / 12) - 2); // wie Live: 36 = C1
@@ -1054,8 +1127,11 @@ document.addEventListener('dragover', (e) => { if (S.drag && S.drag.kind === 'vi
 document.addEventListener('drop', (e) => e.preventDefault());
 
 // ---------- Größen: Bibliothek breiter/schmaler/eingeklappt, Waveform höher/flacher ----------
-const layout = { sw: 280, wh: 42, collapsed: false };
+const layout = { sw: 280, wh: 42, collapsed: false, srcIds: [] };
 try { Object.assign(layout, JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}')); } catch (e) { /* ohne gespeicherte Werte: Standard */ }
+if (!Array.isArray(layout.srcIds)) layout.srcIds = [];
+if (layout.srcId && !layout.srcIds.length) layout.srcIds = [layout.srcId];   // bis 4.0: eine Quellbank
+delete layout.srcId;
 function applyLayout() {
   document.documentElement.style.setProperty('--sw', layout.sw + 'px');
   document.documentElement.style.setProperty('--wh', layout.wh + '%');

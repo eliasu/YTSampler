@@ -275,7 +275,7 @@ t('Regler: Leiste in der Pad-Karte zeigt device.params und folgt dem Device', as
       dim: +getComputedStyle(c.querySelector('.set')).opacity, divs: [...$('p-div').options].map((o) => o.textContent).join(' '), voices: [...$('p-voices').options].map((o) => o.textContent).join(' ') }; })()`);
   assert.strictEqual(pos.parent, 'pads'); assert(pos.below && pos.above, 'zwischen Kartenkopf und Pads');
   assert(pos.set && pos.setRight && pos.dim < 1, 'Einrichtung rechts, gedämpft');
-  assert.strictEqual(pos.divs, '1/64 1/32 1/16T 1/16 1/8T 1/8 1/4T 1/4 1/2 1 Bar 2 Bars');
+  assert.strictEqual(pos.divs, '1/64 1/32 1/16T 1/16 1/8T 1/8 1/4T 1/4 1/2 1 Bar 2 Bars 4 Bars', 'Index 0–10 wie bisher, 4 Bars hinten');
   assert.strictEqual(pos.voices, 'Mono 2 3 4 5 8 16');
   let s = await ctlState();
   assert.deepStrictEqual([s.div, s.divText, s.rate, s.rateV, s.mode, s.on, s.vol, s.volV, s.voices, s.base, s.note, s.locked, s.disabled],
@@ -393,7 +393,7 @@ t('Regler: gesperrt ohne Device und ohne params, frei bei leerer/kaputter Biblio
 t('Attrappe: /cmd param prüft Name und Bereich (badreq)', async () => {
   await open('normal');
   const post = (q) => b.eval(`fetch('/cmd', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: ${JSON.stringify(JSON.stringify(q))} }).then((r) => r.json())`);
-  for (const q of [{ name: 'grid', value: 1 }, { name: 'div', value: 11 }, { name: 'div', value: 2.5 }, { name: 'rev', value: 2 }, { name: 'rate', value: 3 }, { name: 'vol', value: '0' }, { name: 'base', value: -1 }])
+  for (const q of [{ name: 'grid', value: 1 }, { name: 'div', value: 12 }, { name: 'div', value: 2.5 }, { name: 'rev', value: 2 }, { name: 'rate', value: 3 }, { name: 'vol', value: '0' }, { name: 'base', value: -1 }])
     assert.strictEqual((await post({ cmd: 'param', ...q })).code, 'badreq', JSON.stringify(q));
   assert.deepStrictEqual(await post({ cmd: 'param', name: 'rate', value: 0.25 }), { ok: true });
   await b.waitFor(`S.dev.params.rate === 0.25`);
@@ -585,7 +585,7 @@ t('Bank aus mehreren Tracks: „n Tracks“ ohne Mix-Zeichen, Waveform folgt dem
   await b.click('#pad8'); await waitLog((x) => x.cmd === 'hit' && x.pad === 8);
   await b.waitFor(`/Track fehlt/.test($('wavemsg').textContent) && !!$('fetchone')`);
   const f = await b.eval(`({ edit: document.querySelectorAll('.mk.edit').length, roll: getComputedStyle($('pad8').querySelector('.roll')).display, clr: getComputedStyle($('pad8').querySelector('.clr')).display, rb: $('rollbtn').disabled })`);
-  assert.deepStrictEqual(f, { edit: 0, roll: 'none', clr: 'block', rb: true });
+  assert.deepStrictEqual(f, { edit: 0, roll: 'none', clr: 'flex', rb: true });
   m.log = []; await b.click('#fetchone'); assert.strictEqual((await waitLog((x) => x.cmd === 'fetch')).video, 'Fk4WaterNoG');
   // leerer Platz
   await b.click('#pad9'); await waitLog((x) => x.cmd === 'hit' && x.pad === 9);
@@ -798,6 +798,112 @@ t('Bühne/Ablage: zwei Bereiche, Schalter, Ziehen zwischen und in den Bereichen,
   m.log = []; await b.eval(dnd('#shelflist li:nth-child(1)', '#banklist'));
   assert.deepStrictEqual(await stage(), { cmd: 'stage', id: 7, on: true });
   await b.waitFor(`${ids('banklist')} === '3,9,4,11,2,12,7' && $('shelflist').textContent === 'Neue Bänke landen hier' && $('banklist').querySelector('li:last-child .nr').textContent === '7'`);
+  assert.deepStrictEqual(b.errors, []);
+});
+
+const viewport = (width, height) => b.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 2, mobile: false });
+const overlap = (a, c) => a.left < c.right && c.left < a.right && a.top < c.bottom && c.top < a.bottom;
+
+t('Pad-Icons: × oben, Würfel darunter, immer sichtbar (ohne Hover), verdecken Nummer und Startzeit nicht; Mitte spielt', async () => {
+  await open('normal');
+  await b.mouse('mouseMoved', 5, 5);                // nicht über einem Pad
+  const r = await b.eval(`[...Array(16).keys()].map((i) => { const p = $('pad' + i), R = (e) => { const r = e.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; }, q = (s) => R(p.querySelector(s)), cs = (s) => getComputedStyle(p.querySelector(s));
+    return { clr: q('.clr'), roll: q('.roll'), n: q('.n'), s: q('.s'), pad: R(p), vis: [cs('.clr').opacity, cs('.roll').opacity, cs('.clr').display, cs('.roll').display, cs('.clr').visibility] }; })`);
+  for (const [i, x] of r.entries()) {
+    assert.deepStrictEqual(x.vis, ['1', '1', 'flex', 'flex', 'visible'], 'Pad ' + (i + 1) + ' sichtbar');
+    assert.ok(x.clr.bottom <= x.roll.top + 1, 'Pad ' + (i + 1) + ': × über dem Würfel ' + JSON.stringify([x.clr, x.roll]));
+    for (const ic of [x.clr, x.roll]) {
+      assert.ok(!overlap(ic, x.n) && !overlap(ic, x.s), 'Pad ' + (i + 1) + ': Icon verdeckt Nummer/Startzeit ' + JSON.stringify([ic, x.n, x.s]));
+      assert.ok(ic.right <= x.pad.right && ic.top >= x.pad.top && ic.width >= 14, 'im Pad, treffbar');
+    }
+  }
+  assert.ok(r[0].pad.width < 90, '1440×900: kleine Pads (' + r[0].pad.width + ' px)');
+  m.log = []; await b.click('#pad6'); await waitLog((x) => x.cmd === 'hit' && x.pad === 6);
+  m.log = []; await b.click('#pad6 .roll'); await waitLog((x) => x.cmd === 'roll' && x.pad === 6);
+  assert(!m.log.some((x) => x.cmd === 'hit'), 'Würfel spielt nicht an');
+  assert.deepStrictEqual(b.errors, []);
+});
+
+t('Tempo-Hinweis steht rechts neben „Tempo stimmt“', async () => {
+  await open('normal');
+  await b.click('#banklist li:nth-child(2)'); await b.waitFor(`!!$('tempohint')`);
+  const r = await b.eval(`(() => { const k = $('tempook').getBoundingClientRect(), h = $('tempohint').getBoundingClientRect(); return { left: h.left - k.right, dy: Math.abs((h.top + h.bottom) / 2 - (k.top + k.bottom) / 2), text: $('tempohint').textContent }; })()`);
+  assert.strictEqual(r.text, 'Tempo aus der Analyse, nicht bestätigt');
+  assert.ok(r.left >= 0 && r.left < 20 && r.dy < 3, JSON.stringify(r));
+});
+
+t('Vorhören: Klick aufs Quell-Pad holt /snip, spielt Slice-Länge (Device-Tempo), zweiter Klick stoppt, anderes Pad wechselt, Ziehen geht', async () => {
+  await b.eval(`localStorage.clear()`);
+  await open('mix');                                 // aktive Bank 13, erstes Grid: Bank 7
+  m.setParams({ div: 11, bpm: 120 }); await b.waitFor(`S.dev.params.div === 11`);
+  m.gets = []; await b.click('#srcpads .st[data-pad="2"]');
+  await b.waitFor(`S.prev && !!S.prev.src && $('srcpads').querySelector('.st[data-pad="2"]').classList.contains('playing')`);
+  assert.deepStrictEqual(m.gets, ['/snip/7/2']);
+  assert.deepStrictEqual(await b.eval(`[S.prev.id, S.prev.pad, S.prev.ms, Math.round(S.prev.dur * 1000)]`), [7, 2, 8000, 8000], '4 Bars bei 120 BPM');
+  assert.strictEqual(await b.eval(`document.querySelectorAll('.st.playing').length`), 1);
+  assert.deepStrictEqual(m.log.filter((x) => x.cmd === 'hit'), [], 'nicht über Live');
+  await b.click('#srcpads .st[data-pad="2"]');
+  await b.waitFor(`!S.prev && !document.querySelector('.st.playing')`);
+  await b.click('#srcpads .st[data-pad="2"]'); await b.waitFor(`S.prev && !!S.prev.src`);
+  assert.deepStrictEqual(m.gets, ['/snip/7/2'], 'zweites Mal aus dem Speicher');
+  await b.click('#srcpads .st[data-pad="5"]');
+  await b.waitFor(`S.prev && S.prev.pad === 5 && !!S.prev.src && document.querySelectorAll('.st.playing').length === 1 && $('srcpads').querySelector('.st[data-pad="5"]').classList.contains('playing')`);
+  // kurzer Slice läuft von selbst aus
+  m.setParams({ div: 3, bpm: 150 }); await b.waitFor(`S.dev.params.div === 3`);
+  await b.click('#srcpads .st[data-pad="0"]'); await b.waitFor(`S.prev && S.prev.pad === 0 && !!S.prev.src`);
+  assert.strictEqual(await b.eval(`S.prev.ms`), 100);
+  await b.waitFor(`!S.prev && !document.querySelector('.st.playing')`, 2000);
+  // ohne Regler vom Device: 2 s
+  m.setParams(null); await b.waitFor(`!S.dev.params`);
+  await b.click('#srcpads .st[data-pad="1"]'); await b.waitFor(`S.prev && !!S.prev.src`);
+  assert.strictEqual(await b.eval(`S.prev.ms`), 2000);
+  // Ziehen stoppt und kopiert weiter
+  m.log = []; await b.eval(dnd('#srcpads .st[data-pad="3"]', '#pad9'));
+  await waitLog((x) => x.cmd === 'setpad' && x.pad === 9);
+  assert.strictEqual(await b.eval(`S.prev`), null);
+  // leerer Platz und fehlendes Snippet: kein Ton
+  const r = await b.eval(`fetch('/snip/13/9').then((r) => r.status)`);
+  assert.ok(r === 404 || r === 200);
+  assert.strictEqual(await b.eval(`fetch('/snip/999/0').then((r) => r.status)`), 404);
+  m.params = { ...require('./editor_mock').PARAMS_START };
+  assert.deepStrictEqual(b.errors, []);
+});
+
+t('Mehrere Quell-Grids: Anzahl nach Breite, verschiedene Bänke vorgeschlagen, Auswahl pro Grid gemerkt, Details darunter', async () => {
+  await b.eval(`localStorage.clear()`);
+  const grids = () => b.eval(`(() => { const s = [...document.querySelectorAll('#srcs .src')].map((c) => c.getBoundingClientRect()), box = $('srcs').getBoundingClientRect(), gr = $('grid').getBoundingClientRect(), ins = $('insp').getBoundingClientRect();
+    return { n: s.length, ids: [...document.querySelectorAll('.srcsel')].map((x) => +x.value), inside: s.every((r) => r.right <= box.right + 1 && r.bottom <= box.bottom + 1 && r.left > gr.right),
+      apart: s.every((r, i) => !i || r.left >= s[i - 1].right), below: ins.top >= Math.max(...s.map((r) => r.bottom)) - 1, sq: s.every((r, i) => { const p = document.querySelectorAll('.srcpads')[i].getBoundingClientRect(); return Math.abs(p.width - p.height) < 1; }) }; })()`);
+  try {
+    const seen = {};
+    for (const [w, h] of [[1000, 760], [1440, 900], [2400, 1000]]) {
+      await viewport(w, h); await open('normal'); await sleep(100);
+      const g = seen[w] = await grids();
+      assert.ok(g.inside && g.apart && g.below && g.sq, w + ': ' + JSON.stringify(g));
+      assert.strictEqual(new Set(g.ids).size, g.n, 'verschiedene Bänke');
+      assert.ok(!g.ids.includes(7), 'nicht die aktive');
+      assert.deepStrictEqual(g.ids.slice(0, 2), g.n > 1 ? [3, 9] : [3], 'die nächsten nach der aktiven');
+    }
+    console.log('     Quell-Grids bei 1000/1440/2400 px:', seen[1000].n, seen[1440].n, seen[2400].n);
+    assert.ok(seen[1440].n >= 2 && seen[2400].n > seen[1440].n, JSON.stringify([seen[1000].n, seen[1440].n, seen[2400].n]));
+    // Auswahl im zweiten Grid gemerkt
+    await b.eval(`$('srcsel1').value = '12'; $('srcsel1').dispatchEvent(new Event('change'))`);
+    await b.waitFor(`$('srcsel1').value === '12' && JSON.parse(localStorage.getItem('ytsampler.editor.layout')).srcIds[1] === 12`);
+    await open('normal');
+    assert.deepStrictEqual((await grids()).ids.slice(0, 2), [3, 12]);
+    // alte Einstellung mit einer Quellbank wird übernommen
+    await b.eval(`localStorage.setItem('ytsampler.editor.layout', JSON.stringify({ srcId: 11 }))`);
+    await open('normal');
+    assert.strictEqual((await grids()).ids[0], 11);
+    // schmaler: weniger Grids, gemerkte Auswahl bleibt für später
+    await viewport(1000, 760); await sleep(150);
+    await b.waitFor(`document.querySelectorAll('#srcs .src').length === ${seen[1000].n}`);
+    if (process.argv.includes('--shots')) {
+      await b.eval(`localStorage.clear()`); await viewport(2400, 1000); await open('mix'); await b.click('#pad4'); await sleep(300);
+      await b.click('#srcpads1 .st[data-pad="6"]'); await sleep(100); await b.shot('editor-quell-grids');
+      await b.click('#srcpads1 .st[data-pad="6"]');
+    }
+  } finally { await viewport(1440, 900); await b.eval(`localStorage.clear()`); }   // wie --window-size in cdp.js
   assert.deepStrictEqual(b.errors, []);
 });
 

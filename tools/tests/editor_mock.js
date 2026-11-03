@@ -35,10 +35,10 @@ function beatsOf(video, bpm) {
 }
 function bars(video) { const v = VIDEOS[video], b = beatsOf(video, v[1]); return b.beats.filter((t, k) => k >= 8 && (k - 8) % 4 === 0); }
 // Regler wie Spec 3.0, 3.1: [min, max, ganz]
-const PARAMS = { div: [0, 10, true], rate: [0.25, 2], mode: [0, 1, true], rev: [0, 1, true], tune: [0, 1, true], warp: [0, 1, true],
+const PARAMS = { div: [0, 11, true], rate: [0.25, 2], mode: [0, 1, true], rev: [0, 1, true], tune: [0, 1, true], warp: [0, 1, true],
   quant: [0, 1, true], qdiv: [0, 3, true], qcatch: [0, 1, true], vol: [-70, 6], voices: [0, 6, true], base: [0, 127, true] };
-const PARAMS_START = { div: 5, rate: 1, mode: 0, rev: 0, tune: 1, warp: 0, quant: 1, qdiv: 1, qcatch: 0, vol: -3.5, voices: 6, base: 36 };
-const DIV_FRAC = [1 / 64, 1 / 32, 1 / 24, 1 / 16, 1 / 12, 1 / 8, 1 / 6, 1 / 4, 1 / 2, 1, 2];
+const PARAMS_START = { div: 5, rate: 1, mode: 0, rev: 0, tune: 1, warp: 0, quant: 1, qdiv: 1, qcatch: 0, vol: -3.5, voices: 6, base: 36, bpm: 120 };   // bpm = Lives Tempo
+const DIV_FRAC = [1 / 64, 1 / 32, 1 / 24, 1 / 16, 1 / 12, 1 / 8, 1 / 6, 1 / 4, 1 / 2, 1, 2, 4];
 function makeStarts(video, seed) { const b = bars(video), out = []; for (let i = 0; out.length < 16; i++) { const t = b[(seed * 7 + i * 5) % b.length]; if (!out.includes(t)) out.push(t); } return out.sort((a, c) => a - c); }
 
 const videoEntry = (v, title) => ({ title: title || VIDEOS[v][0], wav: true, dur: VIDEOS[v][2] * 1000 });
@@ -73,10 +73,18 @@ function scenarioLib(name) {
   return lib;
 }
 
+function sineWav(ms, hz) {
+  const n = Math.max(1, Math.round(ms * 44.1)), out = Buffer.alloc(44 + n * 4);
+  out.write('RIFF', 0); out.writeUInt32LE(36 + n * 4, 4); out.write('WAVEfmt ', 8); out.writeUInt32LE(16, 16); out.writeUInt16LE(1, 20); out.writeUInt16LE(2, 22);
+  out.writeUInt32LE(44100, 24); out.writeUInt32LE(176400, 28); out.writeUInt16LE(4, 32); out.writeUInt16LE(16, 34); out.write('data', 36); out.writeUInt32LE(n * 4, 40);
+  for (let i = 0; i < n; i++) { const x = Math.round(Math.sin(2 * Math.PI * hz * i / 44100) * 8000); out.writeInt16LE(x, 44 + i * 4); out.writeInt16LE(x, 46 + i * 4); }
+  return out;
+}
+
 function createMock(opts = {}) {
   const m = {
     log: [], clients: new Set(), down: false, session: 1, track: '3-YT Sampler', port: 0,
-    lib: null, dev: null, beatsOk: null, searchSeq: 0, slowSearch: 0, params: { ...PARAMS_START },
+    lib: null, dev: null, beatsOk: null, searchSeq: 0, slowSearch: 0, params: { ...PARAMS_START }, gets: [],
   };
   // Spanne wie [js] grob: Slice-Länge im Quelltempo, durch Rate (Warp und Hold hier egal)
   const spanOf = (b) => b.pads.map((pad) => {
@@ -342,6 +350,18 @@ function createMock(opts = {}) {
       const b = beatsMsg(); if (b) send(res, 'beats', b);
       m.clients.add(res); req.on('close', () => m.clients.delete(res));
       return;
+    }
+    // Vorhören (Nachtrag 12): Fach als WAV, hier ein Sinus pro Pad, Länge wie Node (bis Snippet- bzw. Track-Ende)
+    const sn = u.pathname.match(/^\/snip\/(.*)$/);
+    if (sn) {
+      m.gets.push(u.pathname);
+      const q = sn[1].match(/^(\d+)\/(\d+)$/);
+      if (req.method !== 'GET') { res.writeHead(403); return res.end(); }
+      if (!q || +q[2] > 15) { res.writeHead(400); return res.end(); }
+      const b = byId(+q[1]), pd = b && b.pads[+q[2]];
+      if (!pd || !VIDEOS[pd.video]) { res.writeHead(404); return res.end(); }
+      res.writeHead(200, { 'Content-Type': 'audio/wav', 'Cache-Control': 'no-store' });
+      return res.end(sineWav(Math.min(16000, VIDEOS[pd.video][2] * 1000 - pd.start), 220 + 20 * +q[2]));
     }
     const pk = u.pathname.match(/^\/peaks\/(.*)$/);
     if (pk) {

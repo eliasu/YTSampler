@@ -14,7 +14,7 @@ outlets = 5;
 var DIVS = [
     ["1/64", 1 / 64], ["1/32", 1 / 32], ["1/16T", 1 / 24], ["1/16", 1 / 16],
     ["1/8T", 1 / 12], ["1/8", 1 / 8], ["1/4T", 1 / 6], ["1/4", 1 / 4],
-    ["1/2", 1 / 2], ["1 Bar", 1], ["2 Bars", 2]
+    ["1/2", 1 / 2], ["1 Bar", 1], ["2 Bars", 2], ["4 Bars", 4]   // nur hinten anhängen: Index = Wert des live.menu
 ];
 var NPADS = 16;
 var SNIP_MS = 16000;     // Länge eines Fachs in der Snippet-Datei
@@ -240,7 +240,8 @@ function sendBankstate() {
         w.push(Math.round(Math.abs(pr.to - pr.from)));
     }
     var b = ["bankstate", st.bankId, sel, P.mode, P.rev].concat(s, w,
-        [P.div, Math.round(P.rate * 1000) / 1000, P.tune, P.warp, P.quant, Math.round(P.vol * 10) / 10, P.voicesIdx, P.base, P.qdiv, P.qcatch]);
+        [P.div, Math.round(P.rate * 1000) / 1000, P.tune, P.warp, P.quant, Math.round(P.vol * 10) / 10, P.voicesIdx, P.base, P.qdiv, P.qcatch,
+         Math.round(P.bpm * 100) / 100]);   // Lives Tempo zuletzt: Vorhören im Editor
     var key = b.join(" ");
     if (key === lastBankstate) return;
     lastBankstate = key;

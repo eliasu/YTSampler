@@ -120,6 +120,34 @@ t('Schutz für /cmd: Content-Type, Host, Origin, 64 KB, Methode → 403; kaputte
   done();
 });
 
+t('/snip: Fach eines Pads als WAV bis lens, 404 leer/fehlend, 400 falsch, 403 POST/fremder Host', async () => {
+  const { node, port, ids, cmd, done } = await setup();
+  const get = (url, headers) => req(port, { method: 'GET', url, headers });
+  const src = fs.readFileSync(SRC);
+  for (const [k, len] of [[0, 16000], [3, 16000], [15, 5000]]) {
+    const r = await get(`/snip/${ids[1]}/${k}`);
+    assert.strictEqual(r.status, 200, 'Pad ' + k);
+    assert.strictEqual(r.headers['content-type'], 'audio/wav');
+    const bytes = len * 44.1 * 4;
+    assert.strictEqual(r.buf.length, 44 + bytes, 'nur bis lens');
+    assert.strictEqual(r.buf.toString('ascii', 0, 4), 'RIFF'); assert.strictEqual(r.buf.readUInt32LE(40), bytes);
+    assert.strictEqual(r.buf.readUInt32LE(24), 44100); assert.strictEqual(r.buf.readUInt16LE(22), 2); assert.strictEqual(r.buf.readUInt16LE(34), 16);
+    const from = 44 + STARTS[k] * 44.1 * 4;
+    assert.ok(r.buf.subarray(44, 44 + 8820).equals(src.subarray(from, from + 8820)), 'Audio ab dem Start, Pad ' + k);
+  }
+  assert.strictEqual((await get(`/snip/999/0`)).status, 404, 'Bank fehlt');
+  assert.strictEqual((await get(`/snip/${ids[1]}/x`)).status, 400);
+  assert.strictEqual((await get(`/snip/${ids[1]}/16`)).status, 400);
+  assert.strictEqual((await get(`/snip/..%2F/1`)).status, 400);
+  assert.strictEqual((await req(port, { url: `/snip/${ids[1]}/0` })).status, 403, 'POST');
+  assert.strictEqual((await get(`/snip/${ids[1]}/0`, { Host: 'evil.com' })).status, 403, 'fremder Host');
+  assert.strictEqual((await cmd({ client: 'c1', cmd: 'setpad', id: ids[1], pad: 2, video: null })).ok, true);
+  assert.strictEqual((await get(`/snip/${ids[1]}/2`)).status, 404, 'leerer Platz');
+  fs.unlinkSync(path.join(node.SNIP_DIR, `${ids[1]}.wav`));
+  assert.strictEqual((await get(`/snip/${ids[1]}/0`)).status, 404, 'WAV fehlt');
+  done();
+});
+
 t('/peaks: 400 bei falscher ID, 404 ohne WAV, sonst Kopf + Min/Max je 256 Frames', async () => {
   const { node, port, done } = await setup();
   assert.strictEqual((await req(port, { method: 'GET', url: '/peaks/kurz' })).status, 400);
@@ -418,14 +446,14 @@ t('hit/up → padhit/padup; bankstate mit Reglern → device.params; playing/pla
   await cmd({ cmd: 'up', pad: 4 });
   assert.deepStrictEqual(max.out.filter((m) => m[0] !== 'status'), [['padhit', 4], ['padup', 4]], 'status vom Startcheck kann dazwischen kommen');
   const w = Array.from({ length: 16 }, (_, i) => 1000 + i);
-  // <div> <rate> <tune> <warp> <quant> <vol> <voices> <base> <qdiv> <qcatch>
-  const P = [5, 1.25, 1, 0, 1, -3.5, 6, 36, 2, 1];
+  // <div> <rate> <tune> <warp> <quant> <vol> <voices> <base> <qdiv> <qcatch> <bpm>
+  const P = [5, 1.25, 1, 0, 1, -3.5, 6, 36, 2, 1, 128.5];
   await cmd({ cmd: 'select', id: ids[2] });
   max.handlers.bankstate(ids[2], 5, 1, 1, ...STARTS, ...w, ...P);
   await a.wait((ev, d) => ev === 'device' && d.bankId === ids[2]);
   const d = a.last('device');
   assert.deepStrictEqual(d, { bankId: ids[2], nr: 3, video: V1, sel: 5, starts: STARTS, spans: w,
-    params: { div: 5, rate: 1.25, mode: 1, rev: 1, tune: 1, warp: 0, quant: 1, vol: -3.5, voices: 6, base: 36, qdiv: 2, qcatch: 1 } });
+    params: { div: 5, rate: 1.25, mode: 1, rev: 1, tune: 1, warp: 0, quant: 1, vol: -3.5, voices: 6, base: 36, qdiv: 2, qcatch: 1, bpm: 128.5 } });
   assert.ok(!('mode' in d) && !('rev' in d) && !('teletext' in d));
   await a.wait((ev, d2) => ev === 'beats' && d2.video === V1, 'beats der aktiven Bank');
   const n = a.of('device').length;
@@ -540,14 +568,14 @@ t('Direkte Suche: Ergebnisseite auslesen, Länge in Sekunden, kaputte Seite -> k
 
 t('/cmd param: gültig → param an [js] und {}, ungültig → badreq, auch bei kaputter Bibliothek', async () => {
   const { node, max, on, cmd, done } = await setup();
-  const good = [['div', 0], ['div', 10], ['rate', 0.25], ['rate', 1.333], ['rate', 2], ['mode', 1], ['rev', 0], ['tune', 1], ['warp', 1],
+  const good = [['div', 0], ['div', 10], ['div', 11], ['rate', 0.25], ['rate', 1.333], ['rate', 2], ['mode', 1], ['rev', 0], ['tune', 1], ['warp', 1],
     ['quant', 0], ['qdiv', 0], ['qdiv', 3], ['qcatch', 1], ['vol', -70], ['vol', -3.5], ['vol', 6], ['voices', 0], ['voices', 6], ['base', 0], ['base', 127]];
   for (const [name, value] of good) {
     max.out = [];
     assert.deepStrictEqual(await cmd({ client: 'c1', cmd: 'param', name, value }), { ok: true }, `${name} ${value}`);
     assert.deepStrictEqual(on('param'), [['param', name, value]]);
   }
-  const bad = [['div', 11], ['div', 2.5], ['div', -1], ['rate', 0.2], ['rate', 2.01], ['mode', 2], ['rev', 0.5], ['tune', -1], ['warp', '1'],
+  const bad = [['div', 12], ['div', 2.5], ['div', -1], ['rate', 0.2], ['rate', 2.01], ['mode', 2], ['rev', 0.5], ['tune', -1], ['warp', '1'],
     ['quant', true], ['qdiv', 4], ['qdiv', 1.5], ['qcatch', 2], ['vol', -71], ['vol', 6.5], ['voices', 7], ['voices', 1.5], ['base', 128], ['base', 36.5], ['bank', 1], ['toString', 0],
     ['div', null], ['rate', NaN], [undefined, 1]];
   for (const [name, value] of bad) {

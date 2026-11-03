@@ -175,6 +175,32 @@ t('Klammer am Snippet-Ende: Trigger, Hold (10 ms), Hold rückwärts, Warp mit Be
     assert.ok(Math.abs((wr[2] + wr[3]) * wp[3] - 4800) < 1, '2 Takte in der Quelle');
 });
 
+t('4 Bars: neuer höchster Division-Wert, alte Indizes unverändert; Klammer am Snippet-Ende', function () {
+    var m = load(SRC);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(m.ctx.DIVS.map(function (d) { return d[0]; }))),
+        ['1/64', '1/32', '1/16T', '1/16', '1/8T', '1/8', '1/4T', '1/4', '1/2', '1 Bar', '2 Bars', '4 Bars']);
+    assert.strictEqual(m.ctx.DIVS[11][1], 4);
+    startDevice(m);
+    sendBank(m, 7, 1, 100, '/x/7.wav');
+    m.send('bpm', 120); m.send('division', 11);    // 16 Schläge bei 120 = 8000 ms
+    m.take(); m.send('note', 36, 100, 1);
+    assert.deepStrictEqual(m.on(0, 'pos')[0].slice(2, 5), [0, 8000, 8000], '120 BPM: ganz');
+    m.send('division', 99); assert.strictEqual(m.ctx.P.div, 11, 'darüber: 4 Bars');
+    m.send('bpm', 60); m.take(); m.send('note', 37, 100, 1);
+    assert.deepStrictEqual(m.on(0, 'pos')[0].slice(2, 4), [16000, 32000], '60 BPM: genau ein Fach');
+    m.send('bpm', 50); m.take(); m.send('note', 38, 100, 1);
+    assert.deepStrictEqual(m.on(0, 'pos')[0].slice(2, 4), [32000, 48000], 'unter 60 BPM: am Snippet-Ende geklammert');
+    // Warp: Quelle 55 BPM bräuchte 17455 ms, das Fach hat 16000
+    m.send('bpm', 120); m.send('warp', 1); m.send('padana', 3, 55, 0, 0); m.take();
+    m.send('note', 39, 100, 1);
+    var wp = m.on(3, 'wplay')[0], wr = m.on(3, 'rel')[0];
+    assert.ok((wr[2] + wr[3]) * wp[3] <= 16000 + 1e-6, 'Warp-Stimme endet am Fach-Ende');
+    // Quelle 100 BPM: 9600 ms, passt
+    m.take(); m.send('note', 40, 100, 1);
+    wp = m.on(3, 'wplay')[0]; wr = m.on(3, 'rel')[0];
+    assert.ok(Math.abs((wr[2] + wr[3]) * wp[3] - 9600) < 1, '4 Takte in der Quelle');
+});
+
 t('effStart fest, kein Einrasten bei Beats', function () {
     var m = load(SRC);
     startDevice(m);
@@ -228,9 +254,9 @@ t('bankstate nur bei Änderung, Song-ms, w gekappt auf l', function () {
     assert.deepStrictEqual(b.slice(1, 6), ['bankstate', 7, 0, 1, 1], 'ohne Video');
     assert.deepStrictEqual(b.slice(6, 22), STARTS);
     assert.deepStrictEqual(b.slice(22, 38), LENS, 'Hold: ganze Snippets');
-    // angehängt: div rate tune warp quant vol voices base qdiv qcatch
-    assert.strictEqual(b.length, 38 + 10);
-    assert.deepStrictEqual(b.slice(38), [5, 1, 0, 0, 0, 0, 6, 36, 1, 0]);
+    // angehängt: div rate tune warp quant vol voices base qdiv qcatch bpm (Lives Tempo, fürs Vorhören im Editor)
+    assert.strictEqual(b.length, 38 + 11);
+    assert.deepStrictEqual(b.slice(38), [5, 1, 0, 0, 0, 0, 6, 36, 1, 0, 120]);
 });
 
 t('bankstate: die zwölf Reglerwerte, gerundet, nur bei Änderung', function () {
@@ -247,7 +273,9 @@ t('bankstate: die zwölf Reglerwerte, gerundet, nur bei Änderung', function () 
     });
     var b = bankstates(m)[0];
     assert.deepStrictEqual(b.slice(4, 6), [1, 1], 'mode rev');
-    assert.deepStrictEqual(b.slice(38), [3, 1.235, 1, 1, 1, -3.5, 2, 48, 2, 1]);
+    assert.deepStrictEqual(b.slice(38), [3, 1.235, 1, 1, 1, -3.5, 2, 48, 2, 1, 120]);
+    m.take(); m.send('bpm', 98.7654);
+    assert.strictEqual(bankstates(m)[0].pop(), 98.77, 'Tempo meldet mit, gerundet');
     assert.strictEqual(m.ctx.P.voices, 3, 'Index 2 = 3 Stimmen');
     // Mikroänderung unterhalb der Rundung: kein neues bankstate
     m.take(); m.send('volume', -3.52); m.send('rate', 1.2349);
@@ -816,6 +844,16 @@ t('Division live: Klammer am Snippet-Ende', function () {
     m.send('division', 9); m.send('note', 41, 100, 1); m.take();   // Pad 5: l = 3000, 1 Takt = 2000 ms
     m.clock += 100; m.send('division', 10);         // 2 Takte wären 4000, Fach endet bei 3000
     assert.deepStrictEqual(sig(m, 0), [['target', 1], ['ext', 83000, 2900], ['rel', 2880, 20]]);
+});
+
+t('Division live: auf 4 Bars verlängern, über das Fach hinaus geklammert', function () {
+    var m = liveDev();
+    m.send('note', 36, 100, 1); m.take();           // Pad 0: 1/8 = 250 ms
+    m.clock += 100; m.send('division', 11);         // 4 Takte bei 120 = 8000 ms: Ende 18000, jetzt bei 10100
+    assert.deepStrictEqual(sig(m, 0), [['target', 1], ['ext', 8000, 7900], ['rel', 7880, 20]]);
+    assert.deepStrictEqual(m.on(1, 'playing').map(function (o) { return o.slice(2); }), [[0, 10100, 18000, 7900]]);
+    m.take(); m.send('bpm', 40); m.clock += 100; m.send('division', 10); m.send('division', 11);   // 4 Takte bei 40 = 24000 ms > Fach
+    assert.deepStrictEqual(sig(m, 0).slice(-2), [['ext', 16000, 15800], ['rel', 15780, 20]]);
 });
 
 t('Division live: Warp nur rel neu, Position/Tempo/Tonhöhe bleiben', function () {

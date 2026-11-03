@@ -1663,10 +1663,10 @@ libEvents.on('job', (j) => edEmit('job', j));
 libEvents.on('msg', (m) => edEmit('msg', m));
 
 // ---------- [js] -> Node (6.2, Spec 3.0 3.2) ----------
-// bankstate <bankId> <sel> <mode> <rev> <s×16> <w×16> <div> <rate> <tune> <warp> <quant> <vol> <voices> <base> <qdiv> <qcatch>
+// bankstate <bankId> <sel> <mode> <rev> <s×16> <w×16> <div> <rate> <tune> <warp> <quant> <vol> <voices> <base> <qdiv> <qcatch> <bpm>
 Max.addHandler('bankstate', (id, sel, mode, rev, ...sw) => {
-  const p = sw.slice(32, 42);
-  const params = p.length === 10 ? { div: p[0], rate: p[1], mode, rev, tune: p[2], warp: p[3], quant: p[4], vol: p[5], voices: p[6], base: p[7], qdiv: p[8], qcatch: p[9] } : null;
+  const p = sw.slice(32, 43);
+  const params = p.length >= 10 ? { div: p[0], rate: p[1], mode, rev, tune: p[2], warp: p[3], quant: p[4], vol: p[5], voices: p[6], base: p[7], qdiv: p[8], qcatch: p[9], bpm: p[10] || 0 } : null;
   dev = { bankId: Math.floor(id) || 0, sel, starts: sw.slice(0, 16), spans: sw.slice(16, 32), params };
   activeId = dev.bankId;
   edDirty('device'); edDirty('beats');
@@ -1785,7 +1785,7 @@ async function edSearch(q) {
 
 // Device-Regler (Spec 3.0 3.1): name -> [min, max, ganz]. Toggles 0/1.
 const PARAMS = {
-  div: [0, 10, true], rate: [0.25, 2, false], mode: [0, 1, true], rev: [0, 1, true], tune: [0, 1, true],
+  div: [0, 11, true], rate: [0.25, 2, false], mode: [0, 1, true], rev: [0, 1, true], tune: [0, 1, true],
   warp: [0, 1, true], quant: [0, 1, true], qdiv: [0, 3, true], qcatch: [0, 1, true], vol: [-70, 6, false], voices: [0, 6, true], base: [0, 127, true],
 };
 
@@ -2046,6 +2046,34 @@ function peaksRoute(v, res) {
   res.end(data);
 }
 
+// ---------- GET /snip/<bankId>/<pad> (Mix-Spec Nachtrag 12) ----------
+// Fach eines Pads aus snippets/<bankId>.wav als kleine WAV, nur bis lens[pad]: Vorhören im Quell-Grid.
+// Nur GET vom eigenen Host. Leerer Platz, fehlende Datei oder Snippet passt nicht (mehr) zur Bank -> 404
+function snipPad(id, k) {
+  const b = libNow.lib && bankById(id), j = readSnip(id);
+  if (!b || !j || !b.pads[k] || !samePad(b.pads[k], j.pads[k]) || !(j.lens[k] > 0)) return null;
+  let w;
+  try { w = wavInfo(snipWav(id)); } catch (e) { return null; }
+  const from = k * SLOT_BYTES, bytes = Math.min(Math.round(j.lens[k] * SNIP_SR / 1000) * BPF, w.dataSize - from);
+  if (w.sr !== SNIP_SR || w.channels !== 2 || w.bits !== 16 || bytes <= 0) return null;
+  const out = Buffer.alloc(44 + bytes);
+  wavHeader(bytes).copy(out);
+  const fd = fs.openSync(snipWav(id), 'r');
+  try { fs.readSync(fd, out, 44, bytes, w.offset + from); } finally { fs.closeSync(fd); }
+  return out;
+}
+function snipRoute(req, res, rest) {
+  const end = (code) => { res.writeHead(code); res.end(); };
+  if (req.method !== 'GET' || ![`localhost:${webPort}`, `127.0.0.1:${webPort}`].includes(req.headers.host)) return end(403);
+  const m = /^(\d{1,9})\/(\d{1,2})$/.exec(rest);
+  if (!m || +m[2] > 15) return end(400);
+  let data;
+  try { data = snipPad(+m[1], +m[2]); } catch (e) { return end(500); }
+  if (!data) return end(404);
+  res.writeHead(200, { 'Content-Type': 'audio/wav', 'Cache-Control': 'no-store' });
+  res.end(data);
+}
+
 // =====================================================================
 // Webserver: Editor unter http://localhost:8765/editor
 // =====================================================================
@@ -2083,6 +2111,7 @@ function startWeb(port, tries) {
     if (url === '/editor/events') { edConnect(req, res); return; }
     if (url === '/cmd') { cmdRoute(req, res); return; }
     if (url.startsWith('/peaks/')) { peaksRoute(url.slice(7), res); return; }
+    if (url.startsWith('/snip/')) { snipRoute(req, res, url.slice(6)); return; }
     res.writeHead(404); res.end();
   });
   server.on('error', (e) => {
@@ -2121,5 +2150,5 @@ module.exports = {
   AN, SNIP_DIR, SNIP_MS, computeAnalysis, tempoFromOnset, saveAnalysis, readAnalysis, getAnalysis, trackBeats, silentRanges,
   hasWav, readSnip, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, keepCleanup, KEEP_DIR, cacheSize, videoFail,
   beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, fillPads, get anaMap() { return anaMap; },
-  parseSearchPage, runCmd, peaks, get webPort() { return webPort; }, get activeId() { return activeId; },
+  parseSearchPage, runCmd, peaks, snipPad, get webPort() { return webPort; }, get activeId() { return activeId; },
 };

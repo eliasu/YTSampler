@@ -743,9 +743,10 @@
         "1/4",
         "1/2",
         "1 Bar",
-        "2 Bars"
+        "2 Bars",
+        "4 Bars"
        ],
-       "parameter_mmax": 10,
+       "parameter_mmax": 11,
        "parameter_initial": [
         5
        ],
