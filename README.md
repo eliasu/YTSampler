@@ -47,6 +47,7 @@ Seit 3.0 ist das Device nur noch das Bühneninstrument: Bank wählen und spielen
 | Warp | Material läuft im Tempo des Sets, Tonhöhe bleibt (Timestretch, élastique über `groove~`). Sind Beats erkannt, folgt jeder Slice dem Beat-Raster des Originals (siehe „Tempo, Beats und Warp“). Rate und Tune ändern dann nur die Tonhöhe. Aus = klassischer Sampler-Modus, knackiger für Drums. |
 | Quant | Input-Quantize: Pad-Anschläge warten auf den nächsten Rasterpunkt von Lives Transport. Das Raster (1/32, 1/16, 1/8, 1/4, Standard 1/16) stellt das Menü darunter ein. Bis knapp ⅓ einer 1/16 zu spät gespielt klingt sofort. **Catch** (nur bei Raster 1/8 und 1/4, Standard aus): Wer in der ersten Hälfte nach einem Rasterpunkt drückt (zu spät, bei 1/4 bis zu einer Achtel, bei 1/8 bis zu einer Sechzehntel), klingt sofort, aber an der Stelle, die auf dem Raster schon erreicht wäre. Das Sample läuft also im Takt, der Anfang fehlt. In der zweiten Hälfte (zu früh) wartet der Anschlag auf den nächsten Rasterpunkt. Läuft der Transport nicht, wirkt Quant nicht. |
 | Volume | Lautstärke des Device |
+| Norm | gleicht die Lautstärke der Pads an (Standard an). Gemessen wird beim Schneiden die empfundene Lautheit der ersten 2 s jedes Pads, leise Pads werden lauter, laute leiser (höchstens ±12 dB, angehoben nur so weit, dass die Spitzen unter −1 dBFS bleiben). Aus: kein Ausgleich, der Trim aus dem Editor wirkt weiter. |
 | Base Note, Voices (rechts, Einrichtung) | Base Note = Note für Pad 1. Voices = Mono, 2, 3, 4, 5, 8 oder 16 gleichzeitige Stimmen. Das gleiche Pad schneidet sich immer selbst ab, sonst wird die älteste Stimme gestohlen. |
 
 Attack (2 ms), Release (20 ms) und die Tonal-Schwelle für Tune (0,5) sind seit 3.0 feste Werte. Das Quelltempo (früher Src BPM, ÷2, ×2) stellt man nur noch im Editor.
@@ -82,15 +83,16 @@ Solange das Device läuft: Button **Editor** im Device drücken, oder **http://l
 | Pad kopieren | Pad mit gedrückter **Alt-Taste** (⌥) auf ein anderes Pad ziehen: Das Ziel wird überschrieben (Track und Start), der Zeiger zeigt ein Plus. Alt darf man auch erst während des Ziehens drücken. |
 | Pad in eine andere Bank | Eigenes Pad links über eine andere Bank ziehen und dort kurz halten (0,6 s): Die Bank öffnet sich und lädt im Device. Auf einem ihrer Pads loslassen: Das Pad wird **verschoben**, der alte Platz wird leer. Mit Alt wird kopiert, die alte Bank bleibt, wie sie ist. Ein belegtes Ziel wird überschrieben. Ein ⌘Z stellt beide Bänke wieder her. Abbrechen (Esc) lässt die geöffnete Bank aktiv. |
 | Pad aus einer anderen Bank | **Quell-Grids** rechts neben den Pads (je 4×4, Pad 1 unten links), so viele nebeneinander, wie das Fenster breit ist. Jedes hat seine eigene Bank (vorgeschlagen: die nächsten nach der aktiven, die Auswahl merkt sich der Browser). Ein Pad daraus auf einen Platz ziehen: kopiert Track und Start, spätere Änderungen an der Quelle wirken nicht. Geht auch ohne Cache. |
-| vorhören | Quell-Pad anklicken: spielt sein Snippet im Browser (Lautsprecher des Macs, nicht über Live), so lang wie der Slice des Device im Tempo des Sets, ohne Warp/Rate/Tune; ohne Device-Regler 2 s. Noch ein Klick stoppt, ein anderes Pad wechselt. Das Pad leuchtet, solange es spielt. |
+| vorhören | Quell-Pad anklicken: spielt sein Snippet im Browser (Lautsprecher des Macs, nicht über Live), so lang wie der Slice des Device im Tempo des Sets, ohne Warp/Rate/Tune, mit Ausgleich (wenn „Norm“ an ist) und Trim; ohne Device-Regler 2 s. Noch ein Klick stoppt, ein anderes Pad wechselt. Das Pad leuchtet, solange es spielt. |
 | Platz leeren | × rechts oben am Pad (immer sichtbar), darunter der Würfel für ein neues Snippet. Klick in die Mitte spielt an |
 | anspielen | Pad klicken, klingt am Device |
+| Trim | Schieber „Trim“ neben dem Track des gewählten Pads: −12 … +12 dB in halben Schritten, zusätzlich zum automatischen Ausgleich (der gemessene Wert steht im Tooltip). Doppelklick = 0. Jede Änderung ist ein Schritt im Rückgängig. Der Trim gehört zum Pad und wandert beim Kopieren, Verschieben und Tauschen mit. |
 | Tempo | Zahlenfeld, ½×, 2×, „Tempo stimmt“ (daneben der Hinweis, solange das Tempo nur aus der Analyse kommt) für das Video des gewählten Pads (gilt für alle Bänke mit diesem Video) |
 | Device-Regler | Leiste über den Pads, siehe unten |
 | Rückgängig | ⌘Z / ⇧⌘Z oder ↶ ↷ (100 Schritte, nur in diesem Fenster). Geleerte oder überschriebene Pads kommen auch ohne Cache zurück, solange Node läuft. |
 | Cache leeren | Knopf neben der Cache-Größe im Listenfuß, mit Rückfrage. Löscht die ganzen Tracks im lokalen Cache, nicht die Snippets. Gesperrt, solange Tracks laden oder geschnitten wird. |
 
-**Device-Regler im Editor:** Die Leiste über den Pads zeigt die Regler des Device: links die Bühne (Slice, Rate, Trigger/Hold, Rev, Tune, Warp, Quant, Raster, Catch), rechts gedämpft die Einrichtung (Base Note, Voices, Volume). Es ist derselbe Zustand wie im Device: Dreht man am Device (oder per MIDI), folgt der Editor. Stellt man im Editor, bewegt sich der Regler im Device und wird mit dem Set gespeichert. Doppelklick auf Rate bzw. Volume setzt 1× bzw. 0 dB. Die Regler sind kein Schritt im Rückgängig des Editors. Ohne laufendes Device ist die Leiste ausgegraut.
+**Device-Regler im Editor:** Die Leiste über den Pads zeigt die Regler des Device: links die Bühne (Slice, Rate, Trigger/Hold, Rev, Tune, Warp, Quant, Raster, Catch), rechts gedämpft die Einrichtung (Norm, Volume, Voices, Base Note). Es ist derselbe Zustand wie im Device: Dreht man am Device (oder per MIDI), folgt der Editor. Stellt man im Editor, bewegt sich der Regler im Device und wird mit dem Set gespeichert. Doppelklick auf Rate bzw. Volume setzt 1× bzw. 0 dB. Die Regler sind kein Schritt im Rückgängig des Editors. Ohne laufendes Device ist die Leiste ausgegraut.
 
 Die Waveform zeigt immer den Track des gewählten Pads, mit den Markern aller Pads aus diesem Track.
 
@@ -109,6 +111,8 @@ Alles wird sofort gespeichert. Fehlt ein Track einer Bank im Cache, heißt sie �
 | „Bibliothek kaputt“ | `library.json` unlesbar (oder iCloud hat sie noch nicht geladen). Pads stumm, nichts wird gespeichert. Geht von selbst weiter, sobald die Datei wieder lesbar ist. |
 | „nicht ladbar“ | Snippets fehlen und der Track auch. Lief vorher eine Bank, spielt sie weiter (nur kurz eingeblendet). Sonst stumm, Status „Bank im Editor prüfen“. |
 | kurz „Bank gelöscht“ | die im Set gespeicherte Bank gibt es nicht mehr. Das Device lädt die Bank, die jetzt auf ihrem Platz steht (hinter der letzten: die letzte). |
+
+**Lautstärke angleichen (Norm):** Beim ersten Start misst das Device alle vorhandenen Snippets einmal nach, ohne neu zu schneiden. Ein neues Device und alte Sets haben „Norm“ an, das ändert also den Klang bestehender Bänke. Wer es wie vorher will, schaltet „Norm“ aus.
 
 **Update auf 4.0 (Mix-Bänke):** Die Bibliothek bekommt ein neues Format. Ein Device in 3.x liest sie als „Bibliothek aus neuerer Version“ und bleibt stumm, damit es nichts falsch schneidet. **Beide Macs gleichzeitig auf 4.0 bringen**, sonst bleibt der alte stumm. Bestehende Bänke spielen ohne Neuschnitt weiter.
 

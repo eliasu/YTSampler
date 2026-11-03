@@ -47,6 +47,13 @@ Erst `tools/deploy.sh`, Device neu auf die Spur ziehen, dann:
   - Dort auf ein Pad loslassen: alter Platz leer (Device dunkel nach dem Neuschnitt der alten Bank), neues Pad klingt. Mit ⌥: alte Bank unverändert. Ein ⌘Z stellt beide her, auch nach „Cache leeren“.
   - Esc während des Ziehens: geöffnete Bank bleibt aktiv, nichts geändert.
   - Bänke umsortieren und zwischen Bühne/Ablage ziehen geht wie vorher.
+- **Lautstärke angleichen** (Zweig `mix-norm`, Spec 14):
+  - Device neu auf die Spur ziehen: „Norm“ rechts neben Catch, steht auf an, MIDI-mappbar. Altes Set: „Norm“ ist an (Standardwert), der Klang bestehender Bänke ändert sich.
+  - Beim ersten Start: Werden alle Snippets nachgemessen, ohne Hänger? `iCloud Drive/YTSampler/snippets/<id>.json` hat danach `gain`, die WAV ist unverändert.
+  - Bank mit leisen und lauten Tracks: Pads klingen ähnlich laut. Norm aus: wie vorher. Verzerrt oder knackt etwas bei +12 dB (`env` > 1, Sampler und Warp)? Max-Fenster ohne Fehler?
+  - Editor: Trim-Schieber am gewählten Pad wirkt beim nächsten Anschlag, ⌘Z nimmt ihn zurück, Doppelklick = 0. Kopieren, Verschieben, ⌥-Ziehen nehmen den Trim mit. „Norm“ im Editor schaltet das Device und umgekehrt. Reglerleiste auf dem Laptop einzeilig?
+  - Vorhören im Quell-Grid: Lautstärke passt zum Device (Norm an/aus, Trim)?
+  - Trifft die Messung (2 s ab Start) echtes Material? Ein Pad, das leise anfängt, wird lauter, als der Rest des Slices klingt.
 - Danach `release.sh 4.0.0`.
 
 Bekannte Grenze: Den Undo-Vorrat räumt jeder Node-Start auf. Startet ein zweites Device, kann das erste ein Leeren ohne Cache danach nicht mehr rückgängig machen.

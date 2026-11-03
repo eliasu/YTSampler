@@ -380,3 +380,28 @@ Ergänzt Abschnitte 10–12. Der Rest gilt weiter.
 - Ein leerer Platz lässt sich weiter tauschen, aber nicht kopieren oder in eine andere Bank verschieben (nichts passiert).
 - Das Halten öffnet nur mit Schreibrecht.
 - Nicht atomar: Zwei `setpad` nacheinander statt eines neuen `movepad`. Zwischen beiden kann ein anderer Editor schreiben, schlimmstenfalls bleibt eine Kopie.
+
+## 14. Nachtrag Lautstärke angleichen (Nutzer, 2026-11-03)
+
+Ergänzt Abschnitte 2.1, 2.2, 3.3 und 4. Der Rest gilt weiter.
+
+**Entscheidungen (fest):**
+1. **Ausgleich pro Pad, automatisch:** Node misst beim Schneiden (`cutSnippets`) für jedes Fach die ersten 2 s ab Start, nur bis `lens[i]`. Lautheit nach BS.1770: K-Gewichtung (Vorfilter + RLB-Hochpass, Koeffizienten für 44,1 kHz), Mittel der quadrierten Werte über beide Kanäle, Blöcke 400 ms mit 75 % Überlappung, nur Absolut-Gate −70, kein relatives Gate. `L = −0,691 + 10·log10(z)`. Ausgleich = −14 − L, begrenzt auf ±12 dB. Anheben nur so weit, dass der Sample-Peak des Bereichs ≤ −1 dBFS bleibt (Absenken bleibt, auch wenn der Peak schon darüber liegt). Kein Block über dem Gate oder L < −60: 0 dB. Gerundet auf 0,1 dB.
+2. **Speicherort:** `D/snippets/<bankId>.json` bekommt `gain: [16 × dB]` (leerer Platz 0). Die Messung gehört zum Snippet. Alte `.json` ohne `gain` (auch die Form `{video, starts, lens, dur}`) werden einmal nachgemessen, nur aus der Snippet-WAV, ohne Neuschnitt: beim Start für alle Bänke (Bank für Bank, mit `setImmediate` dazwischen) und spätestens beim Laden (`snipEnsure`). Es wird nur das Feld angehängt.
+3. **Trim pro Pad:** `banks[].pads[i].trim` in dB (−12…12, auf 0,1 gerundet, Editor-Schritt 0,5). 0 = Feld fehlt. `format` bleibt 2, ältere 4.0-Stände behalten das Feld als unbekanntes Pad-Feld. Trim wandert mit `swap`, `duplicate`, `delete`/`restore` (ganze Pad-Einträge) und mit `setpad` (neues Feld `trim`), also mit Quell-Grid-Kopie, Alt-Drag und Verschieben in andere Bänke. `fillpads` setzt keinen Trim. Undo des Überschreibens bringt den alten Trim zurück (`padArgs`).
+4. **Schalter „Norm“:** `live.text` Toggle, `parameter_longname` „Normalize“, Kurzname „Norm“, varname `Normalize`, Standard **an** (`parameter_initial 1`), → `prepend normalize` → `[js]`. Presentation rechts neben Catch (800, 92). Aus = kein Ausgleich, Trim wirkt weiter.
+5. **Anwendung:** `[js]` multipliziert beim Anschlag `env` mit `10^(((Norm ? Ausgleich : 0) + Trim) / 20)`. Werte > 1 gehen: `env` fährt in beiden Stimmen ein `line~`, das in `*~` multipliziert, nichts klemmt; die Stimmen bleiben unverändert. Nach `bank` gilt 0 dB, bis `padgain` kommt. Division live (`retime`) und Catch bleiben unberührt. Der Golden-Test bleibt gleich (Track-Bank ohne `padgain` = 0 dB).
+6. **Editor:** Trim-Schieber in der Detailspalte des gewählten Pads (Zeile mit dem Track), Doppelklick 0, jede Änderung ein Undo-Schritt (`trim` mit altem Wert). Tooltip nennt den gemessenen Ausgleich. „Norm“ in der Reglerleiste rechts (Einrichtung) vor Volume, gespiegelt wie die anderen Regler; die Leiste ist dafür etwas enger, damit sie bei 1440 px einzeilig bleibt. Vorhören im Quell-Grid spielt mit `10^(((Norm ? gain : 0) + trim) / 20)`.
+
+**Protokoll:**
+- Node → `[js]`: `padgain <i> <ausgleich dB> <trim dB>`, gleich nach `bank` für alle 16 Pads (leer: `0 0`), danach nur für Pads, deren Trim sich in der Bibliothek ändert (nur aktive Bank, nur wenn das Pad dort noch dasselbe ist wie im Buffer).
+- `[js]` → Node: `bankstate` bekommt hinten `<norm>` (nach `<bpm>`). Node liest es als `params.norm`, fehlt es (älteres `[js]`): 1.
+- `POST /cmd`: `trim {id, pad, trim}` → `{}` (leerer Platz, |trim| > 12, kein Zahlwert → `badreq`), `setpad` nimmt optional `trim`, `param` kennt `norm` (0/1).
+- SSE `lib`: `banks[].gain` = 16 × dB aus der Snippet-`.json`, 0 wo das Snippet nicht zum Pad passt. `banks[].pads[i].trim` steht im Pad. SSE `device.params.norm`.
+
+**Offen gelassen (einfach gelöst, nicht gefragt):**
+- „Mittel über die Kanäle“ statt der BS.1770-Summe: Für Stereo mit gleichen Kanälen liegt die Zahl 3 dB unter echten LUFS, das Ziel −14 entspricht also etwa −11 LUFS. Wirkt nur als fester Versatz.
+- Anheben wird durch den Peak begrenzt, Absenken nicht. Trim kann über 0 dBFS führen (Live clippt erst am Ausgang); das ist Sache des Nutzers.
+- Kein Hinweis am Device, welches Pad wie stark ausgeglichen wird. Im Editor nur im Tooltip des Trim.
+- Trim per Pfeiltasten auf dem Schieber: jeder Schritt ein eigener Undo-Schritt.
+- Gemessen wird das Snippet ab Start, nicht der gespielte Slice (Rev, Catch, Warp, Division ändern nichts).

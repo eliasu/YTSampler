@@ -49,6 +49,14 @@ _Avoid_: Favoriten, Bänke A–D
 Bänke anlegen und bearbeiten: Video suchen, Starts setzen, würfeln, Tempo korrigieren. Seit 3.0 nur im Editor, das Device spielt nur.
 _Avoid_: Laden (für das Anlegen einer Bank)
 
+**Ausgleich**:
+Die automatische Lautstärkekorrektur eines Pads in dB, gemessen beim Schneiden an den ersten 2 s seines Snippets (Ziel −14, höchstens ±12 dB). Gehört zum Snippet, wirkt nur mit „Norm“.
+_Avoid_: Normalisierung (klingt nach Spitzenwert), Gain
+
+**Trim**:
+Die Lautstärkekorrektur eines Pads von Hand im Editor, ±12 dB, zusätzlich zum Ausgleich. Gehört zum Pad in der Bibliothek und wandert beim Kopieren mit, wirkt auch ohne „Norm“.
+_Avoid_: Volume (das ist der Regler des ganzen Device), Gain
+
 **Device-Regler**:
-Die Live-Parameter des Device (Slice, Rate, Trigger/Hold, Rev, Tune, Warp, Quant, Raster, Catch, Volume, Voices, Base Note). Der Editor zeigt und stellt dieselben Werte, es gibt keine zweite Kopie.
+Die Live-Parameter des Device (Slice, Rate, Trigger/Hold, Rev, Tune, Warp, Quant, Raster, Catch, Norm, Volume, Voices, Base Note). Der Editor zeigt und stellt dieselben Werte, es gibt keine zweite Kopie.
 _Avoid_: Einstellungen der Bank (die Bank speichert keine Regler)
