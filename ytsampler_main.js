@@ -371,6 +371,7 @@ function retime() {
             outlet(1, "playstop", i);
             continue;
         }
+        v.to = to;
         if (!v.eng) outlet(o, "ext", toBuf(i, to), dur);               // Sampler: line~ fährt von hier zum neuen Ende
         outlet(o, "rel", dur - v.rel, v.rel);                           // Release neu terminieren
         v.end = t + dur;
@@ -396,12 +397,45 @@ function padgain(i, g, t) {
 }
 function padAmp(i) { return Math.pow(10, ((P.norm ? PG[i] : 0) + PT[i]) / 20); }
 function tune(v) { P.tune = v ? 1 : 0; updateSel(); }
-function scaleroot(v) { SC.root = ((Math.floor(v) % 12) + 12) % 12; recomputeShifts(); }
+function scaleroot(v) { SC.root = ((Math.floor(v) % 12) + 12) % 12; recomputeShifts(); if (ready()) retune(); }
 function scaleints() {
     var a = arrayfromargs(arguments), ints = [];
     for (var k = 0; k < a.length; k++) if (typeof a[k] === "number") ints.push(((Math.floor(a[k]) % 12) + 12) % 12);
     if (ints.length) SC.ints = ints;
     recomputeShifts();
+    if (ready()) retune();
+}
+
+// Tune live: Grundton oder Skala in Live geändert, Tune an -> klingende Stimmen (Trigger und Hold) in der neuen Tonhöhe weiter.
+// Sampler: ab der aktuellen Position mit neuer Geschwindigkeit zum selben Ende im Sample (ohne Warp also früher oder später fertig).
+// Warp: nur die Tonhöhe (wpitch), Tempo und Ende bleiben. Tune aus oder Rate: erst beim nächsten Anschlag.
+function retune() {
+    if (!P.tune || !B) return;
+    var t = nowMs();
+    for (var k = 0; k < VMAX; k++) {
+        var v = voices[k], i = v.pad;
+        if (i < 0 || t >= v.end - v.rel) continue;                       // frei oder schon im Release
+        var r = padRate(i), o = engOut(v.eng);
+        if (Math.abs(r - v.r) < 1e-9) continue;
+        v.r = r;
+        outlet(o, "target", k + 1);
+        if (v.eng) { outlet(o, "wpitch", r); continue; }
+        var p = v.from + v.dir * v.speed * (t - v.t);                    // aktuelle Position, Song-ms
+        var dur = v.dir * (v.to - p) / r;
+        v.from = p; v.t = t; v.speed = r;
+        if (dur <= v.rel) {
+            outlet(o, "gateoff", v.rel);
+            v.end = t + v.rel;
+            if (!v.hold) outlet(2, "padflash", i, v.rel);
+            outlet(1, "playstop", i);
+            continue;
+        }
+        outlet(o, "ext", toBuf(i, v.to), dur);
+        outlet(o, "rel", dur - v.rel, v.rel);
+        v.end = t + dur;
+        if (!v.hold) outlet(2, "padflash", i, dur);
+        outlet(1, "playing", i, p, v.to, dur);
+    }
 }
 function analysisready() { analysisReady = 1; updateSel(); }
 
@@ -536,6 +570,7 @@ function trigger(i, vel, late) {
     // für retime(): Anker (Slice-Anfang vor Catch), Richtung, Quell-ms pro ms, Position bei t, Release
     voices[k].hold = P.mode; voices[k].a = pr.from; voices[k].dir = to >= from ? 1 : -1;
     voices[k].speed = speed; voices[k].from = from; voices[k].rel = rel;
+    voices[k].to = to; voices[k].r = r;                                 // für retune(): Ende im Sample, Tonhöhe
 
     var o = engOut(eng);
     outlet(o, "target", k + 1);
@@ -560,6 +595,7 @@ function noteoff(i) {
             outlet(engOut(voices[k].eng), "target", k + 1);
             outlet(engOut(voices[k].eng), "gateoff", REL_MS);
             voices[k].end = t + REL_MS;
+            voices[k].rel = REL_MS;                // ab jetzt im Release: retune() lässt sie in Ruhe
         }
     }
 }

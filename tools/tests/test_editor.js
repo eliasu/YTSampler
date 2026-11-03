@@ -435,6 +435,14 @@ t('Device-Teil meldet sich nicht (Session 0): nach 3 s Hinweis statt nur „Kein
   await b.waitFor(`$('conntext').textContent === 'steuert: 3-YT Sampler' && !$('conn').classList.contains('silent')`, 6000);
 });
 
+t('Viele Bänke: nur die Liste links scrollt, Knöpfe unten bleiben sichtbar, Seite scrollt nicht', async () => {
+  await open('normal');
+  await b.eval(`Promise.all(Array.from({ length: 40 }, () => cmd('newmix')))`);
+  await b.waitFor(`document.querySelectorAll('#libscroll li[data-id]').length > 40`);
+  assert(await b.eval(`$('libscroll').scrollHeight > $('libscroll').clientHeight`), 'Liste scrollt');
+  assert(await b.eval(`$('sidefoot').getBoundingClientRect().bottom <= innerHeight + 1 && $('side').getBoundingClientRect().height <= $('body').getBoundingClientRect().height + 1`), 'Fuß sichtbar');
+});
+
 t('Größen bleiben im localStorage, Bibliothek einklappbar', async () => {
   await open('normal');
   const [x, y] = await b.center('#vsplit');

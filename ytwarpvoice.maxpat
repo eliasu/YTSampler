@@ -47,11 +47,11 @@
      "id": "obj-2",
      "maxclass": "newobj",
      "numinlets": 2,
-     "numoutlets": 5,
+     "numoutlets": 6,
      "patching_rect": [
       30.0,
       60.0,
-      200.0,
+      240.0,
       22.0
      ],
      "outlettype": [
@@ -59,9 +59,10 @@
       "",
       "",
       "",
+      "",
       ""
      ],
-     "text": "route env wplay rel gateoff"
+     "text": "route env wplay rel gateoff wpitch"
     }
    },
    {
@@ -668,6 +669,18 @@
      ],
      "destination": [
       "obj-12",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-2",
+      4
+     ],
+     "destination": [
+      "obj-10",
       0
      ]
     }

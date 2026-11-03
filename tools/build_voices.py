@@ -38,7 +38,7 @@ json.dump(v.to_json([100, 100, 640, 400]), open("ytvoice.maxpat", "w"), indent=1
 # ---------- Warp-Voice: groove~ mit Timestretch, schaltet sich im Leerlauf stumm ----------
 w = Patch()
 win = w.obj("in 1", 0, 1, 30, 20)
-wrt = w.obj("route env wplay rel gateoff", 2, 5, 30, 60, w=200)
+wrt = w.obj("route env wplay rel gateoff wpitch", 2, 6, 30, 60, w=240)
 wenv = w.obj("line~", 2, 2, 30, 330, otypes=["signal", "bang"])
 w.con(win, 0, wrt, 0)
 w.con(wrt, 0, wenv, 0)
@@ -63,6 +63,8 @@ w.con(wtlb, 2, wmute0, 0)                    # zuerst DSP einschalten
 w.con(wtlb, 1, wstop_off, 0)                 # geplantes Stummschalten abbrechen
 w.con(wtlb, 0, wunp, 0)
 w.con(wunp, 2, wpitch, 0); w.con(wpitch, 0, wgroove, 0)
+# wpitch <tonhöhe>: nur die Tonhöhe, während die Stimme klingt (Tune live)
+w.con(wrt, 4, wpitch, 0)
 w.con(wunp, 1, wsig, 0); w.con(wsig, 0, wgroove, 0)
 w.con(wunp, 0, wgroove, 0)
 

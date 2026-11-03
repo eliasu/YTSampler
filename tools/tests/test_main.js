@@ -814,6 +814,50 @@ t('Mix: padana vor bank verfällt, nach bank gilt, einzeln nach Tempo-Korrektur'
     assert.strictEqual(m.ctx.PA.length, 16);
 });
 
+// Tune live: Grundton in Live ändert sich, Tune an -> klingende Stimmen in der neuen Tonhöhe weiter
+function tuneDev() {
+    var m = liveDev();
+    m.send.apply(null, ['padinfo', 0, 0.9, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);   // Pad 0 in C
+    m.send('scaleroot', 0); m.send('tune', 1); m.take();
+    return m;
+}
+var UP2 = Math.pow(2, 2 / 12);
+t('Tune live: Sampler ab der Position schneller zum selben Ende', function () {
+    var m = tuneDev();
+    m.send('note', 36, 100, 1); m.take();           // Pad 0: 10000 -> 10250 in 250 ms
+    m.clock += 100; m.send('scaleroot', 2);         // D: +2 Halbtöne, Position 10100
+    var d = 150 / UP2;
+    assert.deepStrictEqual(sig(m, 0), [['target', 1], ['ext', 250, Math.round(d * 1000) / 1000], ['rel', Math.round((d - 20) * 1000) / 1000, 20]]);
+    var pl = m.on(1, 'playing')[0]; near(pl[3], 10100); near(pl[4], 10250); near(pl[5], d);
+    m.take(); m.clock += 50; m.send('scaleroot', 0);   // zurück, Position 10100 + 50 × 1,1225
+    var e = m.on(0, 'ext')[0]; near(e[3], 150 - 50 * UP2);
+    m.take(); m.send('scaleints', 0, 2, 4, 5, 7, 9, 11);   // gleiche Tonhöhe: nichts
+    assert.deepStrictEqual(sig(m, 0), []);
+});
+
+t('Tune live: Warp nur wpitch, Hold bis Snippet-Ende, Tune aus und nach Note-Off nichts', function () {
+    var m = tuneDev();
+    m.send('warp', 1); m.send('note', 36, 100, 1); m.take();
+    m.clock += 100; m.send('scaleroot', 2);
+    assert.deepStrictEqual(sig(m, 3).slice(0, 1), [['target', 1]]);
+    near(m.on(3, 'wpitch')[0][2], UP2);
+    assert.deepStrictEqual(sig(m, 0), []);
+
+    m = tuneDev();
+    m.send('playmode', 1); m.send('note', 36, 100, 1);
+    var pos = m.on(0, 'pos')[0]; m.take();          // Hold: bis zum Fachende
+    m.clock += 100; m.send('scaleroot', 2);
+    var e = m.on(0, 'ext')[0]; assert.strictEqual(e[2], pos[3]); near(e[3], (pos[4] - 100) / UP2);
+    assert.deepStrictEqual(m.on(2, 'padflash'), []);
+    m.send('note', 36, 0, 1); m.take(); m.clock += 5; m.send('scaleroot', 4);
+    assert.deepStrictEqual(sig(m, 0), [], 'nach Note-Off im Release');
+
+    m = tuneDev();
+    m.send('note', 36, 100, 1); m.send('tune', 0); m.take();
+    m.clock += 100; m.send('scaleroot', 2);
+    assert.deepStrictEqual(sig(m, 0), [], 'Tune aus');
+});
+
 // Division live: klingende Trigger-Stimmen bekommen nur ein neues Ende (ext/rel bzw. gateoff)
 function liveDev() {
     var m = load(SRC);
@@ -978,6 +1022,7 @@ function closeEnough(a, b, where) {
 function goldenRun(loader) {
     var m = load(SRC);
     m.ctx.retime = function () {};                 // Division live (4.x) gab es in 3.0 nicht, eigener Test oben
+    m.ctx.retune = function () {};                 // Tune live (4.2) ebenso
     startDevice(m);
     loader(m);
     return goldenScenario(m);

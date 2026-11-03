@@ -63,10 +63,10 @@
   #hsplit:hover, #hsplit.on { background:var(--line2); }
 
   /* Bibliothek */
-  #side { display:flex; flex-direction:column; min-width:0; border-right:1px solid var(--line); background:var(--panel); }
+  #side { display:flex; flex-direction:column; min-width:0; min-height:0; border-right:1px solid var(--line); background:var(--panel); }
   #sidehead { display:flex; align-items:center; gap:8px; padding:14px 12px 8px 14px; }
   #sidehead .lbl { flex:1; }
-  #libscroll { overflow:auto; flex:1; }
+  #libscroll { overflow:auto; flex:1; min-height:0; } /* nur die Liste scrollt, Kopf und Knöpfe unten bleiben stehen */
   #libscroll .sec { display:flex; align-items:center; gap:8px; padding:8px 16px 4px; border-radius:6px; }
   #libscroll .sec .lbl { flex:1; color:var(--faint); }
   #libscroll .sec.over { box-shadow:inset 0 -2px 0 var(--sel); }
