@@ -2014,6 +2014,71 @@
    },
    {
     "box": {
+     "id": "obj-212",
+     "maxclass": "live.text",
+     "numinlets": 1,
+     "numoutlets": 2,
+     "patching_rect": [
+      2850.0,
+      600.0,
+      78.0,
+      18.0
+     ],
+     "outlettype": [
+      "",
+      ""
+     ],
+     "text": "Norm",
+     "presentation": 1,
+     "presentation_rect": [
+      800.0,
+      92.0,
+      70.0,
+      30.0
+     ],
+     "mode": 1,
+     "texton": "Norm ✓",
+     "saved_attribute_attributes": {
+      "valueof": {
+       "parameter_longname": "Normalize",
+       "parameter_shortname": "Norm",
+       "parameter_type": 2,
+       "parameter_enum": [
+        "off",
+        "on"
+       ],
+       "parameter_mmax": 1,
+       "parameter_initial_enable": 1,
+       "parameter_initial": [
+        1
+       ]
+      }
+     },
+     "parameter_enable": 1,
+     "varname": "Normalize",
+     "fontsize": 12.0
+    }
+   },
+   {
+    "box": {
+     "id": "obj-213",
+     "maxclass": "newobj",
+     "numinlets": 1,
+     "numoutlets": 1,
+     "outlettype": [
+      ""
+     ],
+     "patching_rect": [
+      2850.0,
+      630.0,
+      120.0,
+      22.0
+     ],
+     "text": "prepend normalize"
+    }
+   },
+   {
+    "box": {
      "id": "obj-180",
      "maxclass": "jsui",
      "numinlets": 1,
@@ -3171,6 +3236,30 @@
     "patchline": {
      "source": [
       "obj-211",
+      0
+     ],
+     "destination": [
+      "obj-1",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-212",
+      0
+     ],
+     "destination": [
+      "obj-213",
+      0
+     ]
+    }
+   },
+   {
+    "patchline": {
+     "source": [
+      "obj-213",
       0
      ],
      "destination": [

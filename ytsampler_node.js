@@ -935,6 +935,7 @@ function bankIndex(lib, id) {
   if (i < 0) throw libErr('nobank');
   return i;
 }
+const TRIM_MAX = 12;   // Trim pro Pad ±12 dB (Editor: Schritt 0,5)
 const bankName = (n) => String(n).trim().slice(0, 100);
 const roundBpm = (bpm) => { need(typeof bpm === 'number' && bpm >= 30 && bpm <= 300); return Math.round(bpm * 10) / 10; };
 
@@ -956,7 +957,7 @@ const LIB = {
     return { id };
   },
   // Pad kopieren (video + start) oder Platz leeren (video null). Unbekanntes Video braucht info {title, bpm?}
-  setpad(lib, { id, pad, video, start, info }) {
+  setpad(lib, { id, pad, video, start, info, trim }) {
     const i = bankIndex(lib, id);
     need(isPad(pad));
     if (video === null) { lib.banks[i].pads[pad] = null; return; }
@@ -966,6 +967,14 @@ const LIB = {
       lib.videos[video] = videoEntry(info);
     }
     lib.banks[i].pads[pad] = { video, start };
+    if (trim !== undefined) LIB.trim(lib, { id, pad, trim });   // Trim wandert beim Kopieren mit (Nachtrag 14)
+  },
+  // Trim pro Pad in dB (Nachtrag 14), 0 = Feld weg. Leerer Platz -> badreq
+  trim(lib, { id, pad, trim }) {
+    const i = bankIndex(lib, id);
+    need(isPad(pad) && lib.banks[i].pads[pad] && typeof trim === 'number' && Math.abs(trim) <= TRIM_MAX);
+    const t = Math.round(trim * 10) / 10;
+    if (t) lib.banks[i].pads[pad].trim = t; else delete lib.banks[i].pads[pad].trim;
   },
   // beim Start: videos-Einträge ohne Pad weg
   prune(lib) { dropOrphans(lib); },
@@ -1136,14 +1145,94 @@ function wavHeader(dataBytes) {
   return h;
 }
 
+// ---------- Lautheit pro Pad (Mix-Spec Nachtrag 14) ----------
+// K-Gewichtung nach ITU-R BS.1770 (Vorfilter + RLB-Hochpass), Koeffizienten für 44,1 kHz wie pyloudnorm.
+// Lautheit = −0,691 + 10·log10(Mittel der Kanäle), Blöcke 400 ms / 75 % Überlappung, Absolut-Gate −70, kein relatives Gate.
+// Ausgleich = Ziel − Lautheit, ±12 dB, Anheben nur bis Sample-Peak −1 dBFS. Stille oder leiser als NORM_FLOOR: 0 dB.
+const NORM_TARGET = -14, NORM_MAX = 12, NORM_PEAK = -1, NORM_FLOOR = -60, NORM_MS = 2000;
+const K_BIQUADS = (() => {
+  const fs = SNIP_SR;
+  const shelf = (() => {
+    const G = 3.999843853973347, Q = 0.7071752369554196, fc = 1681.974450955533;
+    const A = Math.pow(10, G / 40), w = 2 * Math.PI * fc / fs, c = Math.cos(w), al = Math.sin(w) / (2 * Q), r = 2 * Math.sqrt(A) * al;
+    const a0 = (A + 1) - (A - 1) * c + r;
+    return [A * ((A + 1) + (A - 1) * c + r) / a0, -2 * A * ((A - 1) + (A + 1) * c) / a0, A * ((A + 1) + (A - 1) * c - r) / a0,
+      2 * ((A - 1) - (A + 1) * c) / a0, ((A + 1) - (A - 1) * c - r) / a0];
+  })();
+  const hp = (() => {
+    const Q = 0.5003270373238773, fc = 38.13547087602444, w = 2 * Math.PI * fc / fs, c = Math.cos(w), al = Math.sin(w) / (2 * Q), a0 = 1 + al;
+    return [(1 + c) / 2 / a0, -(1 + c) / a0, (1 + c) / 2 / a0, -2 * c / a0, (1 - al) / a0];
+  })();
+  return [shelf, hp];
+})();
+// Ausgleich in dB für die ersten 2 s eines Fachs. buf: 16 Bit Stereo, pos = Byte-Position, ms = Länge des Pads (lens)
+function padGain(buf, pos, ms) {
+  const n = Math.min(Math.floor(Math.min(ms, NORM_MS) * SNIP_SR / 1000), Math.floor((buf.length - pos) / BPF));
+  if (n <= 0) return 0;
+  const sq = [new Float64Array(n), new Float64Array(n)];
+  let peak = 0;
+  for (let ch = 0; ch < 2; ch++) {
+    const st = K_BIQUADS.map(() => [0, 0, 0, 0]);   // x1 x2 y1 y2 pro Biquad
+    for (let i = 0; i < n; i++) {
+      let x = buf.readInt16LE(pos + i * BPF + ch * 2) / 32768;
+      if (Math.abs(x) > peak) peak = Math.abs(x);
+      for (let q = 0; q < 2; q++) {
+        const [b0, b1, b2, a1, a2] = K_BIQUADS[q], z = st[q];
+        const y = b0 * x + b1 * z[0] + b2 * z[1] - a1 * z[2] - a2 * z[3];
+        z[1] = z[0]; z[0] = x; z[3] = z[2]; z[2] = y; x = y;
+      }
+      sq[ch][i] = x * x;
+    }
+  }
+  const blk = Math.min(n, Math.round(0.4 * SNIP_SR)), hop = Math.max(1, Math.round(blk / 4));
+  let sum = 0, cnt = 0;
+  for (let s = 0; s + blk <= n; s += hop) {
+    let z = 0;
+    for (let i = s; i < s + blk; i++) z += sq[0][i] + sq[1][i];
+    z /= 2 * blk;
+    if (z > 0 && -0.691 + 10 * Math.log10(z) > -70) { sum += z; cnt++; }
+  }
+  if (!cnt) return 0;
+  const L = -0.691 + 10 * Math.log10(sum / cnt);
+  if (L < NORM_FLOOR) return 0;
+  let g = Math.max(-NORM_MAX, Math.min(NORM_MAX, NORM_TARGET - L));
+  if (g > 0) g = Math.min(g, Math.max(0, NORM_PEAK - 20 * Math.log10(peak)));
+  return Math.round(g * 10) / 10;
+}
+// Alte .json ohne gain: einmal aus dem Snippet nachmessen, ohne neu zu schneiden, nur das Feld anhängen. -> gain oder null
+function snipGain(id) {
+  const j = readJson(snipJson(id));
+  if (!isObj(j) || !Array.isArray(j.lens) || j.lens.length !== 16) return null;
+  if (isGain(j.gain)) return j.gain;
+  const tmp = path.join(SNIP_DIR, `${id}.${process.pid}.tmp`);
+  try {
+    const w = wavInfo(snipWav(id)), fd = fs.openSync(snipWav(id), 'r'), part = Math.round(NORM_MS * SNIP_SR / 1000) * BPF, buf = Buffer.alloc(part);
+    const gain = [];
+    try {
+      for (let i = 0; i < 16; i++) {
+        const got = j.lens[i] > 0 && i * SLOT_BYTES < w.dataSize ? fs.readSync(fd, buf, 0, Math.min(part, w.dataSize - i * SLOT_BYTES), w.offset + i * SLOT_BYTES) : 0;
+        gain.push(got ? padGain(buf.subarray(0, got - (got % BPF)), 0, j.lens[i]) : 0);
+      }
+    } finally { fs.closeSync(fd); }
+    fs.writeFileSync(tmp, JSON.stringify({ ...j, gain }));   // nur das Feld anhängen, der Rest bleibt, wie er war
+    fs.renameSync(tmp, snipJson(id));
+    return gain;
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (e2) { /* weg */ }
+    return null;
+  }
+}
+const isGain = (a) => Array.isArray(a) && a.length === 16 && a.every((x) => typeof x === 'number' && Math.abs(x) <= NORM_MAX);
+
 // Snippet-.json lesen -> {pads, lens, durs}. Alte Form {video, starts, lens, dur} gilt als Pads aus einem Video
 // (Mix-Spec 2.2), sie bleibt aktuell und wird nicht neu geschnitten. null = fehlt oder unlesbar.
 function readSnip(id) {
   const j = readJson(snipJson(id));
   if (!isObj(j) || !Array.isArray(j.lens) || j.lens.length !== 16) return null;
-  if (isPadList(j.pads)) return { pads: j.pads, lens: j.lens, durs: isObj(j.durs) ? j.durs : {} };
+  const gain = isGain(j.gain) ? j.gain : null;   // fehlt bei alten .json: snipGain misst nach
+  if (isPadList(j.pads)) return { pads: j.pads, lens: j.lens, durs: isObj(j.durs) ? j.durs : {}, gain };
   if (typeof j.video === 'string' && isStarts(j.starts)) {
-    return { pads: j.starts.map((start) => ({ video: j.video, start })), lens: j.lens, durs: typeof j.dur === 'number' ? { [j.video]: j.dur } : {} };
+    return { pads: j.starts.map((start) => ({ video: j.video, start })), lens: j.lens, durs: typeof j.dur === 'number' ? { [j.video]: j.dur } : {}, gain };
   }
   return null;
 }
@@ -1159,7 +1248,8 @@ function snipCurrent(bank) {
 function snipStatus(bank) {
   const snip = snipCutting === bank.id ? 'cutting' : snipTimers.has(bank.id) ? 'stale'
     : snipCurrent(bank) ? 'ok' : fs.existsSync(snipJson(bank.id)) ? 'stale' : 'missing';
-  return { snip, wav: padVideos(bank).every(hasWav) };
+  const j = readSnip(bank.id);   // Ausgleich pro Pad fürs Vorhören, nur wo das Snippet zum Pad passt
+  return { snip, wav: padVideos(bank).every(hasWav), gain: bank.pads.map((p, i) => (j && j.gain && p && samePad(p, j.pads[i]) ? j.gain[i] : 0)) };
 }
 
 // Fach mit gleichem {video, start} in einer Snippet-Datei: erst die eigene Bank, dann die übrigen der Bibliothek.
@@ -1268,7 +1358,7 @@ function cutSnippets(bank) {
   const tmp = path.join(SNIP_DIR, `${bank.id}.${process.pid}.tmp`);
   snipCutting = bank.id;
   job('cut');
-  const fds = new Map();
+  const fds = new Map(), gain = [];
   const fd = (f) => { if (!fds.has(f)) fds.set(f, fs.openSync(f, 'r')); return fds.get(f); };
   try {
     const out = fs.openSync(tmp, 'w');
@@ -1279,6 +1369,7 @@ function cutSnippets(bank) {
         buf.fill(0);
         if (sl && sl[2] > 0) fs.readSync(fd(sl[0]), buf, 0, sl[2], sl[1]);
         fs.writeSync(out, buf, 0, SLOT_BYTES, 44 + i * SLOT_BYTES);
+        gain.push(sl ? padGain(buf, 0, src.lens[i]) : 0);
       });
     } finally {
       fs.closeSync(out);
@@ -1286,7 +1377,7 @@ function cutSnippets(bank) {
     }
     fs.renameSync(tmp, snipWav(bank.id));
     const pads = bank.pads.map((p) => (p ? { video: p.video, start: p.start } : null));
-    fs.writeFileSync(tmp, JSON.stringify({ pads, lens: src.lens, durs: src.durs }));
+    fs.writeFileSync(tmp, JSON.stringify({ pads, lens: src.lens, durs: src.durs, gain }));
     fs.renameSync(tmp, snipJson(bank.id));
   } catch (e) {
     try { fs.unlinkSync(tmp); } catch (e2) { /* weg */ }
@@ -1309,6 +1400,7 @@ function snipEnsure(bank) {
   if (!snipCurrent(bank)) { try { cutSnippets(bank); } catch (e) { err = e; } }
   const j = readSnip(bank.id);
   if (!j || !fs.existsSync(snipWav(bank.id))) throw err && err.code !== 'playonly' ? err : libErr('nosnip');
+  if (!j.gain) j.gain = snipGain(bank.id);
   return { path: snipWav(bank.id), ...j };
 }
 
@@ -1571,11 +1663,22 @@ function sendBank(b) {
   fs.watchFile(snipJson(b.id), { interval: 500 }, onActiveSnip);   // doppelt angemeldet zählt einmal
   activeId = b.id;
   activeSnip = readText(snipJson(b.id));
-  loaded = { pads: s.pads, lens: s.pads.map((p, i) => (p ? s.lens[i] : 0)) };
+  loaded = { pads: s.pads, lens: s.pads.map((p, i) => (p ? s.lens[i] : 0)), gain: s.pads.map((p, i) => (p && s.gain ? s.gain[i] : 0)), trim: Array(16).fill(null) };
   Max.outlet('bankname', b.id, clean(b.name));
   Max.outlet('bank', b.id, bankNr(b.id), ...s.pads.map((p) => (p ? p.start : 0)), ...loaded.lens, s.path);
+  sendGains(b);
   sendAnalysis(clean(b.name)).catch((e) => status('Tonart-Analyse fehlgeschlagen: ' + clean(e.message).slice(0, 80)));
   edDirty('device'); edDirty('beats');
+}
+
+// padgain <i> <ausgleich dB> <trim dB> (Nachtrag 14): gleich nach bank, danach nur, wenn sich ein Trim ändert.
+// Trim aus der Bibliothek nur, solange das Pad dort dasselbe ist wie im Buffer (sonst kommt gleich bank neu)
+function sendGains(b) {
+  if (!b || b.id !== activeId || !loaded.gain) return;
+  loaded.pads.forEach((p, i) => {
+    const t = p && samePad(p, b.pads[i]) ? b.pads[i].trim || 0 : 0;
+    if (t !== loaded.trim[i]) { loaded.trim[i] = t; Max.outlet('padgain', i, loaded.gain[i], t); }
+  });
 }
 
 // padana <i> <bpm> <cent> <off> <beats…>: Tempo, Stimmung und Schläge des Videos von Pad i.
@@ -1656,17 +1759,17 @@ function busyIfStale(by) {
   try { ok = !!snipSource(b); } catch (e) { ok = false; }
   if (ok) Max.outlet('bankbusy');
 }
-libEvents.on('change', (stand, by) => { busyIfStale(by); libBy = by; sendLibstate(); edDirty('lib'); edDirty('device'); edDirty('beats'); });
+libEvents.on('change', (stand, by) => { busyIfStale(by); sendGains(bankById(activeId)); libBy = by; sendLibstate(); edDirty('lib'); edDirty('device'); edDirty('beats'); });
 libEvents.on('status', () => edDirty('lib'));
 libEvents.on('cache', () => edDirty('cache'));
 libEvents.on('job', (j) => edEmit('job', j));
 libEvents.on('msg', (m) => edEmit('msg', m));
 
 // ---------- [js] -> Node (6.2, Spec 3.0 3.2) ----------
-// bankstate <bankId> <sel> <mode> <rev> <s×16> <w×16> <div> <rate> <tune> <warp> <quant> <vol> <voices> <base> <qdiv> <qcatch> <bpm>
+// bankstate <bankId> <sel> <mode> <rev> <s×16> <w×16> <div> <rate> <tune> <warp> <quant> <vol> <voices> <base> <qdiv> <qcatch> <bpm> <norm>
 Max.addHandler('bankstate', (id, sel, mode, rev, ...sw) => {
-  const p = sw.slice(32, 43);
-  const params = p.length >= 10 ? { div: p[0], rate: p[1], mode, rev, tune: p[2], warp: p[3], quant: p[4], vol: p[5], voices: p[6], base: p[7], qdiv: p[8], qcatch: p[9], bpm: p[10] || 0 } : null;
+  const p = sw.slice(32, 44);
+  const params = p.length >= 10 ? { div: p[0], rate: p[1], mode, rev, tune: p[2], warp: p[3], quant: p[4], vol: p[5], voices: p[6], base: p[7], qdiv: p[8], qcatch: p[9], bpm: p[10] || 0, norm: p.length > 11 ? p[11] : 1 } : null;
   dev = { bankId: Math.floor(id) || 0, sel, starts: sw.slice(0, 16), spans: sw.slice(16, 32), params };
   activeId = dev.bankId;
   edDirty('device'); edDirty('beats');
@@ -1787,6 +1890,7 @@ async function edSearch(q) {
 const PARAMS = {
   div: [0, 11, true], rate: [0.25, 2, false], mode: [0, 1, true], rev: [0, 1, true], tune: [0, 1, true],
   warp: [0, 1, true], quant: [0, 1, true], qdiv: [0, 3, true], qcatch: [0, 1, true], vol: [-70, 6, false], voices: [0, 6, true], base: [0, 127, true],
+  norm: [0, 1, true],
 };
 
 // (Felder, client) -> Antwortfelder, wirft libErr
@@ -1819,8 +1923,9 @@ const CMD = {
     need(isPad(q.pad) && (q.video === null || (isVideo(q.video) && isInt(q.start, 0))));
     if (q.video !== null && !padSource({ video: q.video, start: q.start }, b.id)) throw libErr('playonly');
     if (!samePad(b.pads[q.pad], q.video === null ? null : { video: q.video, start: q.start })) keepPad(b.pads[q.pad], b.id);
-    libChange('setpad', { id: q.id, pad: q.pad, video: q.video, start: q.start, info: q.info }, by);
+    libChange('setpad', { id: q.id, pad: q.pad, video: q.video, start: q.start, info: q.info, trim: q.video === null ? undefined : q.trim }, by);
   },
+  trim: (q, by) => { libChange('trim', { id: q.id, pad: q.pad, trim: q.trim }, by); },
   rename(q, by) {
     libChange('rename', { id: q.id, name: q.name }, by);
     if (q.id === activeId) Max.outlet('bankname', q.id, clean(bankById(q.id).name));
@@ -2131,6 +2236,15 @@ startWeb(WEB_PORT, 5);
 try { libBackup(); } catch (e) { Max.post(`YT Sampler: Sicherung fehlgeschlagen: ${e.message}`); }
 libWatch();
 try { snipCleanup(); keepCleanup(); } catch (e) { Max.post(`YT Sampler: Aufräumen fehlgeschlagen: ${e.message}`); }
+// Alte Snippets ohne gain einmal nachmessen (Nachtrag 14), Bank für Bank, damit der Start nicht hängt
+(async () => {
+  for (const b of libNow.lib ? libNow.lib.banks : []) {
+    const j = readSnip(b.id);
+    if (j && !j.gain) snipGain(b.id);
+    await new Promise((r) => setImmediate(r));
+  }
+  libEvents.emit('status');
+})().catch((e) => Max.post(`YT Sampler: Nachmessen fehlgeschlagen: ${e.message}`));
 
 // Startcheck; Session vom Device anfordern
 if (DATA_SETUP.error) status(DATA_SETUP.error);
@@ -2148,7 +2262,7 @@ Max.outlet('needsession');
 module.exports = {
   errMsg, DATA, LOCAL, CACHE, SESSIONS, LIB_FILE, LIB_LOCK, BACKUP_DIR, ERR, LIB, libErr, libParse, libRead, libChange, libBackup, libEvents, get libNow() { return libNow; },
   AN, SNIP_DIR, SNIP_MS, computeAnalysis, tempoFromOnset, saveAnalysis, readAnalysis, getAnalysis, trackBeats, silentRanges,
-  hasWav, readSnip, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, keepCleanup, KEEP_DIR, cacheSize, videoFail,
+  hasWav, readSnip, snipGain, padGain, NORM_TARGET, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, keepCleanup, KEEP_DIR, cacheSize, videoFail,
   beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, fillPads, get anaMap() { return anaMap; },
   parseSearchPage, runCmd, peaks, snipPad, get webPort() { return webPort; }, get activeId() { return activeId; },
 };

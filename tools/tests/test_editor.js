@@ -981,6 +981,52 @@ t('Pads ziehen: Alt kopiert, Halten über einer Bank öffnet sie, verschieben ü
   assert.deepStrictEqual(b.errors, []);
 });
 
+t('Trim und Norm (Nachtrag 14): Trim-Regler in den Details, Doppelklick 0, je ein Undo-Schritt; Norm gespiegelt; Vorhören und Kopie mit Trim', async () => {
+  await open('normal');
+  const id = await b.eval('S.dev.bankId');
+  await b.click('#pad0'); await b.waitFor(`S.sel === 0 && !!$('trim')`);
+  assert.deepStrictEqual(await b.eval(`[$('trim').value, $('trimv').textContent, $('trim').min, $('trim').max, $('trim').step, $('trim').disabled]`), ['0', '0,0 dB', '-12', '12', '0.5', false]);
+  const drag = (v) => b.eval(`(() => { const e = $('trim'); e.value = '${v}'; e.dispatchEvent(new Event('input')); e.dispatchEvent(new Event('change')); })()`);
+  m.log = []; await drag(-3.5);
+  assert.deepStrictEqual(await waitLog((x) => x.cmd === 'trim'), { client: last().client, cmd: 'trim', id, pad: 0, trim: -3.5 });
+  await b.waitFor(`$('trimv').textContent === '−3,5 dB' && $('undo').title === 'Rückgängig: Trim Pad 1 (⌘Z)'`);
+  m.log = []; await undoKey(b);
+  assert.strictEqual((await waitLog((x) => x.cmd === 'trim')).trim, 0);
+  await b.waitFor(`$('trimv').textContent === '0,0 dB' && $('trim').value === '0'`);
+  m.log = []; await redoKey(b);
+  assert.strictEqual((await waitLog((x) => x.cmd === 'trim')).trim, -3.5);
+  await b.waitFor(`$('trim').value === '-3.5'`);
+  m.log = []; await b.eval(`$('trim').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+  assert.strictEqual((await waitLog((x) => x.cmd === 'trim')).trim, 0, 'Doppelklick = 0');
+  await b.waitFor(`$('undo').title === 'Rückgängig: Trim Pad 1 (⌘Z)' && $('trim').value === '0'`);
+  // Norm: wie die anderen Regler, kein Undo-Schritt
+  assert.strictEqual(await b.eval(`$('p-norm').classList.contains('on')`), true, 'Standard an');
+  m.log = []; await b.click('#p-norm');
+  assert.deepStrictEqual(await waitLog((x) => x.cmd === 'param'), { client: last().client, cmd: 'param', name: 'norm', value: 0 });
+  await b.waitFor(`!$('p-norm').classList.contains('on')`);
+  m.setParams({ norm: 1 }); await b.waitFor(`$('p-norm').classList.contains('on')`);
+  assert(await b.eval(`$('ctl').querySelector('.set').getBoundingClientRect().top < $('p-quant').getBoundingClientRect().bottom`), 'Reglerleiste bleibt einzeilig');
+  // Vorhören mit Ausgleich (Attrappe: Pad 3 = +1 dB) und Trim, Norm aus = nur Trim
+  await b.eval(`localStorage.clear()`);
+  await open('mix');                                 // erstes Quell-Grid: Bank 7
+  await b.eval(`cmd('trim', { id: 7, pad: 2, trim: 3 })`);
+  await b.waitFor(`S.lib.banks.find((x) => x.id === 7).pads[2].trim === 3`);
+  await b.click('#srcpads .st[data-pad="2"]'); await b.waitFor(`S.prev && !!S.prev.src`);
+  assert.ok(Math.abs(await b.eval('S.prev.amp') - Math.pow(10, 4 / 20)) < 1e-9, 'Ausgleich + Trim');
+  await b.click('#srcpads .st[data-pad="2"]'); await b.waitFor(`!S.prev`);
+  m.setParams({ norm: 0 }); await b.waitFor(`S.dev.params.norm === 0`);
+  await b.click('#srcpads .st[data-pad="2"]'); await b.waitFor(`S.prev && !!S.prev.src`);
+  assert.ok(Math.abs(await b.eval('S.prev.amp') - Math.pow(10, 3 / 20)) < 1e-9, 'Norm aus: nur Trim');
+  await b.click('#srcpads .st[data-pad="2"]'); await b.waitFor(`!S.prev`);
+  // Kopie aus dem Quell-Grid nimmt den Trim mit
+  m.log = []; await b.eval(dnd('#srcpads .st[data-pad="2"]', '#pad9'));
+  assert.strictEqual((await waitLog((x) => x.cmd === 'setpad' && x.pad === 9)).trim, 3);
+  await b.waitFor(`S.lib.banks.find((x) => x.id === 13).pads[9].trim === 3`);
+  m.params = { ...require('./editor_mock').PARAMS_START };
+  await b.eval(`localStorage.clear()`);
+  assert.deepStrictEqual(b.errors, []);
+});
+
 t('Screenshots', async () => {
   if (!process.argv.includes('--shots')) return;
   await open('normal'); await b.click('#pad5'); await sleep(250); await b.shot('editor-normal');

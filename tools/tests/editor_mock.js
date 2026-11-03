@@ -15,7 +15,7 @@ const ERR = {
   playonly: 'Track fehlt – nur spielbar', nosnip: 'Snippets fehlen – Bank nicht ladbar', idtaken: 'Bank existiert schon',
   notempo: 'Kein Tempo erkannt', cachebusy: 'Downloads oder Schnitte laufen – danach noch einmal', superseded: 'Neuere Suche läuft', badreq: 'Ungültiger Befehl',
 };
-const WRITE = ['rename', 'duplicate', 'delete', 'move', 'stage', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'fillpads', 'newmix', 'setpad', 'tempo', 'tempook', 'fetch', 'fetchall'];
+const WRITE = ['rename', 'duplicate', 'delete', 'move', 'stage', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'fillpads', 'newmix', 'setpad', 'trim', 'tempo', 'tempook', 'fetch', 'fetchall'];
 
 // Videos: id → [Titel, Analyse-BPM, Dauer s]
 const VIDEOS = {
@@ -36,8 +36,8 @@ function beatsOf(video, bpm) {
 function bars(video) { const v = VIDEOS[video], b = beatsOf(video, v[1]); return b.beats.filter((t, k) => k >= 8 && (k - 8) % 4 === 0); }
 // Regler wie Spec 3.0, 3.1: [min, max, ganz]
 const PARAMS = { div: [0, 11, true], rate: [0.25, 2], mode: [0, 1, true], rev: [0, 1, true], tune: [0, 1, true], warp: [0, 1, true],
-  quant: [0, 1, true], qdiv: [0, 3, true], qcatch: [0, 1, true], vol: [-70, 6], voices: [0, 6, true], base: [0, 127, true] };
-const PARAMS_START = { div: 5, rate: 1, mode: 0, rev: 0, tune: 1, warp: 0, quant: 1, qdiv: 1, qcatch: 0, vol: -3.5, voices: 6, base: 36, bpm: 120 };   // bpm = Lives Tempo
+  quant: [0, 1, true], qdiv: [0, 3, true], qcatch: [0, 1, true], vol: [-70, 6], voices: [0, 6, true], base: [0, 127, true], norm: [0, 1, true] };
+const PARAMS_START = { div: 5, rate: 1, mode: 0, rev: 0, tune: 1, warp: 0, quant: 1, qdiv: 1, qcatch: 0, vol: -3.5, voices: 6, base: 36, bpm: 120, norm: 1 };   // bpm = Lives Tempo
 const DIV_FRAC = [1 / 64, 1 / 32, 1 / 24, 1 / 16, 1 / 12, 1 / 8, 1 / 6, 1 / 4, 1 / 2, 1, 2, 4];
 function makeStarts(video, seed) { const b = bars(video), out = []; for (let i = 0; out.length < 16; i++) { const t = b[(seed * 7 + i * 5) % b.length]; if (!out.includes(t)) out.push(t); } return out.sort((a, c) => a - c); }
 
@@ -124,7 +124,7 @@ function createMock(opts = {}) {
   // videos-Einträge ohne Pad bleiben wie bei Node bis zum Start (Flow-Nachtrag)
   function libMsg(by) {
     const { rev, state, error, banks, videos } = m.lib;
-    return { rev, by, state, error, cache: cacheMsg(), banks: banks.map((b) => ({ ...b, mix: isMix(b), stage: onStage(b), wav: bankWav(b) })), videos };
+    return { rev, by, state, error, cache: cacheMsg(), banks: banks.map((b) => ({ ...b, mix: isMix(b), stage: onStage(b), wav: bankWav(b), gain: b.pads.map((p, i) => (p ? (i % 3) - 1 : 0)) })), videos };   // Ausgleich: −1/0/+1 dB
   }
   m.cacheBytes = opts.cacheBytes != null ? opts.cacheBytes : 4.2e9;
   function cacheMsg() { const bytes = m.cacheBytes; return { bytes, warn: bytes >= 1e10 }; }
@@ -167,7 +167,7 @@ function createMock(opts = {}) {
   function cmd(q) {
     const c = q.cmd, b = q.id != null ? byId(q.id) : null;
     if (WRITE.includes(c) && (m.lib.state === 'kaputt' || m.lib.state === 'neuer')) return fail(m.lib.state === 'kaputt' ? 'libbroken' : 'libnewer');
-    if (['select', 'rename', 'duplicate', 'delete', 'move', 'stage', 'setstart', 'setstarts', 'swap', 'roll', 'setpad', 'fillpads'].includes(c) && !b) return fail(q.id == null ? 'badreq' : 'nobank');
+    if (['select', 'rename', 'duplicate', 'delete', 'move', 'stage', 'setstart', 'setstarts', 'swap', 'roll', 'setpad', 'trim', 'fillpads'].includes(c) && !b) return fail(q.id == null ? 'badreq' : 'nobank');
     const pad = b && isPad(q.pad) ? b.pads[q.pad] : null, padWav = pad && m.lib.videos[pad.video].wav;
     const known = (video, start) => m.lib.banks.some((x) => x.pads.some((p) => p && p.video === video && p.start === start)); // Quelle ohne WAV (Spec 2.2)
     switch (c) {
@@ -235,7 +235,14 @@ function createMock(opts = {}) {
         const wav = e ? e.wav : !!VIDEOS[q.video];                                // gelöschtes Video: WAV liegt noch im Cache
         if (!wav && !known(q.video, q.start)) return fail('playonly');
         if (!e) { m.lib.videos[q.video] = { ...videoEntry(q.video, q.info.title), wav }; if (q.info.bpm) m.lib.videos[q.video].bpm = q.info.bpm; }
-        b.pads[q.pad] = { video: q.video, start: q.start }; changed(q.client); syncDev(); return { ok: true };
+        if (q.trim !== undefined && !(typeof q.trim === 'number' && Math.abs(q.trim) <= 12)) return fail('badreq');
+        b.pads[q.pad] = { video: q.video, start: q.start }; if (q.trim) b.pads[q.pad].trim = q.trim;
+        changed(q.client); syncDev(); return { ok: true };
+      }
+      case 'trim': { // Nachtrag 14: Trim pro Pad, 0 = Feld weg
+        if (!pad || typeof q.trim !== 'number' || Math.abs(q.trim) > 12) return fail('badreq');
+        if (q.trim) pad.trim = Math.round(q.trim * 10) / 10; else delete pad.trim;
+        m.trims = (m.trims || []).concat([[q.id, q.pad, q.trim]]); changed(q.client); return { ok: true };
       }
       case 'newmix': {
         if (q.name !== undefined && typeof q.name !== 'string') return fail('badreq');

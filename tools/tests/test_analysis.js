@@ -52,7 +52,7 @@ t('Ergebnis aus dem Bank-Ordner gleich wie aus der WAV, ohne ganze WAV; kein sil
   const id = mkBank(node, V);
   const fromCache = await deviceOut(node, max, id);
   const sel = fromCache.map((m) => m[0]);
-  assert.deepStrictEqual(sel, ['bankname', 'bank', ...Array(16).fill('padana'), ...Array(16).fill('padinfo'), 'analysisready']);
+  assert.deepStrictEqual(sel, ['bankname', 'bank', ...Array(16).fill('padgain'), ...Array(16).fill('padana'), ...Array(16).fill('padinfo'), 'analysisready']);
   assert.match(statusOf(max).pop(), /^Bereit: T · 12\d(\.\d)? BPM · Stimmung [+-]\d+ ct$/);
   fs.unlinkSync(wav);
   fs.unlinkSync(path.join(node.CACHE, `${V}.chroma`));

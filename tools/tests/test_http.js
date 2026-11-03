@@ -204,7 +204,7 @@ t('SSE: retry, hello, lib, device, cache beim Verbinden; beats erst mit aktiver 
   assert.deepStrictEqual(lib.banks.map((b) => [b.id, b.name, b.mix, b.snip === 'ok' && b.id !== ids[1] ? 'stale' : b.snip, b.wav]),
     [[ids[0], 'Eins', false, 'stale', true], [ids[1], 'Zwei', false, 'ok', false], [ids[2], 'Drei', false, 'stale', true]]);
   assert.deepStrictEqual(lib.banks[0].pads, PADS(V1));
-  assert.deepStrictEqual(Object.keys(lib.banks[0]), ['id', 'name', 'pads', 'mix', 'stage', 'snip', 'wav']);
+  assert.deepStrictEqual(Object.keys(lib.banks[0]), ['id', 'name', 'pads', 'mix', 'stage', 'snip', 'wav', 'gain']);
   // dur aus dem Cache, ohne WAV aus der Snippet-.json
   assert.deepStrictEqual(lib.videos, { [V1]: { title: 'Titel ' + V1, wav: true, dur: DUR }, [V2]: { title: 'Titel ' + V2, wav: false, dur: DUR } });
   assert.deepStrictEqual(Object.keys(lib.cache), ['bytes', 'warn']);
@@ -446,14 +446,14 @@ t('hit/up → padhit/padup; bankstate mit Reglern → device.params; playing/pla
   await cmd({ cmd: 'up', pad: 4 });
   assert.deepStrictEqual(max.out.filter((m) => m[0] !== 'status'), [['padhit', 4], ['padup', 4]], 'status vom Startcheck kann dazwischen kommen');
   const w = Array.from({ length: 16 }, (_, i) => 1000 + i);
-  // <div> <rate> <tune> <warp> <quant> <vol> <voices> <base> <qdiv> <qcatch> <bpm>
-  const P = [5, 1.25, 1, 0, 1, -3.5, 6, 36, 2, 1, 128.5];
+  // <div> <rate> <tune> <warp> <quant> <vol> <voices> <base> <qdiv> <qcatch> <bpm> <norm>
+  const P = [5, 1.25, 1, 0, 1, -3.5, 6, 36, 2, 1, 128.5, 0];
   await cmd({ cmd: 'select', id: ids[2] });
   max.handlers.bankstate(ids[2], 5, 1, 1, ...STARTS, ...w, ...P);
   await a.wait((ev, d) => ev === 'device' && d.bankId === ids[2]);
   const d = a.last('device');
   assert.deepStrictEqual(d, { bankId: ids[2], nr: 3, video: V1, sel: 5, starts: STARTS, spans: w,
-    params: { div: 5, rate: 1.25, mode: 1, rev: 1, tune: 1, warp: 0, quant: 1, vol: -3.5, voices: 6, base: 36, qdiv: 2, qcatch: 1, bpm: 128.5 } });
+    params: { div: 5, rate: 1.25, mode: 1, rev: 1, tune: 1, warp: 0, quant: 1, vol: -3.5, voices: 6, base: 36, qdiv: 2, qcatch: 1, bpm: 128.5, norm: 0 } });
   assert.ok(!('mode' in d) && !('rev' in d) && !('teletext' in d));
   await a.wait((ev, d2) => ev === 'beats' && d2.video === V1, 'beats der aktiven Bank');
   const n = a.of('device').length;
@@ -462,6 +462,7 @@ t('hit/up → padhit/padup; bankstate mit Reglern → device.params; playing/pla
   assert.strictEqual(a.of('device').length, n, 'Gleiches nicht noch einmal');
   max.handlers.bankstate(ids[2], 5, 0, 1, ...STARTS, ...w, 5, 1.25, 1, 1, 1, -3.5, 6, 36, 2, 1);
   await a.wait((ev, d2) => ev === 'device' && d2.params && d2.params.warp === 1 && d2.params.mode === 0, 'Regleränderung');
+  assert.strictEqual(a.last('device').params.norm, 1, 'ohne norm (älteres [js]): an');
   max.handlers.playing(5, 2000, 3500, 1500);
   max.handlers.playstop(5);
   await a.wait((ev) => ev === 'stop');
@@ -569,14 +570,14 @@ t('Direkte Suche: Ergebnisseite auslesen, Länge in Sekunden, kaputte Seite -> k
 t('/cmd param: gültig → param an [js] und {}, ungültig → badreq, auch bei kaputter Bibliothek', async () => {
   const { node, max, on, cmd, done } = await setup();
   const good = [['div', 0], ['div', 10], ['div', 11], ['rate', 0.25], ['rate', 1.333], ['rate', 2], ['mode', 1], ['rev', 0], ['tune', 1], ['warp', 1],
-    ['quant', 0], ['qdiv', 0], ['qdiv', 3], ['qcatch', 1], ['vol', -70], ['vol', -3.5], ['vol', 6], ['voices', 0], ['voices', 6], ['base', 0], ['base', 127]];
+    ['quant', 0], ['qdiv', 0], ['qdiv', 3], ['qcatch', 1], ['vol', -70], ['vol', -3.5], ['vol', 6], ['voices', 0], ['voices', 6], ['base', 0], ['base', 127], ['norm', 0], ['norm', 1]];
   for (const [name, value] of good) {
     max.out = [];
     assert.deepStrictEqual(await cmd({ client: 'c1', cmd: 'param', name, value }), { ok: true }, `${name} ${value}`);
     assert.deepStrictEqual(on('param'), [['param', name, value]]);
   }
   const bad = [['div', 12], ['div', 2.5], ['div', -1], ['rate', 0.2], ['rate', 2.01], ['mode', 2], ['rev', 0.5], ['tune', -1], ['warp', '1'],
-    ['quant', true], ['qdiv', 4], ['qdiv', 1.5], ['qcatch', 2], ['vol', -71], ['vol', 6.5], ['voices', 7], ['voices', 1.5], ['base', 128], ['base', 36.5], ['bank', 1], ['toString', 0],
+    ['quant', true], ['qdiv', 4], ['qdiv', 1.5], ['qcatch', 2], ['vol', -71], ['vol', 6.5], ['voices', 7], ['voices', 1.5], ['base', 128], ['base', 36.5], ['norm', 2], ['norm', 0.5], ['bank', 1], ['toString', 0],
     ['div', null], ['rate', NaN], [undefined, 1]];
   for (const [name, value] of bad) {
     max.out = [];
@@ -750,6 +751,45 @@ t('clearcache: löscht nur L/cache (.wav/.json/.chroma), D bleibt, Bänke spiele
   await a.wait((ev, d) => ev === 'lib' && d.banks.every((b) => b.wav === false && b.snip === 'ok'), 'nur spielbar, Snippets ok');
   assert.strictEqual((await cmd({ cmd: 'setstart', id: ids[0], pad: 0, ms: 5 })).code, 'playonly');
   assert.strictEqual(node.snipEnsure(node.libNow.lib.banks[0]).lens.length, 16, 'Bank spielt weiter');
+  done();
+});
+
+t('Trim pro Pad (Nachtrag 14): trim und setpad mit trim, padgain an [js] nur für die aktive Bank, 0 = Feld weg, Grenzen', async () => {
+  const { node, max, ids, on, cmd, done } = await setup();
+  await cmd({ cmd: 'select', id: ids[0] });
+  await until(() => on('padgain').length === 16, 'padgain nach bank');
+  const pg = on('padgain');
+  assert.deepStrictEqual(pg.map((m) => m[1]), [...Array(16).keys()]);
+  const want = node.readSnip(ids[0]).gain;
+  assert.deepStrictEqual(pg.map((m) => m[2]), want, 'Ausgleich aus der .json');
+  assert.ok(want.some((g) => g !== 0), 'Testmusik wird gemessen');
+  assert.deepStrictEqual(pg.map((m) => m[3]), Array(16).fill(0));
+  max.out = [];
+  assert.deepStrictEqual(await cmd({ cmd: 'trim', id: ids[0], pad: 3, trim: -4.5 }), { ok: true });
+  assert.strictEqual(node.libNow.lib.banks[0].pads[3].trim, -4.5);
+  assert.deepStrictEqual(on('padgain'), [['padgain', 3, want[3], -4.5]], 'nur das geänderte Pad');
+  assert.deepStrictEqual(on('bank'), [], 'kein Neuschnitt');
+  // andere Bank: in der Bibliothek, nichts an [js]
+  max.out = [];
+  await cmd({ cmd: 'trim', id: ids[2], pad: 0, trim: 2 });
+  assert.deepStrictEqual(on('padgain'), []);
+  // kopieren mit trim (Editor: Quell-Grid, Alt-Drag), ohne trim kein Feld
+  await cmd({ cmd: 'setpad', id: ids[2], pad: 5, video: V1, start: STARTS[3], trim: -4.5 });
+  assert.deepStrictEqual(node.libNow.lib.banks[2].pads[5], { video: V1, start: STARTS[3], trim: -4.5 });
+  await cmd({ cmd: 'setpad', id: ids[2], pad: 5, video: V1, start: STARTS[4] });
+  assert.deepStrictEqual(node.libNow.lib.banks[2].pads[5], { video: V1, start: STARTS[4] });
+  // swap nimmt trim mit, 0 löscht das Feld
+  await cmd({ cmd: 'swap', id: ids[0], a: 3, b: 4 });
+  assert.strictEqual(node.libNow.lib.banks[0].pads[4].trim, -4.5);
+  await cmd({ cmd: 'trim', id: ids[0], pad: 4, trim: 0 });
+  assert.ok(!('trim' in node.libNow.lib.banks[0].pads[4]));
+  // Grenzen: leerer Platz, ±12, kein Wert
+  await cmd({ cmd: 'setpad', id: ids[0], pad: 7, video: null });
+  for (const bad of [{ pad: 7, trim: 1 }, { pad: 0, trim: 12.5 }, { pad: 0, trim: -13 }, { pad: 0, trim: '1' }, { pad: 0 }, { pad: 16, trim: 0 }]) {
+    assert.strictEqual((await cmd({ cmd: 'trim', id: ids[0], ...bad })).code, 'badreq', JSON.stringify(bad));
+  }
+  assert.strictEqual((await cmd({ cmd: 'setpad', id: ids[0], pad: 0, video: V1, start: 0, trim: 20 })).code, 'badreq');
+  assert.ok(Math.abs(node.libNow.lib.banks[0].pads[0].start - STARTS[0]) === 0, 'setpad mit falschem trim ändert nichts');
   done();
 });
 

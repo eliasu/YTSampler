@@ -31,13 +31,14 @@ var REL_MS = 20;            // Ausblenden (Slice-Ende, Hold loslassen)
 
 // Einstellungen kommen von den live.*-Reglern (die speichert Live selbst), so wie der Regler sie schickt.
 // voices = Anzahl, voicesIdx = Index im Menü; vol nur zum Melden an den Editor
-var P = { bpm: 120, div: 5, rate: 1, mode: 0, rev: 0, base: 36, voices: 16, voicesIdx: 6, tune: 0, warp: 0, quant: 0, qdiv: 1, qcatch: 0, vol: 0 };
+var P = { bpm: 120, div: 5, rate: 1, mode: 0, rev: 0, base: 36, voices: 16, voicesIdx: 6, tune: 0, warp: 0, quant: 0, qdiv: 1, qcatch: 0, vol: 0, norm: 1 };
 var QUANT_LATE = 0.3;       // Input-Quantize: bis zu diesem Anteil des Rasters (höchstens einer 1/16) danach sofort spielen (zu spät gedrückt)
 var QDIV_BEATS = [0.125, 0.25, 0.5, 1];   // Raster in Schlägen: 1/32, 1/16, 1/8, 1/4 (live.menu „Quant Div“)
 
 // Editor stellt Regler: Name im Protokoll -> varname des live.*-Objekts
 var PARAM_VAR = { div: "Division", rate: "Rate", mode: "Mode", rev: "Reverse", tune: "Tune", warp: "Warp",
-                  quant: "Quantize", qdiv: "Quant Div", qcatch: "Quant Catch", vol: "Volume", voices: "Voices", base: "Base Note" };
+                  quant: "Quantize", qdiv: "Quant Div", qcatch: "Quant Catch", vol: "Volume", voices: "Voices", base: "Base Note",
+                  norm: "Normalize" };
 
 // Lives globale Skala (Live 12: Song.root_note / Song.scale_intervals)
 var SC = { root: 0, ints: [0, 2, 4, 5, 7, 9, 11] };
@@ -48,6 +49,10 @@ var st = { bankId: 0 };
 // Laufzeitwerte der geladenen Bank (werden nicht gespeichert)
 var pads = [];           // Starts der Pads in Song-ms ihres eigenen Videos
 for (var pi = 0; pi < NPADS; pi++) pads.push(0);
+
+// Lautstärke pro Pad in dB (Nachtrag 14): Ausgleich aus der Messung (nur mit „Normalize“) und Trim aus dem Editor
+var PG = [], PT = [];
+for (pi = 0; pi < NPADS; pi++) { PG.push(0); PT.push(0); }
 
 var durMs = 0;           // > 0 = Bank geladen (sonst tun die Pads nichts)
 var sel = 0;
@@ -241,7 +246,7 @@ function sendBankstate() {
     }
     var b = ["bankstate", st.bankId, sel, P.mode, P.rev].concat(s, w,
         [P.div, Math.round(P.rate * 1000) / 1000, P.tune, P.warp, P.quant, Math.round(P.vol * 10) / 10, P.voicesIdx, P.base, P.qdiv, P.qcatch,
-         Math.round(P.bpm * 100) / 100]);   // Lives Tempo zuletzt: Vorhören im Editor
+         Math.round(P.bpm * 100) / 100, P.norm]);   // Lives Tempo: Vorhören im Editor
     var key = b.join(" ");
     if (key === lastBankstate) return;
     lastBankstate = key;
@@ -382,6 +387,14 @@ function volume(v) { P.vol = v; sendBankstate(); }                       // dB, 
 function warp(v) { P.warp = v ? 1 : 0; updateSel(); }
 
 // ---------- Skala / Tonart ----------
+function normalize(v) { P.norm = v ? 1 : 0; sendBankstate(); }         // wirkt ab dem nächsten Anschlag
+// vom Node-Teil: padgain <i> <ausgleich dB> <trim dB>
+function padgain(i, g, t) {
+    i = Math.floor(i);
+    if (i < 0 || i >= NPADS) return;
+    PG[i] = g || 0; PT[i] = t || 0;
+}
+function padAmp(i) { return Math.pow(10, ((P.norm ? PG[i] : 0) + PT[i]) / 20); }
 function tune(v) { P.tune = v ? 1 : 0; updateSel(); }
 function scaleroot(v) { SC.root = ((Math.floor(v) % 12) + 12) % 12; recomputeShifts(); }
 function scaleints() {
@@ -505,7 +518,7 @@ function trigger(i, vel, late) {
         from += (to >= from ? 1 : -1) * late * speed;
         dur -= late;
     }
-    var amp = vel / 127;
+    var amp = vel / 127 * padAmp(i);           // > 1 geht: env läuft über line~ in *~, nichts klemmt
     var atk = Math.min(ATK_MS, dur * 0.5);
     var rel = Math.min(P.mode ? SNIP_FADE_MS : REL_MS, dur * 0.5);   // Hold: am Snippet-Ende kurz ausblenden
 
@@ -588,6 +601,7 @@ function bank() {
     else bankName = "";
     pendingName = null;
     resetAnalysis();
+    for (i = 0; i < NPADS; i++) { PG[i] = 0; PT[i] = 0; }   // padgain kommt gleich nach bank
     sendEmpty();
     muted = 0; wantLoad = 0;
     if (!peekWait) peekNr = 0;                     // wer noch dreht, behält seine Anzeige

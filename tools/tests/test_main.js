@@ -254,9 +254,9 @@ t('bankstate nur bei Änderung, Song-ms, w gekappt auf l', function () {
     assert.deepStrictEqual(b.slice(1, 6), ['bankstate', 7, 0, 1, 1], 'ohne Video');
     assert.deepStrictEqual(b.slice(6, 22), STARTS);
     assert.deepStrictEqual(b.slice(22, 38), LENS, 'Hold: ganze Snippets');
-    // angehängt: div rate tune warp quant vol voices base qdiv qcatch bpm (Lives Tempo, fürs Vorhören im Editor)
-    assert.strictEqual(b.length, 38 + 11);
-    assert.deepStrictEqual(b.slice(38), [5, 1, 0, 0, 0, 0, 6, 36, 1, 0, 120]);
+    // angehängt: div rate tune warp quant vol voices base qdiv qcatch bpm (Lives Tempo, fürs Vorhören im Editor) norm
+    assert.strictEqual(b.length, 38 + 12);
+    assert.deepStrictEqual(b.slice(38), [5, 1, 0, 0, 0, 0, 6, 36, 1, 0, 120, 1]);
 });
 
 t('bankstate: die zwölf Reglerwerte, gerundet, nur bei Änderung', function () {
@@ -265,7 +265,7 @@ t('bankstate: die zwölf Reglerwerte, gerundet, nur bei Änderung', function () 
     sendBank(m, 7, 1, 100, '/x/7.wav');
     m.send('bpm', 120);
     var steps = [['division', 3], ['rate', 1.23456], ['playmode', 1], ['reverse', 1], ['tune', 1], ['warp', 1],
-        ['quantize', 1], ['volume', -3.54], ['voicecount', 2], ['basenote', 48], ['quantdiv', 2], ['quantcatch', 1]];
+        ['quantize', 1], ['volume', -3.54], ['voicecount', 2], ['basenote', 48], ['quantdiv', 2], ['quantcatch', 1], ['normalize', 0]];
     steps.forEach(function (st) {
         m.take();
         m.send.apply(null, st);
@@ -273,9 +273,9 @@ t('bankstate: die zwölf Reglerwerte, gerundet, nur bei Änderung', function () 
     });
     var b = bankstates(m)[0];
     assert.deepStrictEqual(b.slice(4, 6), [1, 1], 'mode rev');
-    assert.deepStrictEqual(b.slice(38), [3, 1.235, 1, 1, 1, -3.5, 2, 48, 2, 1, 120]);
+    assert.deepStrictEqual(b.slice(38), [3, 1.235, 1, 1, 1, -3.5, 2, 48, 2, 1, 120, 0]);
     m.take(); m.send('bpm', 98.7654);
-    assert.strictEqual(bankstates(m)[0].pop(), 98.77, 'Tempo meldet mit, gerundet');
+    assert.strictEqual(bankstates(m)[0][48], 98.77, 'Tempo meldet mit, gerundet');
     assert.strictEqual(m.ctx.P.voices, 3, 'Index 2 = 3 Stimmen');
     // Mikroänderung unterhalb der Rundung: kein neues bankstate
     m.take(); m.send('volume', -3.52); m.send('rate', 1.2349);
@@ -285,11 +285,33 @@ t('bankstate: die zwölf Reglerwerte, gerundet, nur bei Änderung', function () 
     assert.strictEqual(bankstates(m).length, 0);
 });
 
+t('Lautstärke pro Pad: env × 10^((Ausgleich + Trim)/20), Normalize aus = nur Trim, neue Bank setzt zurück', function () {
+    var m = load(SRC);
+    startDevice(m);
+    sendBank(m, 7, 1, 100, '/x/7.wav');
+    m.send('bpm', 120);
+    var amp = function (pad) { m.take(); m.send('note', 36 + pad, 127, 1); var e = m.on(0, 'env').concat(m.on(3, 'env')); return e[e.length - 1][2]; };
+    assert.strictEqual(amp(0), 1, 'ohne padgain unverändert');
+    m.send('padgain', 0, 6, 0); m.send('padgain', 1, -6, 2); m.send('padgain', 2, 12, 6);
+    assert.ok(Math.abs(amp(0) - Math.pow(10, 6 / 20)) < 1e-9, 'Ausgleich +6 dB');
+    assert.ok(Math.abs(amp(1) - Math.pow(10, -4 / 20)) < 1e-9, 'Ausgleich + Trim');
+    assert.ok(Math.abs(amp(2) - Math.pow(10, 18 / 20)) < 1e-9, 'über 1 geht');
+    m.send('normalize', 0);
+    assert.strictEqual(amp(0), 1, 'Norm aus: kein Ausgleich');
+    assert.ok(Math.abs(amp(1) - Math.pow(10, 2 / 20)) < 1e-9, 'Norm aus: Trim wirkt');
+    m.send('warp', 1);
+    assert.ok(Math.abs(amp(1) - Math.pow(10, 2 / 20)) < 1e-9, 'Warp-Stimme ebenso');
+    m.send('normalize', 1); m.send('warp', 0);
+    m.send('padgain', 99, 6, 6); m.send('padgain', -1, 6, 6);   // außerhalb: nichts
+    sendBank(m, 8, 2, 100, '/x/8.wav');
+    assert.strictEqual(amp(2), 1, 'neue Bank: zurück auf 0 dB bis padgain kommt');
+});
+
 t('param vom Editor -> setNamed mit varname, unbekannt -> nichts', function () {
     var m = load(SRC);
     startDevice(m);
     var want = { div: 'Division', rate: 'Rate', mode: 'Mode', rev: 'Reverse', tune: 'Tune', warp: 'Warp',
-        quant: 'Quantize', qdiv: 'Quant Div', qcatch: 'Quant Catch', vol: 'Volume', voices: 'Voices', base: 'Base Note' };
+        quant: 'Quantize', qdiv: 'Quant Div', qcatch: 'Quant Catch', vol: 'Volume', voices: 'Voices', base: 'Base Note', norm: 'Normalize' };
     Object.keys(want).forEach(function (n) {
         m.named = [];
         m.send('param', n, 1);

@@ -101,7 +101,7 @@ pat.boxes.forEach(function (b) {
 });
 // Spec 3.0, 2.4: genau diese 14 Parameter + Button „Editor“, die 8 weggefallenen nicht mehr
 var PARAMS = ['Bank', 'Bank Prev', 'Bank Next', 'Division', 'Base Note', 'Voices', 'Rate', 'Mode', 'Reverse', 'Tune', 'Warp',
-              'Input Quantize', 'Volume', 'Session', 'Open Editor', 'Quant Div', 'Quant Catch'];
+              'Input Quantize', 'Volume', 'Session', 'Open Editor', 'Quant Div', 'Quant Catch', 'Normalize'];
 PARAMS.forEach(function (n) { need(names[n], 'Parameter fehlt: ' + n); });
 Object.keys(names).forEach(function (n) { need(PARAMS.indexOf(n) >= 0, 'unerwarteter Parameter: ' + n); });
 ['Tonal', 'Attack', 'Release', 'Source BPM', 'BPM Half', 'BPM Double', 'Grid', 'Snap'].forEach(function (n) {
@@ -119,7 +119,7 @@ Object.keys(fnSet(main, /setNamed\("(\w+)"/g)).forEach(function (v) {
 });
 // Regler fürs Spiegeln im Editor (Spec 3.0, 3.1): PARAM_VAR in [js] -> varname -> prepend <Handler> -> [js]
 var HANDLER = { div: 'division', rate: 'rate', mode: 'playmode', rev: 'reverse', tune: 'tune', warp: 'warp',
-                quant: 'quantize', qdiv: 'quantdiv', qcatch: 'quantcatch', vol: 'volume', voices: 'voicecount', base: 'basenote' };
+                quant: 'quantize', qdiv: 'quantdiv', qcatch: 'quantcatch', vol: 'volume', voices: 'voicecount', base: 'basenote', norm: 'normalize' };
 var pv = /var PARAM_VAR = (\{[^}]*\})/.exec(main);
 need(pv, '[js]: PARAM_VAR fehlt');
 var PV = pv ? JSON.parse(pv[1].replace(/(\w+):/g, '"$1":')) : {};
@@ -152,6 +152,10 @@ need(!/Max\.outlet\('bpm'/.test(node), 'Node schickt noch bpm <video> <bpm>');
 ['beattrack', 'analyzeall'].forEach(function (h) {
     need(!nodeHandlers[h] && !(sent[1] && sent[1][h]), 'weggefallene Nachricht [js] → Node: ' + h);
 });
+// Lautstärke angleichen (Nachtrag 14): padgain Node → [js], Normalize standardmäßig an
+need(/Max\.outlet\('padgain'/.test(node) && jsFns.padgain, 'padgain: Node schickt es nicht oder [js] hat keine Funktion');
+need(names.Normalize && names.Normalize.saved_attribute_attributes.valueof.parameter_initial_enable === 1 &&
+     names.Normalize.saved_attribute_attributes.valueof.parameter_initial[0] === 1, 'Normalize: nicht standardmäßig an');
 need(pat.boxes[pat.boxes.length - 1].box.filename === 'ytgrid.js', 'Grid-Overlay ist nicht die letzte Box');
 
 if (fails.length) { console.log(fails.join('\n')); process.exit(1); }

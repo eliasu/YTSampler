@@ -3,7 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { tempHome, loadNode, t, run, sleep } = require('./harness');
-const { SR, rampWav, rampFrame } = require('./wav');
+const { SR, rampWav, rampFrame, writeWav } = require('./wav');
 
 const V = 'VVVVVVVVVVV', W = 'WWWWWWWWWWW';
 const DUR = 40000;                 // Track 40 s
@@ -25,6 +25,7 @@ const snipBuf = (node, id) => fs.readFileSync(path.join(node.SNIP_DIR, `${id}.wa
 const slotFrame = (buf, i, k = 0) => rampFrame(buf, 44 + i * SLOT + k * 4);
 const PADS = (v, st) => st.map((start) => ({ video: v, start }));
 const snipJ = (node, id) => JSON.parse(fs.readFileSync(path.join(node.SNIP_DIR, `${id}.json`), 'utf8'));
+const st = ({ snip, wav }) => ({ snip, wav });   // snipStatus ohne gain
 const silent = (buf, i) => buf.subarray(44 + i * SLOT, 44 + (i + 1) * SLOT).every((b) => b === 0);
 
 t('Schneiden aus der ganzen WAV: Inhalt pro Fach, .json mit lens und dur', () => {
@@ -40,9 +41,9 @@ t('Schneiden aus der ganzen WAV: Inhalt pro Fach, .json mit lens und dur', () =>
     assert.strictEqual(slotFrame(buf, i, 1000), Math.round(STARTS[i] * SR / 1000) + 1000, `Fach ${i} +1000`);
   }
   const j = snipJ(node, id);
-  assert.deepStrictEqual(j, { pads: PADS(V, STARTS), lens: STARTS.map((s) => Math.min(16000, DUR - s)), durs: { [V]: DUR } });
+  assert.deepStrictEqual(j, { pads: PADS(V, STARTS), lens: STARTS.map((s) => Math.min(16000, DUR - s)), durs: { [V]: DUR }, gain: Array(16).fill(0) });   // Rampe = fast nur Gleichanteil: zu leise, 0 dB
   assert.ok(node.snipCurrent(bank()));
-  assert.deepStrictEqual(node.snipStatus(bank()), { snip: 'ok', wav: true });
+  assert.deepStrictEqual(st(node.snipStatus(bank())), { snip: 'ok', wav: true });
   assert.ok(!fs.readdirSync(node.SNIP_DIR).some((n) => n.endsWith('.tmp')));
   done();
 });
@@ -75,7 +76,7 @@ t('swap ohne WAV: Fächer aus der alten Datei, Undo des Tauschs auch', () => {
   node.cutSnippets(bank());
   fs.unlinkSync(path.join(node.CACHE, `${V}.wav`));
   node.libChange('swap', { id, a: 0, b: 15 }, 'test');
-  assert.deepStrictEqual(node.snipStatus(bank()), { snip: 'stale', wav: false });
+  assert.deepStrictEqual(st(node.snipStatus(bank())), { snip: 'stale', wav: false });
   node.cutSnippets(bank());
   let buf = snipBuf(node, id);
   assert.strictEqual(slotFrame(buf, 0), Math.round(STARTS[15] * SR / 1000));
@@ -117,12 +118,12 @@ t('Start setzen ohne WAV: playonly, snipEnsure spielt die alte Datei weiter', ()
 
 t('ohne Snippets und ohne WAV: nosnip; mit WAV schneidet snipEnsure sofort', () => {
   const { node, id, bank, done } = setup();
-  assert.deepStrictEqual(node.snipStatus(bank()), { snip: 'stale', wav: true });   // Entprell-Timer läuft
+  assert.deepStrictEqual(st(node.snipStatus(bank())), { snip: 'stale', wav: true });   // Entprell-Timer läuft
   const r = node.snipEnsure(bank());
   assert.deepStrictEqual([r.durs[V], r.lens[15], r.pads[15].video], [DUR, 5000, V]);
   fs.unlinkSync(path.join(node.CACHE, `${V}.wav`));
   for (const n of [`${id}.wav`, `${id}.json`]) fs.unlinkSync(path.join(node.SNIP_DIR, n));
-  assert.deepStrictEqual(node.snipStatus(bank()), { snip: 'missing', wav: false });
+  assert.deepStrictEqual(st(node.snipStatus(bank())), { snip: 'missing', wav: false });
   assert.throws(() => node.snipEnsure(bank()), (e) => e.code === 'nosnip');
   done();
 });
@@ -135,7 +136,7 @@ t('alte .json (video, starts, dur) gilt als aktuell: kein Neuschnitt, auch ohne 
   fs.writeFileSync(f, JSON.stringify({ video: V, starts: STARTS, lens, dur: DUR }));
   fs.unlinkSync(path.join(node.CACHE, `${V}.wav`));
   assert.ok(node.snipCurrent(bank()));
-  assert.deepStrictEqual(node.readSnip(id), { pads: PADS(V, STARTS), lens, durs: { [V]: DUR } });
+  assert.deepStrictEqual(node.readSnip(id), { pads: PADS(V, STARTS), lens, durs: { [V]: DUR }, gain: null });
   const t0 = fs.statSync(path.join(node.SNIP_DIR, `${id}.wav`)).mtimeMs;
   const r = node.snipEnsure(bank());
   assert.deepStrictEqual([r.pads[3], r.lens[15], r.durs[V]], [{ video: V, start: 3333 }, 5000, DUR]);
@@ -162,10 +163,10 @@ t('Mix aus zwei WAVs, leerer Platz still mit lens 0, durs pro Video', () => {
   assert.deepStrictEqual(j.lens, [16000, 16000, 0, 10000, ...Array(12).fill(0)]);
   assert.deepStrictEqual(j.durs, { [V]: DUR, [W]: 20000 });
   assert.ok(node.snipCurrent(mix));
-  assert.deepStrictEqual(node.snipStatus(mix), { snip: 'ok', wav: true });
+  assert.deepStrictEqual(st(node.snipStatus(mix)), { snip: 'ok', wav: true });
   assert.ok(fs.existsSync(path.join(node.SNIP_DIR, `${W}.chroma`)), 'Analyse pro Video abgelegt');
   fs.unlinkSync(path.join(node.CACHE, `${W}.wav`));
-  assert.strictEqual(node.snipStatus(mix).wav, false, 'ein Video fehlt -> wav false');
+  assert.strictEqual(st(node.snipStatus(mix)).wav, false, 'ein Video fehlt -> wav false');
   done();
 });
 
@@ -210,7 +211,7 @@ t('Entprellen: mehrere Änderungen -> einmal geschnitten, kurz nach der letzten'
   const t1 = Date.now();
   await sleep(70);
   assert.strictEqual(cuts.length, 0);
-  assert.strictEqual(node.snipStatus(bank()).snip, 'stale');
+  assert.strictEqual(st(node.snipStatus(bank())).snip, 'stale');
   await sleep(1500);   // erster Schnitt rechnet auch die Analyse
   assert.strictEqual(cuts.length, 1);
   assert.ok(cuts[0] - t1 >= 140 && cuts[0] - t0 > 200, `geschnitten nach ${cuts[0] - t1} ms`);
@@ -296,6 +297,69 @@ t('Ablage: Leeren/Überschreiben ohne Cache, Undo spielt wieder; videos bleibt; 
   assert.ok(!fs.existsSync(path.join(n2.SNIP_DIR, `${Z}.chroma`)) && fs.existsSync(path.join(n2.SNIP_DIR, `${V}.chroma`)));
   assert.ok(!(Z in n2.libNow.lib.videos) && V in n2.libNow.lib.videos);
   assert.ok(fs.existsSync(path.join(n2.CACHE, `${Z}.wav`)), 'Cache wird nie automatisch gelöscht');
+  done();
+});
+
+// ---------- Lautheit pro Pad (Nachtrag 14) ----------
+// Sinus 1 kHz, Amplitude a (0–1), optional ein einzelner Spitzenwert: als WAV bzw. als Puffer für padGain
+const sineFn = (a, hz = 1000, spike = 0) => (f) => { const v = Math.round((f === 100 && spike ? spike : a * Math.sin(2 * Math.PI * hz * f / SR)) * 32767); return [v, v]; };
+function sineBuf(sec, fn) {
+  const n = Math.round(sec * SR), b = Buffer.alloc(n * 4);
+  for (let f = 0; f < n; f++) { const [l, r] = fn(f); b.writeInt16LE(l, f * 4); b.writeInt16LE(r, f * 4 + 2); }
+  return b;
+}
+
+t('Lautheit: 12 dB leiser = 12 dB mehr Ausgleich, ±12 und Peak −1 dBFS greifen, Stille 0, nur die ersten 2 s ab Start', () => {
+  const { node, done } = setup();
+  const g = (a, opt = {}) => node.padGain(sineBuf(opt.sec || 3, sineFn(a, opt.hz, opt.spike)), 0, opt.ms || 16000);
+  const loud = g(0.5), soft = g(0.5 / 3.981);   // −12 dB
+  assert.ok(Math.abs(soft - loud - 12) < 0.2, `Differenz ${soft - loud}`);
+  // 1 kHz, Mittel der Kanäle: Lautheit ≈ 20·log10(a) − 3,01 + K-Gewichtung (≈ +0,7 dB) − 0,691 → Ziel −14
+  assert.ok(Math.abs(loud - (node.NORM_TARGET - (20 * Math.log10(0.5) - 3.01 + 0.69 - 0.691))) < 0.5, `laut ${loud}`);
+  assert.strictEqual(g(0.02), 12, 'leise: auf +12 begrenzt');
+  assert.strictEqual(g(1, { hz: 3000 }), -12, 'laut: auf −12 begrenzt');
+  assert.ok(g(0.5, { hz: 30 }) > g(0.5) + 6, 'K-Gewichtung: 30 Hz zählt weniger');
+  // Peak 0,5 (−6 dBFS) mit leisem Sinus: Anheben nur bis −1 dBFS → +5 dB
+  assert.ok(Math.abs(g(0.05, { spike: 0.5 }) - 5) < 0.1, 'Peak-Grenze ' + g(0.05, { spike: 0.5 }));
+  // Absenken bleibt, auch bei hohem Peak; Stille und extrem leise: 0
+  assert.ok(g(1) < 0);
+  assert.strictEqual(node.padGain(Buffer.alloc(SR * 8), 0, 2000), 0, 'Stille');
+  assert.strictEqual(g(0.0003), 0, 'extrem leise');
+  // gemessen wird nur bis lens und höchstens 2 s: lauter Teil danach zählt nicht
+  const mixed = Buffer.concat([sineBuf(2, sineFn(0.05)), sineBuf(1, sineFn(0.9))]);
+  assert.strictEqual(node.padGain(mixed, 0, 16000), g(0.05, { sec: 2 }));
+  assert.strictEqual(node.padGain(mixed, 0, 1000), node.padGain(sineBuf(1, sineFn(0.05)), 0, 16000));
+  done();
+});
+
+t('Ausgleich in der Snippet-.json; alte .json ohne gain wird einmal nachgemessen, ohne Neuschnitt', () => {
+  const { node, done } = setup();
+  writeWav(path.join(node.CACHE, `${W}.wav`), 20 * SR, sineFn(0.5));
+  const X = 'XXXXXXXXXXX';
+  writeWav(path.join(node.CACHE, `${X}.wav`), 20 * SR, sineFn(0.5 / 3.981));
+  const { id } = node.libChange('newmix', {}, 'test');
+  node.libChange('setpad', { id, pad: 0, video: W, start: 1000, info: { title: 'W' } }, 'test');
+  node.libChange('setpad', { id, pad: 1, video: X, start: 1000, info: { title: 'X' } }, 'test');
+  const mix = () => node.libNow.lib.banks.find((b) => b.id === id);
+  node.cutSnippets(mix());
+  const j = snipJ(node, id);
+  assert.ok(Math.abs(j.gain[1] - j.gain[0] - 12) < 0.2, JSON.stringify(j.gain));
+  assert.deepStrictEqual(j.gain.slice(2), Array(14).fill(0), 'leere Plätze 0');
+  assert.deepStrictEqual(node.snipStatus(mix()).gain, j.gain, 'SSE lib: gain pro Pad');
+  // alte .json: Feld weg, WAV bleibt; snipEnsure misst nach und hängt nur das Feld an
+  const { gain, ...old } = j;
+  fs.writeFileSync(path.join(node.SNIP_DIR, `${id}.json`), JSON.stringify(old));
+  fs.unlinkSync(path.join(node.CACHE, `${W}.wav`)); fs.unlinkSync(path.join(node.CACHE, `${X}.wav`));
+  const wav = snipBuf(node, id);
+  assert.strictEqual(node.readSnip(id).gain, null);
+  const r = node.snipEnsure(mix());
+  assert.deepStrictEqual(r.gain, gain);
+  assert.deepStrictEqual(snipJ(node, id), { ...old, gain });
+  assert.ok(snipBuf(node, id).equals(wav), 'kein Neuschnitt');
+  // auch beim Start
+  fs.writeFileSync(path.join(node.SNIP_DIR, `${id}.json`), JSON.stringify(old));
+  assert.strictEqual(node.snipGain(id).length, 16);
+  assert.deepStrictEqual(snipJ(node, id).gain, gain);
   done();
 });
 

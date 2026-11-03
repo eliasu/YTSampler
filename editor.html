@@ -126,8 +126,8 @@
   body.blank #blank { display:flex; } body.blank #wave, body.blank #pads, body.blank #hsplit { visibility:hidden; }
 
   /* Device-Regler: links die Bühne, rechts gedämpft die Einrichtung */
-  #ctl { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; padding-bottom:10px; margin:-4px 0 10px; border-bottom:1px solid var(--line); }
-  #ctl .grp { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; }
+  #ctl { display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; padding-bottom:10px; margin:-4px 0 10px; border-bottom:1px solid var(--line); }
+  #ctl .grp { display:flex; flex-wrap:wrap; align-items:center; gap:6px 7px; }   /* eng, damit „Norm“ bei 1440 px noch in eine Zeile passt */
   #ctl .lbl { font-size:10px; }
   #ctl .set { margin-left:auto; opacity:.6; transition:opacity .15s; }
   #ctl .set:hover, #ctl .set:focus-within { opacity:1; }
@@ -136,10 +136,10 @@
   #ctl .v { min-width:36px; color:var(--dim); font-size:12px; }
   #ctl select { font:inherit; color:var(--text); background:var(--bg); border:1px solid var(--line2); border-radius:7px; padding:4px 6px; outline:none; }
   #ctl select:focus { border-color:var(--sel); }
-  #ctl input[type=range] { width:52px; padding:0; border:none; background:none; accent-color:var(--acc); }
+  #ctl input[type=range] { width:46px; padding:0; border:none; background:none; accent-color:var(--acc); }
   #p-base { width:50px; padding:4px 6px; }
   #p-base-v { min-width:28px; }
-  #ctl .tog { min-width:0; padding:5px 7px; }
+  #ctl .tog { min-width:0; padding:5px 5px; }
   #ctl .tog.on { background:var(--acc); border-color:var(--acc); color:#1a1200; font-weight:600; }
   #ctl.locked { opacity:.35; }
   #ctl.locked .set { opacity:1; }
@@ -197,6 +197,9 @@
   #insp .row b { color:var(--text); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
   #insp .btns { display:flex; gap:6px; flex-wrap:wrap; }
   #tempo { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  #trimf { display:flex; gap:6px; align-items:center; }
+  #trimf input { width:96px; padding:0; border:none; background:none; accent-color:var(--acc); }
+  #trimf .v { min-width:52px; color:var(--dim); }
   #tempo input { width:72px; padding:4px 7px; }
   #tempo .ok { display:flex; gap:8px; align-items:center; }   /* Hinweis rechts neben „Tempo stimmt“ */
 
@@ -306,6 +309,7 @@
             </div>
           </div>
           <div class="grp set">
+            <button class="tog" id="p-norm" data-p="norm" title="Lautstärke der Pads angleichen (gemessen: die ersten 2 s ab Start). Aus: nur Trim">Norm</button>
             <label class="f"><span class="lbl">Volume</span><input type="range" id="p-vol" data-p="vol" min="-70" max="6" step="0.1" title="Doppelklick: 0 dB"><span class="v num" id="p-vol-v"></span></label>
             <label class="f"><span class="lbl">Voices</span><select id="p-voices" data-p="voices"></select></label>
             <label class="f"><span class="lbl">Base Note</span><input type="number" id="p-base" data-p="base" class="num" min="0" max="127" step="1"><span class="v num" id="p-base-v"></span></label>
@@ -450,7 +454,9 @@ function startsStep(label, id, before, after) {
 function padArgs(id, pad, p, videos) {
   if (!p) return { id, pad, video: null };
   const e = (videos && videos[p.video]) || vinfo(p.video), info = { title: e.title || p.video }; if (e.bpm) info.bpm = e.bpm;
-  return { id, pad, video: p.video, start: p.start, info };
+  const a = { id, pad, video: p.video, start: p.start, info };
+  if (p.trim) a.trim = p.trim;   // Trim wandert mit (Nachtrag 14)
+  return a;
 }
 function padStep(label, id, pad, before, after) {
   const u = padArgs(id, pad, before), r = padArgs(id, pad, after);
@@ -482,11 +488,22 @@ async function swap(a, c) {
   const r = await cmd('swap', { id: b.id, a, b: c });
   if (r.ok) { const id = b.id; S.sel = c; pushStep({ label: 'Pad ' + (a + 1) + ' ↔ ' + (c + 1) + ' getauscht', undo: onBank(id, () => ['swap', { id, a, b: c }]), redo: onBank(id, () => ['swap', { id, a, b: c }]) }); }
 }
+const padCopy = (p) => (p.trim ? { video: p.video, start: p.start, trim: p.trim } : { video: p.video, start: p.start });
+// Trim pro Pad (Nachtrag 14): ein Undo-Schritt pro Änderung
+async function setTrim(i, v) {
+  const b = curBank(), p = b && b.pads[i]; if (!p || !writable()) return;
+  const id = b.id, old = p.trim || 0; v = Math.max(-12, Math.min(12, Math.round(v * 2) / 2));
+  if (v === old) return;
+  const r = await cmd('trim', { id, pad: i, trim: v });
+  if (r.ok) pushStep({ label: 'Trim Pad ' + (i + 1), undo: onBank(id, () => ['trim', { id, pad: i, trim: old }]), redo: onBank(id, () => ['trim', { id, pad: i, trim: v }]) });
+  else render();
+}
+const fmtDb = (v) => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' dB';
 // Pad aus dem Quell-Grid kopieren (Spec 5.4, 10), ein belegter Platz wird ersetzt
 async function copyPad(src, k, i) {
   const b = curBank(), np = src && src.pads[k]; if (!b || !np || !writable()) return;
   if (loadingPad(i)) { toast('Pad ' + (i + 1) + ' lädt gerade', { err: true }); return; }
-  const old = b.pads[i], id = b.id, nv = { video: np.video, start: np.start }, label = 'Pad ' + (i + 1) + ' aus ' + src.name;
+  const old = b.pads[i], id = b.id, nv = padCopy(np), label = 'Pad ' + (i + 1) + ' aus ' + src.name;
   const step = padStep(label, id, i, old, nv);                                      // vor dem Befehl: info des alten Videos
   const r = await cmd('setpad', padArgs(id, i, nv));
   if (r.ok) { S.sel = i; pushStep(step); }
@@ -499,7 +516,7 @@ async function dropPad(d, i, copy) {
   if (b === src && !copy) return swap(d.i, i);
   if (!np || (b === src && d.i === i)) return;
   if (loadingPad(i)) { toast('Pad ' + (i + 1) + ' lädt gerade', { err: true }); return; }
-  const id = b.id, nv = { video: np.video, start: np.start }, other = b !== src, move = other && !copy;
+  const id = b.id, nv = padCopy(np), other = b !== src, move = other && !copy;
   const set = padArgs(id, i, nv), back = padArgs(id, i, b.pads[i]);                // vor dem Befehl: info des alten Videos
   const clr = { id: src.id, pad: d.i, video: null }, put = padArgs(src.id, d.i, np);
   const seq = (list) => async () => { let r = await selectBank(id); for (const a of list) { if (!r.ok) break; r = await cmd('setpad', a); } return r; };
@@ -910,17 +927,24 @@ function renderPads() {
     return;
   }
   const v = vw.video, vt = vtitle(v), tb = videoBpm(v), tempoOn = !!vw.bank && writable();
-  const sig = JSON.stringify([v, vt, tb, tempoOn, vw.edit, S.sel, vw.pad.start]);
+  const trim = vw.pad.trim || 0, gain = (vw.bank && vw.bank.gain && vw.bank.gain[S.sel]) || 0;
+  const sig = JSON.stringify([v, vt, tb, tempoOn, vw.edit, S.sel, vw.pad.start, trim, gain]);
   if (sig === renderPads.sig) return;
   renderPads.sig = sig;
   $('insp').innerHTML = '<div class="line"><div class="big">Pad ' + (S.sel + 1) + '<span class="num">' + fmt(vw.pad.start) + '</span></div>'
-    + '<div class="row"><b id="inspvideo"></b></div></div>'
+    + '<div class="row"><b id="inspvideo"></b></div>'
+    + '<label id="trimf" title="Trim dieses Pads, zusätzlich zum Ausgleich (gemessen ' + fmtDb(gain) + '). Doppelklick: 0"><span class="lbl">Trim</span><input type="range" id="trim" min="-12" max="12" step="0.5"><span class="v num" id="trimv"></span></label></div>'
     + '<div class="line"><div class="btns"><button class="small" id="rollbtn">' + icon('dice') + ' Neues Snippet</button><button class="small" id="hitbtn">Anspielen</button></div>'
     + '<div id="tempo"><span class="lbl">Tempo</span><input id="bpm" type="number" min="30" max="300" step="0.1" class="num"><button class="small" id="half">½×</button><button class="small" id="double">2×</button>'
     + (tb.confirmed ? '' : '<span class="ok"><button class="small" id="tempook">Tempo stimmt</button>'
       + (tb.bpm ? '<span class="hint" id="tempohint">Tempo aus der Analyse, nicht bestätigt</span>' : '') + '</span>') + '</div></div>';
   $('inspvideo').textContent = vt + (tb.bpm ? ' · ' + fmtBpm(tb.bpm) + ' BPM' : '');
   $('rollbtn').disabled = !vw.edit; $('rollbtn').onclick = () => roll(S.sel);
+  const tr = $('trim'), pad = S.sel;
+  tr.value = trim; $('trimv').textContent = fmtDb(trim); tr.disabled = !vw.bank || !writable();
+  tr.oninput = () => { $('trimv').textContent = fmtDb(+tr.value); };
+  tr.onchange = () => { tr.blur(); setTrim(pad, +tr.value); };   // loslassen = ein Schritt
+  tr.ondblclick = () => { tr.blur(); setTrim(pad, 0); };
   $('hitbtn').onpointerdown = (e) => { e.stopPropagation(); hit(S.sel); };
   const inp = $('bpm');
   inp.value = tb.bpm ? Math.round(tb.bpm * 10) / 10 : '';
@@ -1004,7 +1028,8 @@ async function preview(bank, k) {
   const old = S.prev; stopPreview();
   if (old && old.id === bank.id && old.pad === k) return;   // zweiter Klick aufs selbe Pad stoppt
   const pd = bank.pads[k]; if (!pd) return;
-  const me = S.prev = { id: bank.id, pad: k, ms: previewMs(), src: null, gain: null }, key = [bank.id, k, pd.video, pd.start].join('/');
+  const p = S.dev && S.dev.params, db = (p && p.norm === 0 ? 0 : (bank.gain && bank.gain[k]) || 0) + (pd.trim || 0);   // wie am Device
+  const me = S.prev = { id: bank.id, pad: k, ms: previewMs(), src: null, gain: null, amp: Math.pow(10, db / 20) }, key = [bank.id, k, pd.video, pd.start].join('/');
   markPrev();
   try {
     actx = actx || new AudioContext();
@@ -1020,7 +1045,7 @@ async function preview(bank, k) {
     if (S.prev !== me) return;
     const t = actx.currentTime, dur = Math.min(me.ms / 1000, buf.duration), src = actx.createBufferSource(), g = actx.createGain();
     src.buffer = buf; src.connect(g); g.connect(actx.destination);
-    g.gain.setValueAtTime(1, t + Math.max(0, dur - 0.01)); g.gain.linearRampToValueAtTime(0, t + dur);
+    g.gain.setValueAtTime(me.amp, t); g.gain.setValueAtTime(me.amp, t + Math.max(0, dur - 0.01)); g.gain.linearRampToValueAtTime(0, t + dur);
     src.onended = () => { if (S.prev === me) { S.prev = null; markPrev(); } };
     src.start(t, 0, dur); me.src = src; me.gain = g; me.dur = dur;
   } catch (e) {
@@ -1077,7 +1102,7 @@ for (const name of Object.keys(SLIDE)) {
   el.ondblclick = () => { ctl.hold[name] = { v: cf.def, until: Infinity }; slideEnd(name); renderCtl(); };
 }
 document.addEventListener('pointerup', () => Object.keys(SLIDE).forEach(slideEnd));
-for (const name of ['mode', 'rev', 'tune', 'warp', 'quant', 'qcatch']) $('p-' + name).onclick = () => sendParam(name, shown(name) ? 0 : 1);
+for (const name of ['mode', 'rev', 'tune', 'warp', 'quant', 'qcatch', 'norm']) $('p-' + name).onclick = () => sendParam(name, shown(name) ? 0 : 1);
 for (const name of ['div', 'qdiv', 'voices']) { const el = $('p-' + name); el.onchange = () => { sendParam(name, +el.value); el.blur(); }; }
 $('p-base').onkeydown = (e) => { if (e.key === 'Enter') $('p-base').blur(); };
 $('p-base').onchange = () => {
@@ -1091,7 +1116,7 @@ function renderCtl() {
   c.querySelectorAll('select, input, button').forEach((e) => { e.disabled = !on; });
   if (!p) return;
   $('p-div').value = p.div; $('p-qdiv').value = p.qdiv; $('p-voices').value = p.voices;
-  for (const name of ['mode', 'rev', 'tune', 'warp', 'quant', 'qcatch']) $('p-' + name).classList.toggle('on', !!p[name]);
+  for (const name of ['mode', 'rev', 'tune', 'warp', 'quant', 'qcatch', 'norm']) $('p-' + name).classList.toggle('on', !!p[name]);
   $('p-mode').textContent = p.mode ? 'Hold' : 'Trigger';
   for (const name of Object.keys(SLIDE)) {
     const v = shown(name), el = $('p-' + name);

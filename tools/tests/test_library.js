@@ -409,4 +409,26 @@ t('Sicherung: beim Start, nur bei Änderung, 10 bleiben, nie kaputte', () => {
   assert.ok(!fs.existsSync(node.BACKUP_DIR) || list().length === 0, 'ohne Datei keine Sicherung');
 });
 
+t('Trim pro Pad (Nachtrag 14): format bleibt 2, in der Datei, wandert mit duplicate/swap/delete/restore, 0 löscht', () => {
+  const { node } = loadNode(home(VALID2()));
+  node.libChange('trim', { id: 1, pad: 2, trim: 3.04 }, 'test');
+  let f = readLib(node);
+  assert.strictEqual(f.format, 2);
+  assert.deepStrictEqual(f.banks[0].pads[2], { video: 'AAAAAAAAAAA', start: 1002, trim: 3 }, 'auf 0,1 dB gerundet');
+  const { id } = node.libChange('duplicate', { id: 1 }, 'test');
+  assert.strictEqual(node.libNow.lib.banks.find((b) => b.id === id).pads[2].trim, 3);
+  node.libChange('swap', { id: 1, a: 2, b: 9 }, 'test');
+  assert.deepStrictEqual([node.libNow.lib.banks[0].pads[9].trim, 'trim' in node.libNow.lib.banks[0].pads[2]], [3, false]);
+  const { removed } = node.libChange('delete', { id: 1 }, 'test');
+  node.libChange('restore', removed, 'test');
+  assert.strictEqual(node.libNow.lib.banks[0].pads[9].trim, 3);
+  node.libChange('setpad', { id: 3, pad: 0, video: 'AAAAAAAAAAA', start: 5, trim: -1.5 }, 'test');
+  assert.deepStrictEqual(readLib(node).banks.find((b) => b.id === 3).pads[0], { video: 'AAAAAAAAAAA', start: 5, trim: -1.5 });
+  node.libChange('trim', { id: 1, pad: 9, trim: 0 }, 'test');
+  assert.ok(!('trim' in readLib(node).banks[0].pads[9]));
+  throwsCode(() => node.libChange('trim', { id: 1, pad: 9, trim: 12.1 }, 'test'), 'badreq');
+  node.libChange('setpad', { id: 1, pad: 9, video: null }, 'test');
+  throwsCode(() => node.libChange('trim', { id: 1, pad: 9, trim: 1 }, 'test'), 'badreq');
+});
+
 run();
