@@ -361,3 +361,22 @@ Ergänzt Abschnitte 10 und 11. Der Rest gilt weiter.
 - Hold am Device: Vorhören spielt trotzdem die Slice-Länge.
 - Vorhören ist kein Undo-Schritt und geht auch ohne Schreibrecht (z. B. kaputte Bibliothek), solange Node läuft.
 - Leere Pads, „nur spielbar“ ohne Snippet-Datei: Toast „Vorhören geht nicht (Snippet fehlt)“.
+
+
+## 13. Nachtrag Pads ziehen: Alt-Kopie und in andere Bänke (Nutzer, 2026-11-03)
+
+Ergänzt Abschnitte 10–12. Der Rest gilt weiter.
+
+**Entscheidungen (fest):**
+1. **Alt-Drag in derselben Bank:** Eigenes Pad auf eigenes Pad ohne Alt = tauschen (`swap`) wie bisher. Mit Alt = Ziel wird Kopie des gezogenen Pads (Video und Start), auch auf leere Ziele. `dropEffect` `copy` (Plus am Zeiger), sonst `move`. Alt zählt beim Loslassen, darf sich während des Ziehens ändern. Ein Undo-Schritt.
+2. **In eine andere Bank:** Eigenes Pad über einer anderen Bank der Liste (Bühne oder Ablage) **0,6 s** halten (`HOLD_OPEN_MS`) → `select` wie ein Klick, das Ziehen läuft weiter. Loslassen auf einem ihrer Pads: verschieben (Ziel überschrieben, Quellplatz leer), mit Alt kopieren (Quelle bleibt). Ein Undo-Schritt über beide Bänke. Abbrechen lässt die geöffnete Bank aktiv.
+3. Quell-Grid-Pads und Suchtreffer bleiben Kopie, Alt ändert dort nichts. Nur eigene Pads öffnen Bänke per Halten.
+4. Bänke ziehen (Umsortieren, Bühne/Ablage) bleibt unverändert: Das Halten gilt nur für Drags vom Typ `pad`.
+
+**Protokoll:** keins neu. Verschieben = `setpad` aufs Ziel, danach `setpad … video null` auf den Quellplatz (ID-basiert, die Quellbank wird im Hintergrund neu geschnitten). Erst das Ziel, damit das Audio beim Schneiden noch in der Quellbank liegt; sonst greift der Undo-Vorrat. Undo: Quellplatz zurück, dann Ziel zurück (je `setpad` mit `info`), vorher `select` der Zielbank. Schlägt das Leeren der Quelle fehl, bleibt es eine Kopie (eigener Undo-Schritt als Kopie).
+
+**Offen gelassen (einfach gelöst, nicht gefragt):**
+- Kein eigener Hinweis während der 0,6 s (die Zeile bekommt keine Markierung); die Bank öffnet sich einfach.
+- Ein leerer Platz lässt sich weiter tauschen, aber nicht kopieren oder in eine andere Bank verschieben (nichts passiert).
+- Das Halten öffnet nur mit Schreibrecht.
+- Nicht atomar: Zwei `setpad` nacheinander statt eines neuen `movepad`. Zwischen beiden kann ein anderer Editor schreiben, schlimmstenfalls bleibt eine Kopie.

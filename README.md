@@ -79,6 +79,8 @@ Solange das Device läuft: Button **Editor** im Device drücken, oder **http://l
 | Start setzen | Marker in der Waveform ziehen. Rastet auf Schläge, mit Alt frei. |
 | neues Snippet | Würfel am Pad oder „Neues Snippet“ |
 | Pads tauschen | Pad auf Pad ziehen (auch mit leeren Plätzen) |
+| Pad kopieren | Pad mit gedrückter **Alt-Taste** (⌥) auf ein anderes Pad ziehen: Das Ziel wird überschrieben (Track und Start), der Zeiger zeigt ein Plus. Alt darf man auch erst während des Ziehens drücken. |
+| Pad in eine andere Bank | Eigenes Pad links über eine andere Bank ziehen und dort kurz halten (0,6 s): Die Bank öffnet sich und lädt im Device. Auf einem ihrer Pads loslassen: Das Pad wird **verschoben**, der alte Platz wird leer. Mit Alt wird kopiert, die alte Bank bleibt, wie sie ist. Ein belegtes Ziel wird überschrieben. Ein ⌘Z stellt beide Bänke wieder her. Abbrechen (Esc) lässt die geöffnete Bank aktiv. |
 | Pad aus einer anderen Bank | **Quell-Grids** rechts neben den Pads (je 4×4, Pad 1 unten links), so viele nebeneinander, wie das Fenster breit ist. Jedes hat seine eigene Bank (vorgeschlagen: die nächsten nach der aktiven, die Auswahl merkt sich der Browser). Ein Pad daraus auf einen Platz ziehen: kopiert Track und Start, spätere Änderungen an der Quelle wirken nicht. Geht auch ohne Cache. |
 | vorhören | Quell-Pad anklicken: spielt sein Snippet im Browser (Lautsprecher des Macs, nicht über Live), so lang wie der Slice des Device im Tempo des Sets, ohne Warp/Rate/Tune; ohne Device-Regler 2 s. Noch ein Klick stoppt, ein anderes Pad wechselt. Das Pad leuchtet, solange es spielt. |
 | Platz leeren | × rechts oben am Pad (immer sichtbar), darunter der Würfel für ein neues Snippet. Klick in die Mitte spielt an |

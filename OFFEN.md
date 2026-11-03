@@ -41,6 +41,12 @@ Erst `tools/deploy.sh`, Device neu auf die Spur ziehen, dann:
   - Quell-Pad anklicken: klingt aus den Mac-Lautsprechern (nicht in Live), Länge passt zur Slice-Einstellung und zum Set-Tempo; zweiter Klick stoppt, anderes Pad wechselt, Pad leuchtet. Ziehen geht weiter. Klingt der Anfang/das Ende sauber?
   - Fenster breiter ziehen: mehr Quell-Grids, jedes mit eigener Bank, Auswahl bleibt nach Neuladen. Detailzeilen darunter lesbar?
   - Unbestätigtes Tempo: Hinweis rechts neben „Tempo stimmt“.
+- **Pads ziehen** (Zweig `mix-drag`, Spec 13):
+  - Pad mit ⌥ auf ein anderes Pad ziehen: Plus am Zeiger, Ziel wird Kopie, ⌘Z holt das alte zurück. ⌥ erst während des Ziehens drücken bzw. loslassen: zählt der Stand beim Loslassen? Ohne ⌥ wird wie bisher getauscht.
+  - Pad über eine andere Bank links halten: öffnet sich nach gut einer halben Sekunde, Device lädt sie, das Ziehen läuft weiter. Kurz drüberwischen öffnet nichts. Auch in der Ablage.
+  - Dort auf ein Pad loslassen: alter Platz leer (Device dunkel nach dem Neuschnitt der alten Bank), neues Pad klingt. Mit ⌥: alte Bank unverändert. Ein ⌘Z stellt beide her, auch nach „Cache leeren“.
+  - Esc während des Ziehens: geöffnete Bank bleibt aktiv, nichts geändert.
+  - Bänke umsortieren und zwischen Bühne/Ablage ziehen geht wie vorher.
 - Danach `release.sh 4.0.0`.
 
 Bekannte Grenze: Den Undo-Vorrat räumt jeder Node-Start auf. Startet ein zweites Device, kann das erste ein Leeren ohne Cache danach nicht mehr rückgängig machen.

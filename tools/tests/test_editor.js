@@ -907,6 +907,80 @@ t('Mehrere Quell-Grids: Anzahl nach Breite, verschiedene Bänke vorgeschlagen, A
   assert.deepStrictEqual(b.errors, []);
 });
 
+// Nachtrag 13: Pad ziehen mit Alt = Kopie, über einer Bank halten öffnet sie, dort ablegen = verschieben (Alt: kopieren)
+// dropEffect eines erzeugten DataTransfer lässt sich nicht setzen: eigenes Feld zum Mitlesen
+const dragStart = (from) => `(() => { window.__dt = new DataTransfer(); Object.defineProperty(__dt, 'dropEffect', { value: 'none', writable: true }); window.__a = document.querySelector(${JSON.stringify(from)});
+  window.__a.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: __dt })); return true; })()`;
+// dragover wie der Browser alle 50 ms, die Zeile wird jedes Mal neu gesucht (die Liste baut sich beim Öffnen neu)
+const dragHold = (over, ms) => `(async () => { const end = Date.now() + ${ms};
+  while (Date.now() < end) { document.querySelector(${JSON.stringify(over)}).dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: __dt })); await new Promise((r) => setTimeout(r, 50)); }
+  return true; })()`;
+const dragDrop = (to, alt) => `(() => { const c = document.querySelector(${JSON.stringify(to)}), o = { bubbles: true, cancelable: true, dataTransfer: __dt, altKey: ${!!alt} };
+  c.dispatchEvent(new DragEvent('dragover', o)); const eff = __dt.dropEffect; c.dispatchEvent(new DragEvent('drop', o));
+  __a.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: __dt })); return eff; })()`;
+
+t('Pads ziehen: Alt kopiert, Halten über einer Bank öffnet sie, verschieben über zwei Bänke, Undo', async () => {
+  await open('normal');
+  const pads = (id) => b.eval(`S.lib.banks.find((x) => x.id === ${id}).pads.map((p) => p && p.video + '@' + p.start)`);
+  const p7 = await pads(7), p3 = await pads(3);
+  // gleiche Bank, mit Alt: Ziel wird Kopie, Plus-Zeiger
+  m.log = []; await b.eval(dragStart('#pad0'));
+  assert.strictEqual(await b.eval(dragDrop('#pad5', true)), 'copy');
+  const cp = await waitLog((x) => x.cmd === 'setpad');
+  assert.deepStrictEqual([cp.id, cp.pad, cp.video + '@' + cp.start], [7, 5, p7[0]]);
+  await b.waitFor(`$('undo').title.startsWith('Rückgängig: Pad 1 auf 6 kopiert')`);
+  assert.deepStrictEqual((await pads(7))[5], p7[0]); assert.deepStrictEqual((await pads(7))[0], p7[0]);
+  m.log = []; await undoKey(b); await waitLog((x) => x.cmd === 'setpad' && x.pad === 5);
+  await b.waitFor(`S.lib.banks[0].pads[5].start === ${+p7[5].split('@')[1]}`);
+  assert.deepStrictEqual(await pads(7), p7);
+  // ohne Alt: tauschen wie bisher
+  m.log = []; await b.eval(dragStart('#pad0'));
+  assert.strictEqual(await b.eval(dragDrop('#pad5', false)), 'move');
+  await waitLog((x) => x.cmd === 'swap'); assert(!m.log.some((x) => x.cmd === 'setpad'));
+  m.log = []; await undoKey(b); await waitLog((x) => x.cmd === 'swap');
+  await b.waitFor(`S.lib.banks[0].pads[0].start === ${+p7[0].split('@')[1]}`);
+
+  // Halten über Bank 2 (id 3): nach 0,3 s noch nicht offen, nach 0,6 s schon, das Ziehen läuft weiter
+  m.log = []; await b.eval(dragStart('#pad2'));
+  await b.eval(dragHold('#banklist li[data-id="3"] .name', 350));
+  assert(!m.log.some((x) => x.cmd === 'select'), 'zu früh geöffnet');
+  await b.eval(dragHold('#banklist li[data-id="3"]', 400));
+  await waitLog((x) => x.cmd === 'select' && x.id === 3); await b.waitFor(`S.dev.bankId === 3 && S.drag && S.drag.kind === 'pad'`);
+  // loslassen auf Pad 5 der neuen Bank: verschieben (Quelle leer)
+  m.log = []; assert.strictEqual(await b.eval(dragDrop('#pad4', false)), 'move');
+  await waitLog((x) => x.cmd === 'setpad' && x.id === 7);
+  assert.deepStrictEqual(m.log.filter((x) => x.cmd === 'setpad').map((x) => [x.id, x.pad, x.video && x.video + '@' + x.start]), [[3, 4, p7[2]], [7, 2, null]]);
+  await b.waitFor(`$('undo').title.startsWith('Rückgängig: Pad 5 aus „Rockit Scratches“ verschoben')`);
+  assert.strictEqual((await pads(7))[2], null); assert.strictEqual((await pads(3))[4], p7[2]);
+  // ein Undo-Schritt stellt beide Bänke her, Redo verschiebt wieder
+  m.log = []; await undoKey(b); await b.waitFor(`$('redo').title.startsWith('Wiederholen: Pad 5 aus')`);
+  assert.deepStrictEqual(await pads(7), p7); assert.deepStrictEqual(await pads(3), p3);
+  m.log = []; await redoKey(b); await b.waitFor(`$('undo').title.startsWith('Rückgängig: Pad 5 aus')`);
+  assert.strictEqual((await pads(7))[2], null); assert.strictEqual((await pads(3))[4], p7[2]);
+  m.log = []; await undoKey(b); await b.waitFor(`!$('redo').disabled`);
+  assert.deepStrictEqual(await pads(7), p7);
+
+  // Alt: kopieren in die andere Bank, die Quelle bleibt (aktiv ist jetzt id 3, zurück in Bank 1 = id 7)
+  m.log = []; await b.eval(dragStart('#pad6'));
+  await b.eval(dragHold('#banklist li[data-id="7"]', 750)); await b.waitFor(`S.dev.bankId === 7`);
+  assert.strictEqual(await b.eval(dragDrop('#pad9', true)), 'copy');
+  await waitLog((x) => x.cmd === 'setpad'); await b.waitFor(`$('undo').title.startsWith('Rückgängig: Pad 7 auf 10 kopiert aus „Vitamin C“')`);
+  assert.deepStrictEqual(m.log.filter((x) => x.cmd === 'setpad').map((x) => [x.id, x.pad]), [[7, 9]]);
+  assert.deepStrictEqual(await pads(3), p3); assert.strictEqual((await pads(7))[9], p3[6]);
+  m.log = []; await undoKey(b); await b.waitFor(`!$('redo').disabled`); assert.deepStrictEqual(await pads(7), p7);
+
+  // abgebrochen: die geöffnete Bank bleibt aktiv
+  m.log = []; await b.eval(dragStart('#pad0')); await b.eval(dragHold('#banklist li[data-id="9"]', 750));
+  await b.waitFor(`S.dev.bankId === 9`); await b.eval(`__a.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: __dt }))`);
+  await sleep(100); assert.strictEqual(await b.eval('S.dev.bankId'), 9); assert(!m.log.some((x) => x.cmd === 'setpad'));
+
+  // Bänke umsortieren geht weiter und öffnet nichts
+  m.log = []; await b.eval(dnd('#banklist li:nth-child(1)', '#banklist li:nth-child(3)'));
+  assert.deepStrictEqual(await waitLog((x) => x.cmd === 'move'), { client: last().client, cmd: 'move', id: 7, to: 3 });
+  assert(!m.log.some((x) => x.cmd === 'select'));
+  assert.deepStrictEqual(b.errors, []);
+});
+
 t('Screenshots', async () => {
   if (!process.argv.includes('--shots')) return;
   await open('normal'); await b.click('#pad5'); await sleep(250); await b.shot('editor-normal');

@@ -338,7 +338,7 @@
 'use strict';
 const $ = (id) => document.getElementById(id);
 const CLIENT = Math.random().toString(36).slice(2, 10);
-const HIST_MAX = 100, LAYOUT_KEY = 'ytsampler.editor.layout';
+const HOLD_OPEN_MS = 600, HIST_MAX = 100, LAYOUT_KEY = 'ytsampler.editor.layout';
 const S = {
   conn: false, hello: null, lib: null, dev: null, beats: null, cache: null,
   jobs: {}, fills: [], sel: 0, zoom: 1, peaks: new Map(), play: null, drag: null, prev: null,
@@ -490,6 +490,27 @@ async function copyPad(src, k, i) {
   const step = padStep(label, id, i, old, nv);                                      // vor dem Befehl: info des alten Videos
   const r = await cmd('setpad', padArgs(id, i, nv));
   if (r.ok) { S.sel = i; pushStep(step); }
+}
+// Eigenes Pad auf ein Pad ziehen (Nachtrag 13): gleiche Bank ohne Alt tauscht, mit Alt kopiert.
+// Aus einer anderen Bank (per Halten über der Liste geöffnet): verschieben, mit Alt kopieren. Ein Undo-Schritt über beide Bänke
+async function dropPad(d, i, copy) {
+  const b = curBank(), src = bankById(d.id), np = src && src.pads[d.i];
+  if (!b || !src || !writable()) return;
+  if (b === src && !copy) return swap(d.i, i);
+  if (!np || (b === src && d.i === i)) return;
+  if (loadingPad(i)) { toast('Pad ' + (i + 1) + ' lädt gerade', { err: true }); return; }
+  const id = b.id, nv = { video: np.video, start: np.start }, other = b !== src, move = other && !copy;
+  const set = padArgs(id, i, nv), back = padArgs(id, i, b.pads[i]);                // vor dem Befehl: info des alten Videos
+  const clr = { id: src.id, pad: d.i, video: null }, put = padArgs(src.id, d.i, np);
+  const seq = (list) => async () => { let r = await selectBank(id); for (const a of list) { if (!r.ok) break; r = await cmd('setpad', a); } return r; };
+  if (!(await cmd('setpad', set)).ok) return;
+  S.sel = i;
+  // Erst das Ziel, dann die Quelle leeren: so liegt das Audio beim Schneiden noch in der Quellbank (sonst im Undo-Vorrat)
+  if (move && (await cmd('setpad', clr)).ok) {
+    pushStep({ label: 'Pad ' + (i + 1) + ' aus „' + src.name + '“ verschoben', undo: seq([put, back]), redo: seq([set, clr]) });
+  } else {
+    pushStep({ label: 'Pad ' + (d.i + 1) + ' auf ' + (i + 1) + ' kopiert' + (other ? ' aus „' + src.name + '“' : ''), undo: seq([back]), redo: seq([set]) });
+  }
 }
 // Icon „leeren“ (Spec 5.3, M5): geht auch ohne WAV
 async function clearPad(i) {
@@ -850,15 +871,15 @@ for (let row = 3; row >= 0; row--) for (let col = 0; col < 4; col++) {
   p.onpointerdown = (e) => { if (e.button || e.target.closest('.roll,.clr') || !view()) return; hit(i); };
   p.querySelector('.roll').onclick = () => { S.sel = i; roll(i); };
   p.querySelector('.clr').onclick = () => clearPad(i);
-  p.ondragstart = (e) => { S.drag = { kind: 'pad', i }; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'Pad ' + (i + 1)); };
+  p.ondragstart = (e) => { S.drag = { kind: 'pad', i, id: S.dev.bankId }; e.dataTransfer.effectAllowed = 'copyMove'; e.dataTransfer.setData('text/plain', 'Pad ' + (i + 1)); };
   p.ondragend = () => { S.drag = null; };
   const takes = () => S.drag && (S.drag.kind === 'pad' || ((S.drag.kind === 'src' || S.drag.kind === 'video') && writable()));   // tauschen, aus dem Quell-Grid, aus der Suche
-  p.ondragover = (e) => { if (!takes()) return; e.preventDefault(); e.dataTransfer.dropEffect = S.drag.kind === 'pad' ? 'move' : 'copy'; p.classList.add('over'); };
+  p.ondragover = (e) => { if (!takes()) return; e.preventDefault(); e.dataTransfer.dropEffect = S.drag.kind === 'pad' && !e.altKey ? 'move' : 'copy'; p.classList.add('over'); };
   p.ondragleave = () => p.classList.remove('over');
   p.ondrop = (e) => {
     if (!takes()) return; e.preventDefault(); e.stopPropagation(); p.classList.remove('over');
     const d = S.drag; S.drag = null;
-    if (d.kind === 'pad') swap(d.i, i); else if (d.kind === 'video') { S.sel = i; fillVideo(d.id, d.title, [i]); } else copyPad(bankById(d.id), d.pad, i);
+    if (d.kind === 'pad') dropPad(d, i, e.altKey); else if (d.kind === 'video') { S.sel = i; fillVideo(d.id, d.title, [i]); } else copyPad(bankById(d.id), d.pad, i);
   };
   $('grid').appendChild(p);
 }
@@ -866,7 +887,7 @@ function renderPads() {
   const vw = view();
   if (!vw) { $('insp').innerHTML = ''; renderPads.sig = null; return; }
   const swappable = writable() && !!vw.bank;
-  $('padhint').textContent = 'Klick oder Taste spielt · auf anderes Pad ziehen tauscht · aus Quelle oder Suche ziehen setzt ein';
+  $('padhint').textContent = 'Klick oder Taste spielt · auf anderes Pad ziehen tauscht, mit ⌥ kopiert · über einer Bank links halten: in die Bank ziehen · aus Quelle oder Suche ziehen setzt ein';
   const many = bankVideos(vw.bank).length > 1, nEmpty = emptyPads(vw.bank).length;
   document.querySelectorAll('#results .fill').forEach((x) => { x.disabled = !nEmpty || !writable(); });
   document.querySelectorAll('#results .newfrom').forEach((x) => { x.disabled = !writable(); });
@@ -1123,7 +1144,15 @@ async function runSearch() {
   });
 }
 // Ablage außerhalb der Pads/Liste: kein Navigieren des Browsers
-document.addEventListener('dragover', (e) => { if (S.drag && S.drag.kind === 'video') e.preventDefault(); });
+document.addEventListener('dragover', (e) => {
+  if (S.drag && S.drag.kind === 'video') e.preventDefault();
+  // Eigenes Pad über einer Bank der Liste halten (HOLD_OPEN_MS): Bank öffnet sich wie ein Klick, das Ziehen läuft weiter
+  const d = S.drag; if (!d || d.kind !== 'pad') return;
+  const li = e.target.closest && e.target.closest('#libscroll li[data-id]'), id = li ? +li.dataset.id : null;
+  if (id === d.hover) return;
+  clearTimeout(d.hoverT); d.hover = id;
+  if (id != null && writable()) d.hoverT = setTimeout(() => { if (S.drag === d && d.hover === id) selectBank(id); }, HOLD_OPEN_MS);
+});
 document.addEventListener('drop', (e) => e.preventDefault());
 
 // ---------- Größen: Bibliothek breiter/schmaler/eingeklappt, Waveform höher/flacher ----------
