@@ -16,11 +16,9 @@ Erst `tools/deploy.sh`, Device neu auf die Spur ziehen, dann:
 - Alte Bänke spielen wie in 3.0 (Warp, Raster, Tune), ohne Neuschnitt.
 - Mix-Bank aus zwei Tracks mit verschiedenem Tempo: Beide Pads laufen mit Warp im Live-Tempo, Linien pro Fach stimmen.
 - Leere Plätze stumm, am Device erkennbar: Pad dunkel ohne Nummer. Wie sieht das dunkle Pad in echtem Max aus (Farbe, Kontrast zum normalen Pad)?
-- Icons am Pad im Editor (Würfel, „leeren“) auf kleinen Pads: treffbar, überdecken sie Nummer und Startzeit nicht?
 - Editor-Flow: „Neue Bank“ → leere Bank im Device (alle Pads dunkel, Status „· leer“). Treffer auf ein Pad ziehen und anklicken: Pad zeigt „wartet“/„lädt n %“, danach lädt das Device die Bank neu und das Pad spielt eine Stelle auf einem Taktanfang.
 - „Leere Plätze füllen“ mit einem langen Track: alle leeren Pads laden, klingen danach, kein Start doppelt. Drei Tracks gleichzeitig: der vierte wartet.
 - Belegtes Pad überschreiben, ⌘Z: das alte Pad klingt wieder, auch nach „Cache leeren“ (Undo-Vorrat).
-- Quell-Grid rechts: auf dem Laptop-Bildschirm groß genug zum Ziehen? Detailspalte darunter lesbar?
 - „Cache leeren“: Rückfrage mit Größe, danach spielen alle Bänke weiter, Anzeige 0 GB, „Track laden“ holt den Track. Während eines Downloads ausgegraut.
 - Nach Neustart von Live: `iCloud Drive/YTSampler/snippets/keep/` enthält nur noch Pads, die eine Bank benutzt.
 - Bühne ohne Cache: Mix-Bank aus Pads anderer Bänke legen geht.
@@ -35,6 +33,14 @@ Erst `tools/deploy.sh`, Device neu auf die Spur ziehen, dann:
   - Aktive Bühnen-Bank löschen: die nächste der Bühne rückt nach, nicht eine Ablage-Bank. Aktive Ablage-Bank löschen: Device lädt die Bank am Regler.
   - „Neue Bank“ am Suchtreffer: Bank mit Videotitel in der Ablage, alle 16 Pads laden, danach spielt sie; ⌘Z entfernt sie.
   - Pfeil am Zeilenende im Editor auf dem Laptop groß genug? Ziehen auf die Überschriften gut treffbar?
+- **Editor-Design und 4 Takte** (Zweig `mix-design`, Spec 12):
+  - Device neu auf die Spur ziehen. „Division“ zeigt hinten „4 Bars“, gespeicherte Sets haben dieselbe Division wie vorher, MIDI-Mapping auf „Division“ fährt jetzt bis 4 Bars.
+  - 4 Bars bei 120 BPM: Pad spielt 8 s. Bei 50 BPM: endet sauber am Snippet-Ende (16 s), kein Knacken. Mit Warp und einem Track unter 60 BPM ebenso.
+  - Division live von 1/8 auf 4 Bars und zurück, auch mit Warp.
+  - Editor auf dem Laptop (1440×900): × und Würfel am Pad immer zu sehen, treffbar, Nummer und Startzeit lesbar; Klick in die Mitte spielt.
+  - Quell-Pad anklicken: klingt aus den Mac-Lautsprechern (nicht in Live), Länge passt zur Slice-Einstellung und zum Set-Tempo; zweiter Klick stoppt, anderes Pad wechselt, Pad leuchtet. Ziehen geht weiter. Klingt der Anfang/das Ende sauber?
+  - Fenster breiter ziehen: mehr Quell-Grids, jedes mit eigener Bank, Auswahl bleibt nach Neuladen. Detailzeilen darunter lesbar?
+  - Unbestätigtes Tempo: Hinweis rechts neben „Tempo stimmt“.
 - Danach `release.sh 4.0.0`.
 
 Bekannte Grenze: Den Undo-Vorrat räumt jeder Node-Start auf. Startet ein zweites Device, kann das erste ein Leeren ohne Cache danach nicht mehr rückgängig machen.

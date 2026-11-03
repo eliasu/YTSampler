@@ -13,7 +13,7 @@ Ein kuratierter Satz aus 16 Plätzen. Jedes Pad bringt seinen Track mit, ein Pla
 _Avoid_: Favorit, Sample-Set, Sample Pack, Preset, Track-Bank, Mix-Bank, Kit
 
 **Quell-Grid**:
-Das 4×4-Raster rechts neben den Pads im Editor, das die Pads einer anderen Bank zeigt, in derselben Anordnung (Pad 1 unten links). Von dort zieht man Pads auf Plätze. Gezogen wird eine Kopie, spätere Änderungen an der Quelle wirken nicht.
+Ein 4×4-Raster rechts neben den Pads im Editor, das die Pads einer anderen Bank zeigt, in derselben Anordnung (Pad 1 unten links). Es stehen so viele nebeneinander, wie das Fenster breit ist, jedes mit eigener Bank. Von dort zieht man Pads auf Plätze. Gezogen wird eine Kopie, spätere Änderungen an der Quelle wirken nicht. Anklicken = vorhören.
 _Avoid_: Quellleiste, Browser, Pool
 
 **Füllen**:
@@ -31,6 +31,10 @@ _Avoid_: Archiv, Papierkorb, Entwürfe
 **Undo-Vorrat**:
 Audio eines Pads, das geleert oder überschrieben wurde, damit Rückgängig auch ohne Cache geht (Ordner `snippets/keep/`). Wird erst beim Start aufgeräumt, wenn keine Bank das Pad mehr hat.
 _Avoid_: Ablage (das sind Bänke ohne Nummer), Papierkorb
+
+**Vorhören**:
+Ein Quell-Pad im Browser abspielen (Lautsprecher des Macs, nicht über Live), so lang wie der Slice des Device. Die einzige Wiedergabe im Browser.
+_Avoid_: Anspielen (das klingt am Device)
 
 **Snippet**:
 Der gespeicherte Audioausschnitt eines Pads ab seinem Startpunkt, mehr als das spielt das Pad nie.

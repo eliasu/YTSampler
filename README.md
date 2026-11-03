@@ -39,7 +39,7 @@ Seit 3.0 ist das Device nur noch das Bühneninstrument: Bank wählen und spielen
 | Bank | 1–128 direkt anwählen, z. B. per Encoder oder CC (CC 0 = Bank 1). Gezählt werden nur die Bänke auf der **Bühne** (siehe Editor). Beim Drehen zeigt die Anzeige das Ziel, geladen wird erst, wenn der Regler 350 ms ruht. Über der letzten Bank steht „leer“, dann lädt nichts. |
 | ◀ ▶ | vorherige/nächste Bank der Bühne, bleibt an der ersten und letzten stehen. Geht auch über 128 hinaus (der Regler bleibt auf 128, die Anzeige zeigt die echte Nummer). Steht „-“ in der Anzeige (Bank aus der Ablage), holen ◀ und ▶ die Bühnen-Bank, auf der der Regler steht. |
 | Pads | Noten ab Base Note (Standard C1 = 36) spielen Pad 1–16, Pad 1 unten links. **Alle MIDI-Kanäle** spielen Pads, welcher Controller ankommt, regelt der MIDI-Eingang der Spur. Maus-Klick geht auch. |
-| Slice | Notenwert 1/64 … 2 Takte, rechnet mit dem aktuellen Live-Tempo. Drehst du ihn, während Pads klingen (Trigger), endet der klingende Slice gleich am neuen Ende |
+| Slice | Notenwert 1/64 … 4 Takte, rechnet mit dem aktuellen Live-Tempo. Drehst du ihn, während Pads klingen (Trigger), endet der klingende Slice gleich am neuen Ende |
 | Rate | 0.25–2×, ändert Tonhöhe, die rhythmische Länge bleibt gleich |
 | Trigger / Hold | Trigger: spielt genau einen Slice (Notenwert). Hold: spielt, solange gedrückt, längstens 16 s (Ende des Snippets) |
 | Rev | rückwärts |
@@ -59,7 +59,7 @@ Alle Regler und Buttons sind `live.*`-Objekte: MIDI-Map-Modus (Cmd+M) funktionie
 
 Eine **Bank** sind 16 Plätze. Jedes Pad bringt seinen Track und seinen Startpunkt mit, ein Platz darf leer sein. Eine Bank kann Pads aus einem oder mehreren Tracks haben, es gibt dafür keine zwei Arten. In der Liste steht unter dem Namen bei einem Track „Titel · BPM“, bei mehreren „n Tracks“, bei einer leeren Bank „leer“. Tempo, Stimmung, Raster und Warp gelten pro Pad, aus dem Track des Pads. Leere Plätze sind stumm und am Device dunkel ohne Nummer. Die Slice-Länge kommt immer von den Reglern am Device. Alle Bänke zusammen sind die **Bibliothek**, geordnet und für alle Live-Sets gleich. Die Banknummer ist der Platz in der Liste und ändert sich beim Umsortieren.
 
-Pro Bank liegen die 16 Pads als **Snippets** à 16 s in einer eigenen Datei. Auf der Bühne lädt das Device nur diese Datei: kein Internet, kein Warten, Bankwechsel klickfrei. Mehr als 16 s spielt ein Pad nie, auch nicht im Hold-Modus.
+Pro Bank liegen die 16 Pads als **Snippets** à 16 s in einer eigenen Datei. Auf der Bühne lädt das Device nur diese Datei: kein Internet, kein Warten, Bankwechsel klickfrei. Mehr als 16 s spielt ein Pad nie, auch nicht im Hold-Modus. 4 Takte sind bei 60 BPM genau 16 s: langsamer (ohne Warp, bei Rate 1) oder mit Warp aus einem Track unter 60 BPM endet der Slice früher, am Ende des Snippets.
 
 ### Bank-Editor (Browser)
 
@@ -79,10 +79,11 @@ Solange das Device läuft: Button **Editor** im Device drücken, oder **http://l
 | Start setzen | Marker in der Waveform ziehen. Rastet auf Schläge, mit Alt frei. |
 | neues Snippet | Würfel am Pad oder „Neues Snippet“ |
 | Pads tauschen | Pad auf Pad ziehen (auch mit leeren Plätzen) |
-| Pad aus einer anderen Bank | **Quell-Grid** rechts neben den Pads (4×4, Pad 1 unten links): Bank wählen, eins ihrer Pads auf einen Platz ziehen. Kopiert Track und Start, spätere Änderungen an der Quelle wirken nicht. Geht auch ohne Cache. Vorhören gibt es nicht: reinziehen, anspielen, ⌘Z. |
-| Platz leeren | Icon „leeren“ am Pad (bei Hover und am gewählten Pad) |
+| Pad aus einer anderen Bank | **Quell-Grids** rechts neben den Pads (je 4×4, Pad 1 unten links), so viele nebeneinander, wie das Fenster breit ist. Jedes hat seine eigene Bank (vorgeschlagen: die nächsten nach der aktiven, die Auswahl merkt sich der Browser). Ein Pad daraus auf einen Platz ziehen: kopiert Track und Start, spätere Änderungen an der Quelle wirken nicht. Geht auch ohne Cache. |
+| vorhören | Quell-Pad anklicken: spielt sein Snippet im Browser (Lautsprecher des Macs, nicht über Live), so lang wie der Slice des Device im Tempo des Sets, ohne Warp/Rate/Tune; ohne Device-Regler 2 s. Noch ein Klick stoppt, ein anderes Pad wechselt. Das Pad leuchtet, solange es spielt. |
+| Platz leeren | × rechts oben am Pad (immer sichtbar), darunter der Würfel für ein neues Snippet. Klick in die Mitte spielt an |
 | anspielen | Pad klicken, klingt am Device |
-| Tempo | Zahlenfeld, ½×, 2×, „Tempo stimmt“ für das Video des gewählten Pads (gilt für alle Bänke mit diesem Video) |
+| Tempo | Zahlenfeld, ½×, 2×, „Tempo stimmt“ (daneben der Hinweis, solange das Tempo nur aus der Analyse kommt) für das Video des gewählten Pads (gilt für alle Bänke mit diesem Video) |
 | Device-Regler | Leiste über den Pads, siehe unten |
 | Rückgängig | ⌘Z / ⇧⌘Z oder ↶ ↷ (100 Schritte, nur in diesem Fenster). Geleerte oder überschriebene Pads kommen auch ohne Cache zurück, solange Node läuft. |
 | Cache leeren | Knopf neben der Cache-Größe im Listenfuß, mit Rückfrage. Löscht die ganzen Tracks im lokalen Cache, nicht die Snippets. Gesperrt, solange Tracks laden oder geschnitten wird. |

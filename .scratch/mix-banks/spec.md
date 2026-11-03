@@ -340,3 +340,24 @@ Ergänzt Abschnitt 10. Der Rest gilt weiter.
 
 **„Neue Bank“ am Suchtreffer (Nutzer, gleicher Tag):** zweiter Knopf neben „Leere Plätze füllen“. `newmix {name: Videotitel}` (Ablage, wird aktiv, Anzeige „-“), dann `fillpads` mit allen 16 Plätzen. Ein Undo-Schritt „Neue Bank „Titel““ = `delete`, Redo = `restore`. Das Füllen bekommt keinen eigenen Schritt. Undo während des Ladens: die Bank ist weg, das spätere Füllen meldet „Bank gibt es nicht mehr“.
 
+
+## 12. Nachtrag Editor-Design und 4 Takte (Nutzer, 2026-11-03)
+
+Ergänzt Abschnitte 10 und 11. Der Rest gilt weiter.
+
+**Entscheidungen (fest):**
+1. **Pad-Icons:** × („leeren“) rechts oben, Würfel („Neues Snippet“) darunter, beide immer sichtbar (nicht nur bei Hover/Auswahl), 13 px. Sie liegen rechts neben der Nummer und über der Startzeit, verdecken beide nicht (Prüfung im Test bei 1440×900). Klick in die Mitte spielt an.
+2. **Division „4 Bars“** als neuer höchster Wert (Index 11), hinten angehängt: `DIVS` in `[js]`, Enum des `live.menu` „Division“ (`parameter_mmax` 11), `DIVS` im Editor, `PARAMS.div` in Node. Index 0–10 unverändert, gespeicherte Sets und MIDI-Mappings bleiben gleich. Ein Snippet hat 16 s: `playRange` und `retime` klammern aufs Fach. Volles Fach, ohne Warp: geklammert ab Live-Tempo < 60 × Rate × Tonhöhenfaktor BPM. Mit Warp: wenn das Quelltempo des Pads < 60 BPM ist (der Slice sind 16 Schläge der Quelle). Kürzere Fächer (Track-Ende) früher.
+3. **Tempo-Hinweis** „Tempo aus der Analyse, nicht bestätigt“ steht rechts neben „Tempo stimmt“ (gemeinsame Gruppe, bricht nur als Ganzes um).
+4. **Vorhören im Quell-Grid (Ausnahme zu „keine Wiedergabe im Browser“, gilt nur hier, überholt M4):** Klick auf ein Quell-Pad spielt sein Snippet im Browser per Web Audio (Ausgang des Macs, nicht über Live), ab Start, so lang wie der Slice des Device in Lives Tempo (`device.params.div` und `.bpm`), ohne Warp, Rate und Tune, höchstens bis zum Snippet-Ende. Ohne `params` 2 s. Noch ein Klick stoppt, Klick auf ein anderes Pad wechselt, Ziehen stoppt und kopiert wie bisher. Das Pad leuchtet (Akzentfarbe), solange es spielt. Ende und Stopp blenden 10 ms aus.
+5. **Mehrere Quell-Grids** nebeneinander: so viele 4×4, wie bei voller Höhe in die Breite rechts neben den eigenen Pads passen, höchstens eins pro anderer Bank. Kein Grid wird dafür kleiner, als ein einzelnes wäre (die Höhe bestimmt die Größe). Jedes hat eine eigene Auswahl. Startwerte: die Bänke nach der aktiven in der Liste (Bühne, dann Ablage, im Kreis), keine doppelt. Gemerkt im localStorage-Layout als `srcIds[k]` (alte `srcId` wird `srcIds[0]`). Die Detailspalte steht kompakt (zwei Zeilen: Pad + Track, Knöpfe + Tempo) unter allen Grids, über die ganze Breite.
+
+**Protokoll:**
+- `GET /snip/<bankId>/<pad>` (Node): Fach `pad` aus `D/snippets/<bankId>.wav` als WAV (44,1 kHz/16 Bit/Stereo), nur bis `lens[pad]`, `Cache-Control: no-store`. 404: Bank fehlt, leerer Platz, `lens 0`, keine Snippet-Datei oder Snippet-Pad ≠ Bibliotheks-Pad (wird gerade neu geschnitten). 400 bei falschem Pfad, 403 bei anderer Methode als GET oder fremdem Host.
+- `bankstate` bekommt hinten `<bpm>` (Lives Tempo, 2 Nachkommastellen). SSE `device.params.bpm`, kein Regler (`param` kennt es nicht).
+
+**Offen gelassen (einfach gelöst, nicht gefragt):**
+- Der Knopf heißt weiter „Tempo stimmt“ (im Wunsch „Stimmt so“ genannt).
+- Hold am Device: Vorhören spielt trotzdem die Slice-Länge.
+- Vorhören ist kein Undo-Schritt und geht auch ohne Schreibrecht (z. B. kaputte Bibliothek), solange Node läuft.
+- Leere Pads, „nur spielbar“ ohne Snippet-Datei: Toast „Vorhören geht nicht (Snippet fehlt)“.
