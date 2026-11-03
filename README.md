@@ -82,6 +82,7 @@ Solange das Device läuft: Button **Editor** im Device drücken, oder **http://l
 | Pads tauschen | Pad auf Pad ziehen (auch mit leeren Plätzen) |
 | Pad kopieren | Pad mit gedrückter **Alt-Taste** (⌥) auf ein anderes Pad ziehen: Das Ziel wird überschrieben (Track und Start), der Zeiger zeigt ein Plus. Alt darf man auch erst während des Ziehens drücken. |
 | Pad in eine andere Bank | Eigenes Pad links über eine andere Bank ziehen und dort kurz halten (0,6 s): Die Bank öffnet sich und lädt im Device. Auf einem ihrer Pads loslassen: Das Pad wird **verschoben**, der alte Platz wird leer. Mit Alt wird kopiert, die alte Bank bleibt, wie sie ist. Ein belegtes Ziel wird überschrieben. Ein ⌘Z stellt beide Bänke wieder her. Abbrechen (Esc) lässt die geöffnete Bank aktiv. |
+| Audiodatei aufs Pad | Eine oder mehrere Audiodateien (WAV, AIFF, MP3 …) aus dem Finder auf ein Pad ziehen. Die erste kommt auf dieses Pad, die nächsten auf die folgenden (überschreibt, endet bei Pad 16, der Rest wird verworfen). Bis 16 s beginnt das Pad am Anfang der Datei, längere Dateien behandelt der Editor wie einen Track (Start gewürfelt, verschieben, Tempo). Die Datei wird als WAV in `audio/` im Datenordner abgelegt (iCloud), „Cache leeren“ fasst sie nicht an. Höchstens 200 MB, länger als 10 min wird abgeschnitten. Alle Dateien eines Zugs sind ein ⌘Z. |
 | Pad aus einer anderen Bank | **Quell-Grids** rechts neben den Pads (je 4×4, Pad 1 unten links), so viele nebeneinander, wie das Fenster breit ist. Jedes hat seine eigene Bank (vorgeschlagen: die nächsten nach der aktiven, die Auswahl merkt sich der Browser). Ein Pad daraus auf einen Platz ziehen: kopiert Track und Start, spätere Änderungen an der Quelle wirken nicht. Geht auch ohne Cache. |
 | vorhören | Quell-Pad anklicken: spielt sein Snippet im Browser (Lautsprecher des Macs, nicht über Live), so lang wie der Slice des Device im Tempo des Sets, ohne Warp/Rate/Tune, mit Ausgleich (wenn „Norm“ an ist) und Trim; ohne Device-Regler 2 s. Noch ein Klick stoppt, ein anderes Pad wechselt. Das Pad leuchtet, solange es spielt. |
 | Platz leeren | × rechts oben am Pad (immer sichtbar), darunter der Würfel für ein neues Snippet. Klick in die Mitte spielt an |
@@ -126,7 +127,7 @@ Technisch steckt im Set nur eine unsichtbare Session-Nummer, der Zustand liegt i
 
 ### Datenordner und iCloud
 
-Bibliothek, Snippets und Sessions liegen in **iCloud Drive** unter `iCloud Drive/YTSampler/` (ohne iCloud in `~/Music/YTSampler/`). Lokal in `~/Music/YTSampler/` bleibt nur der Cache der ganzen Tracks.
+Bibliothek, Snippets und Sessions liegen in **iCloud Drive** unter `iCloud Drive/YTSampler/` (ohne iCloud in `~/Music/YTSampler/`). Lokal in `~/Music/YTSampler/` bleibt nur der Cache der ganzen Tracks. Audiodateien aus dem Finder liegen in `audio/` im Datenordner und verschwinden beim nächsten Start, wenn kein Pad sie mehr braucht.
 
 - **Umzug:** Beim ersten Start von 2.0 schiebt das Device alles außer `cache/` und `chrome-profile/` aus `~/Music/YTSampler/` nach iCloud. Klappt das nicht, arbeitet es im alten Ordner weiter und zeigt „Umzug nach iCloud fehlgeschlagen“.
 - **Einmal im Finder:** Ordner `YTSampler` in iCloud Drive rechts anklicken → **„Geladen lassen“**. Sonst lagert macOS die Snippets aus, und auf der Bühne ohne Internet fehlen sie („Bibliothek kaputt“ bzw. „nicht ladbar“).

@@ -8,6 +8,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 const http = require('http');
 const https = require('https');
 
@@ -46,6 +47,7 @@ function dataDir() {
 const DATA_SETUP = dataDir();
 const DATA = DATA_SETUP.dir;
 const CACHE = path.join(LOCAL, 'cache');
+const AUDIO_DIR = path.join(DATA, 'audio');   // Audiodateien aus dem Finder (ganze WAV + .json), in iCloud, nie Cache
 const MAX_SECONDS = 600;  // URL-Videos über 10 min: nur die ersten 10 Minuten laden (RAM!)
 const SEARCH_FETCH = 15;  // so viele Treffer holen
 const SEARCH_FAST_MS = 4000;   // direkte Suche: danach yt-dlp
@@ -576,7 +578,10 @@ function readAnalysis(file) {
 
 const chromaCache = (v) => path.join(CACHE, `${v}.chroma`);
 const chromaBank = (v) => path.join(SNIP_DIR, `${v}.chroma`);
-const cacheWav = (v) => path.join(CACHE, `${v}.wav`);
+// Audio-ID: 10 Hex aus dem SHA-1 + „_“; YouTube-IDs enden nie auf „_“ (letztes Zeichen nur aus AEIMQUYcgkosw048)
+const isAudio = (v) => /^[0-9a-f]{10}_$/.test(v);
+const cacheWav = (v) => path.join(isAudio(v) ? AUDIO_DIR : CACHE, `${v}.wav`);
+const infoJson = (v) => path.join(isAudio(v) ? AUDIO_DIR : CACHE, `${v}.json`);
 const hasWav = (v) => fs.existsSync(cacheWav(v));
 
 // Analyse eines Videos, null = fehlt. bank: zuerst die abgelegte aus D/snippets (Bühne ohne ganze WAV),
@@ -652,6 +657,7 @@ function sendPadInfo(a, i, startMs, spanMs) {
 // Geladen wird unter <id>.dl.* und erst am Ende auf <id>.wav umbenannt: Ein abgebrochener
 // Download hinterlässt keine halbe WAV. onPhase(phase, prozent): info | long | download | convert
 async function download(id, job, onPhase) {
+  if (isAudio(id)) throw new Error('Audiodatei fehlt – in iCloud noch nicht geladen?');   // nie yt-dlp für Audio
   const url = `https://www.youtube.com/watch?v=${id}`;
   const tmp = path.join(CACHE, `${id}.dl`);
   try {
@@ -795,6 +801,7 @@ const ERR = {
   searchfail: 'Suche fehlgeschlagen',
   loadfail: 'Download fehlgeschlagen',
   cachebusy: 'Downloads oder Schnitte laufen – danach noch einmal',
+  audiofail: 'Audiodatei nicht übernommen',
   badreq: 'Ungültiger Befehl',
 };
 // Fehler mit .code und .text, z. B. libErr('writefail', 'Platte voll') -> "Speichern fehlgeschlagen: Platte voll"
@@ -1300,7 +1307,7 @@ function keepPad(p, bankId) {
   }
 }
 
-// Beim Start: Undo-Vorrat, Analysen in D (.chroma) und videos-Einträge, die kein Pad irgendeiner Bank mehr braucht.
+// Beim Start: Undo-Vorrat, Analysen in D (.chroma), Audiodateien in D/audio und videos-Einträge, die kein Pad irgendeiner Bank mehr braucht.
 // Der Cache in L bleibt, Snippets gelöschter Bänke regelt snipCleanup (7 Tage).
 function keepCleanup() {
   if (!libNow.lib) return;
@@ -1311,6 +1318,8 @@ function keepCleanup() {
   try { names = fs.readdirSync(KEEP_DIR); } catch (e) { /* kein Undo-Vorrat */ }
   for (const n of names) { const m = /^(.+_\d+)\.(wav|json)$/.exec(n); if (m && !keep.has(m[1])) rm(path.join(KEEP_DIR, n)); }
   for (const n of fs.readdirSync(SNIP_DIR)) { const m = /^(.+)\.chroma$/.exec(n); if (m && !used.has(m[1])) rm(path.join(SNIP_DIR, n)); }
+  try { names = fs.readdirSync(AUDIO_DIR); } catch (e) { names = []; }
+  for (const n of names) { const m = /^(.+)\.(wav|json)$/.exec(n); if (m && isAudio(m[1]) && !used.has(m[1])) rm(path.join(AUDIO_DIR, n)); }
   if (Object.keys(libNow.lib.videos).some((v) => !used.has(v))) libChange('prune', {}, 'start');
 }
 // Gibt es für ein Pad eine Quelle zum Schneiden (ganze WAV oder ein passendes Fach)?
@@ -1598,7 +1607,7 @@ async function edRun(e) {
 // fetchall: alle fehlenden ganzen WAVs der Bibliothek, ohne gescheiterte
 function fetchAll() {
   if (!libNow.lib) return { todo: 0 };
-  const todo = [...new Set(libNow.lib.banks.flatMap(padVideos))].filter((v) => !hasWav(v) && !has(videoFail, v));
+  const todo = [...new Set(libNow.lib.banks.flatMap(padVideos))].filter((v) => !isAudio(v) && !hasWav(v) && !has(videoFail, v));
   todo.forEach((v) => fetchVideo(v, 'fetchall').catch(() => { /* steht in videoFail */ }));
   return { todo: todo.length };
 }
@@ -1610,7 +1619,7 @@ function fetchAll() {
 async function fillPads(q, by) {
   const job = (phase, progress, extra) => libEvents.emit('job', { kind: 'pads', tag: q.tag, id: q.id, video: q.video, pads: q.pads, phase, progress, left: edQueue.length, ...extra });
   try {
-    const info = (hasWav(q.video) && readJson(path.join(CACHE, `${q.video}.json`))) || await fetchVideo(q.video, 'pads', job);
+    const info = (hasWav(q.video) && readJson(infoJson(q.video))) || await fetchVideo(q.video, 'pads', job);
     job('analyse', 0);
     await new Promise((r) => setTimeout(r, 0));
     const b = libBank(q.id);
@@ -1899,7 +1908,7 @@ const CMD = {
   select(q) {
     const b = libBank(q.id);
     const first = b.pads[dev.sel] ? b.pads[dev.sel].video : null;
-    for (const v of padVideos(b)) if (v !== first && !hasWav(v)) fetchVideo(v, 'fetchall').catch(() => { /* steht in videoFail */ });
+    for (const v of padVideos(b)) if (v !== first && !isAudio(v) && !hasWav(v)) fetchVideo(v, 'fetchall').catch(() => { /* steht in videoFail */ });
     if (first && !hasWav(first)) fetchVideo(first, 'select').catch(() => { /* steht in videoFail */ });
     sendBank(b);
   },
@@ -2020,14 +2029,16 @@ async function runCmd(q) {
 }
 
 // Schutz: nur JSON, nur vom eigenen Host/Origin, höchstens 64 KB. Unlesbares JSON -> 400, Schutzregel -> 403.
-function cmdRoute(req, res) {
+// POST vom eigenen Host/Origin mit passendem Content-Type und höchstens max Byte (laut Content-Length)
+function editorPost(req, type, max) {
   const hosts = [`localhost:${webPort}`, `127.0.0.1:${webPort}`];
   const origin = req.headers.origin;
+  return req.method === 'POST' && type.test(req.headers['content-type'] || '') && hosts.includes(req.headers.host)
+    && (origin === undefined || hosts.some((h) => origin === 'http://' + h)) && +(req.headers['content-length'] || 0) <= max;
+}
+function cmdRoute(req, res) {
   const deny = (code) => { res.writeHead(code, { Connection: 'close' }); res.end(); };
-  if (req.method !== 'POST' || !/^application\/json(;|$)/i.test(req.headers['content-type'] || '') || !hosts.includes(req.headers.host)
-      || (origin !== undefined && !hosts.some((h) => origin === 'http://' + h)) || +(req.headers['content-length'] || 0) > CMD_MAX) {
-    deny(403); req.resume(); return;
-  }
+  if (!editorPost(req, /^application\/json(;|$)/i, CMD_MAX)) { deny(403); req.resume(); return; }
   const chunks = [];
   let size = 0;
   req.on('data', (d) => { size += d.length; if (size <= CMD_MAX) chunks.push(d); });
@@ -2043,6 +2054,54 @@ function cmdRoute(req, res) {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify(out));
   });
+}
+
+// ---------- POST /audio?name=<Dateiname>: Audiodatei aus dem Finder -> D/audio/<id>.wav (+ .json) ----------
+// Rohdaten (octet-stream), höchstens AUDIO_MAX, sonst 403. -> {ok, video, title, dur} oder {ok: false, code, text}.
+// Gleicher Inhalt = gleiche ID, dann wird nicht neu gewandelt. Aufs Pad kommt sie danach per fillpads.
+const AUDIO_MAX = 200 * 1024 * 1024;
+let audioSeq = 0;
+function audioRoute(req, res) {
+  const deny = (code) => { res.writeHead(code, { Connection: 'close' }); res.end(); };
+  if (!editorPost(req, /^application\/octet-stream(;|$)/i, AUDIO_MAX)) { deny(403); req.resume(); return; }
+  const name = new URL(req.url, 'http://localhost').searchParams.get('name') || 'Audio';
+  fs.mkdirSync(AUDIO_DIR, { recursive: true });
+  const tmp = path.join(AUDIO_DIR, `up.${process.pid}.${++audioSeq}.tmp`), out = fs.createWriteStream(tmp), hash = crypto.createHash('sha1');
+  let size = 0, bad = false;
+  req.on('data', (d) => { size += d.length; hash.update(d); if (size > AUDIO_MAX && !bad) { bad = true; req.unpipe(out); out.destroy(); deny(403); } });
+  req.on('close', () => { if (!req.complete && !bad) { bad = true; out.destroy(); } });   // Abbruch im Browser
+  req.pipe(out);
+  out.on('finish', async () => {
+    let r;
+    try { r = { ok: true, ...(await importAudio(tmp, name, hash.digest('hex').slice(0, 10) + '_')) }; } catch (e) {
+      r = { ok: false, code: e.code && ERR[e.code] ? e.code : 'audiofail', text: e.text || `${ERR.audiofail}: ${clean(e.message)}` };
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(r));
+  });
+  out.on('close', () => { if (bad) fs.rm(tmp, { force: true }, () => {}); });
+}
+// Hochgeladene Datei (tmp, wird weggeräumt) wandeln wie die Downloads: 44,1 kHz/16 Bit/Stereo, höchstens MAX_SECONDS
+async function importAudio(tmp, name, id) {
+  const wav = cacheWav(id), raw = String(name).replace(/\.[^.]*$/, '') || 'Audio';
+  try {
+    if (!hasWav(id)) {
+      const part = `${tmp}.wav`;
+      try {
+        await run('ffmpeg', ['-v', 'error', '-y', '-i', tmp, '-vn', '-ar', '44100', '-ac', '2', '-c:a', 'pcm_s16le', '-t', String(MAX_SECONDS), part]);
+        if (!(wavDurationMs(part) > 0)) throw new Error('keine Tonspur');
+        fs.renameSync(part, wav);
+      } catch (e) {
+        fs.rmSync(part, { force: true });
+        throw libErr('audiofail', e.code === 'ENOENT' ? 'ffmpeg fehlt → Terminal: brew install ffmpeg' : 'Datei ist kein Audio');
+      }
+    }
+    const dur = Math.round(wavDurationMs(wav));
+    if (!fs.existsSync(infoJson(id))) fs.writeFileSync(infoJson(id), JSON.stringify({ id, title: clean(raw), raw, duration: dur / 1000 }));
+    snipRefresh(id);   // Bänke, die auf diese Datei gewartet haben (iCloud), neu schneiden
+    libEvents.emit('status');
+    return { video: id, title: (readJson(infoJson(id)) || {}).raw || raw, dur };
+  } finally { fs.rmSync(tmp, { force: true }); }
 }
 
 // ---------- SSE /editor/events (3.4) ----------
@@ -2215,6 +2274,7 @@ function startWeb(port, tries) {
     }
     if (url === '/editor/events') { edConnect(req, res); return; }
     if (url === '/cmd') { cmdRoute(req, res); return; }
+    if (url === '/audio') { audioRoute(req, res); return; }
     if (url.startsWith('/peaks/')) { peaksRoute(url.slice(7), res); return; }
     if (url.startsWith('/snip/')) { snipRoute(req, res, url.slice(6)); return; }
     res.writeHead(404); res.end();
@@ -2262,7 +2322,7 @@ Max.outlet('needsession');
 module.exports = {
   errMsg, DATA, LOCAL, CACHE, SESSIONS, LIB_FILE, LIB_LOCK, BACKUP_DIR, ERR, LIB, libErr, libParse, libRead, libChange, libBackup, libEvents, get libNow() { return libNow; },
   AN, SNIP_DIR, SNIP_MS, computeAnalysis, tempoFromOnset, saveAnalysis, readAnalysis, getAnalysis, trackBeats, silentRanges,
-  hasWav, readSnip, snipGain, padGain, NORM_TARGET, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, keepCleanup, KEEP_DIR, cacheSize, videoFail,
+  hasWav, isAudio, AUDIO_DIR, readSnip, snipGain, padGain, NORM_TARGET, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, keepCleanup, KEEP_DIR, cacheSize, videoFail,
   beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, fillPads, get anaMap() { return anaMap; },
   parseSearchPage, runCmd, peaks, snipPad, get webPort() { return webPort; }, get activeId() { return activeId; },
 };

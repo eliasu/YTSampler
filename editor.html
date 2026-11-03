@@ -364,7 +364,7 @@ function toast(text, opt = {}) {
 }
 // Fortschritt kommt von Node in Prozent (0–100), nicht als Anteil
 const pct = (p) => Math.round(Math.max(0, Math.min(100, Number(p) || 0))) + ' %';
-const JOB_TEXT = { queue: 'wartet', info: 'lädt …', long: 'lädt …', convert: 'konvertiert', analyse: 'analysiert', cut: 'schneidet' };
+const JOB_TEXT = { upload: 'liest ein', queue: 'wartet', info: 'lädt …', long: 'lädt …', convert: 'konvertiert', analyse: 'analysiert', cut: 'schneidet' };
 const jobText = (j) => JOB_TEXT[j.phase] || 'lädt ' + pct(j.progress);
 let savedT;
 function flashSaved() { $('saved').textContent = 'gespeichert ✓'; clearTimeout(savedT); savedT = setTimeout(() => { $('saved').textContent = 'automatisch gespeichert'; }, 900); }
@@ -591,6 +591,37 @@ async function fillVideo(video, title, pads, id) {
   S.fills.push(f); render();
   const r = await cmd('fillpads', { id: b.id, video, pads, tag: f.tag });
   if (!r.ok) { S.fills = S.fills.filter((x) => x !== f); render(); }
+}
+// Audiodateien aus dem Finder ab Pad i auf die folgenden Plätze (bis Pad 16, Rest verworfen). Erst hochladen (Node wandelt
+// nach D/audio), dann fillpads wie ein Track aus der Suche. Alle Dateien zusammen ein Undo-Schritt (group).
+async function dropFiles(list, i) {
+  const b = curBank(); if (!b || !writable()) return;
+  const files = [...list], pads = files.slice(0, 16 - i).map((_, k) => i + k);
+  if (pads.some((k) => loadingPad(k, b.id))) { toast('Pad lädt gerade', { err: true }); return; }
+  if (files.length > pads.length) toast((files.length - pads.length) + (files.length - pads.length === 1 ? ' Datei' : ' Dateien') + ' verworfen, Pad 16 ist das letzte', { err: true });
+  const group = { left: pads.length, pads: [], before: [], after: [], videos: {}, n: pads.length };
+  const fills = pads.map((k, n) => ({ tag: CLIENT + '-' + (++fillVideo.n), id: b.id, video: null, title: files[n].name, pads: [k], phase: 'upload', progress: 0, group }));
+  S.fills.push(...fills); render();
+  for (const f of fills) {
+    const r = await uploadAudio(files[f.pads[0] - i]);
+    if (r.ok) { f.video = r.video; f.title = r.title; render(); const c = await cmd('fillpads', { id: b.id, video: r.video, pads: f.pads, tag: f.tag }); if (c.ok) continue; }
+    else toast(files[f.pads[0] - i].name + ': ' + (r.text || r.code), { err: true });
+    S.fills = S.fills.filter((x) => x !== f); groupDone(f); render();
+  }
+}
+async function uploadAudio(file) {
+  try {
+    const res = await fetch('/audio?name=' + encodeURIComponent(file.name), { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file });
+    return res.ok ? await res.json() : { ok: false, code: 'http', text: res.status === 403 ? 'zu groß (höchstens 200 MB)' : 'abgelehnt (' + res.status + ')' };
+  } catch (e) { return { ok: false, code: 'net', text: 'Kein Device erreichbar' }; }
+}
+// Eine Datei der Gruppe fertig (j = job done) oder gescheitert (j fehlt). Nach der letzten ein gemeinsamer Schritt
+function groupDone(f, j) {
+  const g = f.group;
+  if (j) { g.pads.push(...f.pads); g.before.push(...j.before); g.after.push(...j.after); Object.assign(g.videos, j.videos); }
+  if (--g.left || !g.pads.length) return;
+  const label = g.n === 1 ? 'Pad ' + (g.pads[0] + 1) + ' aus „' + f.title + '“' : g.pads.length + ' Audiodateien ab Pad ' + (Math.min(...g.pads) + 1);
+  pushStep(fillStep(label, f.id, g.pads, g.before, g.after, g.videos)); toast(label);
 }
 let holding = -1;
 // Pads per Tastatur, nach physischer Lage (KeyboardEvent.code) wie das 4×4, Pad 1 unten links. Beschriftung für deutsche Tastatur
@@ -892,9 +923,13 @@ for (let row = 3; row >= 0; row--) for (let col = 0; col < 4; col++) {
   p.ondragstart = (e) => { S.drag = { kind: 'pad', i, id: S.dev.bankId }; e.dataTransfer.effectAllowed = 'copyMove'; e.dataTransfer.setData('text/plain', 'Pad ' + (i + 1)); };
   p.ondragend = () => { S.drag = null; };
   const takes = () => S.drag && (S.drag.kind === 'pad' || ((S.drag.kind === 'src' || S.drag.kind === 'video') && writable()));   // tauschen, aus dem Quell-Grid, aus der Suche
-  p.ondragover = (e) => { if (!takes()) return; e.preventDefault(); e.dataTransfer.dropEffect = S.drag.kind === 'pad' && !e.altKey ? 'move' : 'copy'; p.classList.add('over'); };
+  const files = (e) => !S.drag && [...e.dataTransfer.types].includes('Files') && writable();   // Audiodateien aus dem Finder
+  p.ondragover = (e) => {
+    if (files(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; p.classList.add('over'); return; }
+    if (!takes()) return; e.preventDefault(); e.dataTransfer.dropEffect = S.drag.kind === 'pad' && !e.altKey ? 'move' : 'copy'; p.classList.add('over'); };
   p.ondragleave = () => p.classList.remove('over');
   p.ondrop = (e) => {
+    if (files(e)) { e.preventDefault(); e.stopPropagation(); p.classList.remove('over'); S.sel = i; dropFiles(e.dataTransfer.files, i); return; }
     if (!takes()) return; e.preventDefault(); e.stopPropagation(); p.classList.remove('over');
     const d = S.drag; S.drag = null;
     if (d.kind === 'pad') dropPad(d, i, e.altKey); else if (d.kind === 'video') { S.sel = i; fillVideo(d.id, d.title, [i]); } else copyPad(bankById(d.id), d.pad, i);
@@ -905,7 +940,7 @@ function renderPads() {
   const vw = view();
   if (!vw) { $('insp').innerHTML = ''; renderPads.sig = null; return; }
   const swappable = writable() && !!vw.bank;
-  $('padhint').textContent = 'Klick oder Taste spielt · auf anderes Pad ziehen tauscht, mit ⌥ kopiert · über einer Bank links halten: in die Bank ziehen · aus Quelle oder Suche ziehen setzt ein';
+  $('padhint').textContent = 'Klick oder Taste spielt · auf anderes Pad ziehen tauscht, mit ⌥ kopiert · über einer Bank links halten: in die Bank ziehen · aus Quelle oder Suche ziehen setzt ein · Audiodatei aus dem Finder ziehen setzt ein';
   const many = bankVideos(vw.bank).length > 1, nEmpty = emptyPads(vw.bank).length;
   document.querySelectorAll('#results .fill').forEach((x) => { x.disabled = !nEmpty || !writable(); });
   document.querySelectorAll('#results .newfrom').forEach((x) => { x.disabled = !writable(); });
@@ -1172,6 +1207,8 @@ async function runSearch() {
 // Ablage außerhalb der Pads/Liste: kein Navigieren des Browsers
 document.addEventListener('dragover', (e) => {
   if (S.drag && S.drag.kind === 'video') e.preventDefault();
+  // Datei aus dem Finder neben ein Pad: nichts tun, statt dass der Browser sie öffnet
+  else if (!S.drag && !e.defaultPrevented && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'none'; }
   // Eigenes Pad über einer Bank der Liste halten (HOLD_OPEN_MS): Bank öffnet sich wie ein Klick, das Ziehen läuft weiter
   const d = S.drag; if (!d || d.kind !== 'pad') return;
   const li = e.target.closest && e.target.closest('#libscroll li[data-id]'), id = li ? +li.dataset.id : null;
@@ -1285,7 +1322,8 @@ function connect() {
       const f = S.fills.find((x) => x.tag === j.tag); if (!f) return;
       f.progress = j.progress || 0; f.phase = j.phase;
       if (j.phase === 'done' || j.phase === 'fail') S.fills = S.fills.filter((x) => x !== f);   // fail meldet msg
-      if (j.phase === 'done' && f.noStep) toast('Neue Bank „' + f.title + '“ gefüllt');
+      if (f.group) { if (j.phase === 'done' || j.phase === 'fail') groupDone(f, j.phase === 'done' ? j : null); }
+      else if (j.phase === 'done' && f.noStep) toast('Neue Bank „' + f.title + '“ gefüllt');
       else if (j.phase === 'done') {
         const label = (f.pads.length === 1 ? 'Pad ' + (f.pads[0] + 1) : f.pads.length + ' Plätze') + ' aus „' + f.title + '“';
         pushStep(fillStep(label, f.id, f.pads, j.before, j.after, j.videos)); toast(label);

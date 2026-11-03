@@ -36,6 +36,10 @@ _Avoid_: Ablage (das sind Bänke ohne Nummer), Papierkorb
 Ein Quell-Pad im Browser abspielen (Lautsprecher des Macs, nicht über Live), so lang wie der Slice des Device. Die einzige Wiedergabe im Browser.
 _Avoid_: Anspielen (das klingt am Device)
 
+**Audiodatei**:
+Eine Datei aus dem Finder, die im Editor auf ein Pad gezogen wurde. Gilt wie ein Track (eigene ID mit „_“ am Ende), liegt aber als WAV im Datenordner (`audio/`) statt im Cache und wird nie geladen.
+_Avoid_: Sample (zu unscharf), Upload
+
 **Snippet**:
 Der gespeicherte Audioausschnitt eines Pads ab seinem Startpunkt, mehr als das spielt das Pad nie.
 _Avoid_: Slice (für das gespeicherte Audio), Sample

@@ -377,6 +377,22 @@ function createMock(opts = {}) {
       if (!VIDEOS[pk[1]] || (e && !e.wav)) { res.writeHead(404); return res.end(); }
       res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'private, max-age=86400' }); return res.end(peaks(pk[1]));
     }
+    // Audiodatei aus dem Finder: Inhalt „KEIN“ = kein Audio, sonst ID aus dem Inhalt, 60 s bei 120 BPM
+    if (u.pathname === '/audio' && req.method === 'POST') {
+      if (!/^application\/octet-stream/.test(req.headers['content-type'] || '')) { res.writeHead(403); return res.end(); }
+      let body = '';
+      req.on('data', (d) => { body += d; });
+      req.on('end', () => {
+        const name = u.searchParams.get('name');
+        m.uploads.push(name);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        if (body === 'KEIN') return res.end(JSON.stringify({ ok: false, code: 'audiofail', text: 'Audiodatei nicht übernommen: Datei ist kein Audio' }));
+        const id = require('crypto').createHash('sha1').update(body).digest('hex').slice(0, 10) + '_', title = name.replace(/\.[^.]*$/, '');
+        VIDEOS[id] = [title, 120, 60];
+        res.end(JSON.stringify({ ok: true, video: id, title, dur: 60000 }));
+      });
+      return;
+    }
     if (u.pathname === '/cmd' && req.method === 'POST') {
       if (!/^application\/json/.test(req.headers['content-type'] || '')) { res.writeHead(403); return res.end(); }
       let body = '';
@@ -391,6 +407,7 @@ function createMock(opts = {}) {
     }
     res.writeHead(404); res.end();
   });
+  m.uploads = [];
   m.scenario(opts.scenario || 'normal');
   m.listen = (port) => new Promise((r) => m.server.listen(port, '127.0.0.1', () => {
     m.port = m.server.address().port;

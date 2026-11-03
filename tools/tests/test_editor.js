@@ -725,6 +725,37 @@ t('Suche → Pad: Treffer aufs Pad ziehen (überschreibt, Ladezustand), „Leere
   assert.deepStrictEqual(b.errors, []);
 });
 
+t('Audiodateien aus dem Finder: ab dem Ziel-Pad, überzählige verworfen, kein Audio gemeldet, ein Undo-Schritt, daneben öffnet nichts', async () => {
+  await open('normal');
+  await b.click('#newbank'); await b.waitFor(`S.dev.bankId === 13 && document.querySelectorAll('.pad.empty').length === 16`);
+  assert(/Audiodatei aus dem Finder ziehen setzt ein/.test(await b.eval(`$('padhint').textContent`)));
+  await b.eval(`window.toasts = []; { const t0 = toast; toast = (x, o) => { toasts.push(x); t0(x, o); }; }`);
+  const drop = (to, names) => `(() => { const dt = new DataTransfer();
+    for (const n of ${JSON.stringify(names)}) dt.items.add(new File([n === 'kaputt.txt' ? 'KEIN' : 'RIFF ' + n], n, { type: 'audio/wav' }));
+    const c = document.querySelector(${JSON.stringify(to)}), f = (ty) => { const e = new DragEvent(ty, { bubbles: true, cancelable: true, dataTransfer: dt }); c.dispatchEvent(e); return e.defaultPrevented; };
+    return [f('dragover'), f('drop')]; })()`;   // dropEffect lässt sich synthetisch nicht prüfen
+  // neben die Pads: abgefangen, aber nichts übernommen
+  assert.deepStrictEqual(await b.eval(drop('#insp', ['x.wav'])), [true, true]);
+  await sleep(80); assert.deepStrictEqual(m.uploads, []);
+  // vier Dateien ab Pad 14: 14–16, die vierte verworfen, die zweite ist kein Audio
+  m.log = [];
+  assert.deepStrictEqual(await b.eval(drop('#pad13', ['Kick.wav', 'kaputt.txt', 'Loop eins.aiff', 'zuviel.wav'])), [true, true]);
+  await b.waitFor(`$('undo').title === 'Rückgängig: 2 Audiodateien ab Pad 14 (⌘Z)' && !document.querySelector('.pad.loading')`, 4000);
+  const toasts = await b.eval('toasts');
+  assert(toasts.includes('1 Datei verworfen, Pad 16 ist das letzte'), toasts);
+  assert(toasts.includes('kaputt.txt: Audiodatei nicht übernommen: Datei ist kein Audio'), toasts);
+  assert.deepStrictEqual(m.uploads, ['Kick.wav', 'kaputt.txt', 'Loop eins.aiff']);
+  const fp = m.log.filter((x) => x.cmd === 'fillpads');
+  assert.deepStrictEqual(fp.map((x) => x.pads), [[13], [15]]);
+  assert(fp.every((x) => /^[0-9a-f]{10}_$/.test(x.video)));
+  assert.deepStrictEqual(await b.eval(`[13, 14, 15].map((i) => $('pad' + i).classList.contains('empty'))`), [false, true, false]);
+  // ein Schritt: Undo leert beide Plätze
+  m.log = []; await undoKey(b);
+  await b.waitFor(`document.querySelectorAll('.pad.empty').length === 16 && !histBusy`);
+  assert.deepStrictEqual(m.log.filter((x) => x.cmd === 'setpad').map((x) => [x.pad, x.video]), [[13, null], [15, null]]);
+  assert.deepStrictEqual(b.errors, []);
+});
+
 t('Suchtreffer → „Neue Bank“: Bank mit Videotitel in der Ablage, 16 Plätze aus dem Track, aktiv, ein Undo-Schritt', async () => {
   await open('normal');
   await b.key('k', 'KeyK', 75, CTRL); await b.type('Cymande'); await b.key('Enter', 'Enter', 13);
