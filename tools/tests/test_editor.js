@@ -425,6 +425,16 @@ t('kein Device: ausgegraut, verbindet sich selbst neu; anderes Device leert die 
   m.track = '3-YT Sampler';
 });
 
+t('Device-Teil meldet sich nicht (Session 0): nach 3 s Hinweis statt nur „Keine Bank aktiv“', async () => {
+  await open('normal');
+  m.session = 0; m.setDown(true); m.down = false;
+  await b.waitFor(`S.hello && S.hello.session === 0`, 6000);
+  assert(await b.eval(`$('conntext').textContent !== 'Device antwortet nicht'`), 'Hinweis erst nach 3 s');
+  await b.waitFor(`$('conntext').textContent === 'Device antwortet nicht' && $('conn').classList.contains('silent')`, 5000);
+  m.session = 1; m.setDown(true); m.down = false;
+  await b.waitFor(`$('conntext').textContent === 'steuert: 3-YT Sampler' && !$('conn').classList.contains('silent')`, 6000);
+});
+
 t('Größen bleiben im localStorage, Bibliothek einklappbar', async () => {
   await open('normal');
   const [x, y] = await b.center('#vsplit');

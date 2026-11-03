@@ -51,7 +51,7 @@
   #saved { color:var(--faint); font-size:12px; white-space:nowrap; }
   #conn { margin-left:auto; color:var(--dim); font-size:12px; display:flex; align-items:center; gap:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #conn i { width:7px; height:7px; border-radius:50%; background:var(--ok); flex:none; }
-  body.offline #conn i { background:var(--danger); }
+  body.offline #conn i, #conn.silent i { background:var(--danger); }
   #errbar { display:none; background:#3a1616; color:#ffd2d2; border-bottom:1px solid #5a2a2a; padding:8px 14px; font-weight:500; }
   body.broken #errbar { display:block; }
   #body { grid-row:3; display:grid; grid-template-columns:var(--sw) 6px 1fr; min-height:0; } /* feste Zeile, auch wenn #errbar fehlt */
@@ -613,7 +613,7 @@ async function uploadAudio(file) {
   try {
     const res = await fetch('/audio?name=' + encodeURIComponent(file.name), { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file });
     return res.ok ? await res.json() : { ok: false, code: 'http', text: res.status === 403 ? 'zu groß (höchstens 200 MB)' : 'abgelehnt (' + res.status + ')' };
-  } catch (e) { return { ok: false, code: 'net', text: 'Kein Device erreichbar' }; }
+  } catch (e) { return { ok: false, code: 'net', text: S.conn ? 'Datei nicht lesbar (verschoben oder gelöscht?)' : 'Kein Device erreichbar' }; }
 }
 // Eine Datei der Gruppe fertig (j = job done) oder gescheitert (j fehlt). Nach der letzten ein gemeinsamer Schritt
 function groupDone(f, j) {
@@ -646,7 +646,8 @@ function renderHeader() {
   else $('navname').innerHTML = '<span>–</span>';
   $('prev').disabled = !S.conn || n === 0 || i === 0;
   $('next').disabled = !S.conn || n === 0 || i === n - 1;
-  $('conntext').textContent = S.conn && S.hello ? 'steuert: ' + (S.hello.track || 'YT Sampler') : 'kein Device';
+  $('conntext').textContent = silent() ? 'Device antwortet nicht' : S.conn && S.hello ? 'steuert: ' + (S.hello.track || 'YT Sampler') : 'kein Device';
+  $('conn').classList.toggle('silent', silent());
   $('opensearch').disabled = !writable() || !curBank();
   const broken = S.lib && (S.lib.state === 'kaputt' || S.lib.state === 'neuer');
   document.body.classList.toggle('broken', !!broken);
@@ -1278,7 +1279,7 @@ function render() {
   const vw = view();
   document.body.classList.toggle('blank', !vw);
   const L = S.lib;
-  $('blankmsg').innerHTML = !L ? '' : L.state === 'kaputt' || L.state === 'neuer' ? '<b>' + esc(L.state === 'neuer' ? 'Bibliothek aus neuerer Version' : 'Bibliothek kaputt') + '</b><span>Speichern ist gesperrt, bis die Datei wieder lesbar ist.</span>'
+  $('blankmsg').innerHTML = !L ? '' : silent() ? '<b>Device antwortet nicht</b><span>In Live prüfen: Audio-Gerät gewählt (Einstellungen → Audio)? Sonst das Device neu auf die Spur ziehen.</span>' : L.state === 'kaputt' || L.state === 'neuer' ? '<b>' + esc(L.state === 'neuer' ? 'Bibliothek aus neuerer Version' : 'Bibliothek kaputt') + '</b><span>Speichern ist gesperrt, bis die Datei wieder lesbar ist.</span>'
     : !banks().length ? '<b>Bibliothek leer</b><span>Mit „Neue Bank“ links unten die erste Bank anlegen.</span>' : '<span>Keine Bank aktiv</span>';
   if (S.sel > 15) S.sel = 0;
   // ohne Bank stehen die Regler unter der Meldung, sonst in der Pad-Karte
@@ -1293,13 +1294,16 @@ function later() { if (!renderQ) { renderQ = true; requestAnimationFrame(() => {
 window.addEventListener('resize', later);
 
 // ---------- Verbindung (SSE) ----------
+// Node läuft, aber der Device-Teil in Live hat sich seit 3 s nicht gemeldet (keine Session), z. B. ohne Audio-Gerät in Live
+const silent = () => !!(S.conn && S.hello && !S.hello.session && Date.now() - S.helloAt > 3000);
 function setConn(on) { S.conn = on; document.body.classList.toggle('offline', !on); later(); }
 function connect() {
   const es = new EventSource('/editor/events');
   const on = (ev, fn) => es.addEventListener(ev, (e) => { fn(JSON.parse(e.data)); later(); });
   on('hello', (h) => {
     if (S.hello && h.session !== S.hello.session) { clearHist(); toast('steuert jetzt ' + h.track); }
-    S.hello = h; setConn(true);
+    S.hello = h; S.helloAt = Date.now(); setConn(true);
+    if (!h.session) setTimeout(later, 3100);
   });
   on('lib', (L) => {
     if (S.lib && L.rev !== S.lib.rev && L.by !== CLIENT && L.by !== 'device' && hist.length) { clearHist(); toast('Bibliothek wurde anderswo geändert'); }
