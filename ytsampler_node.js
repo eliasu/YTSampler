@@ -2057,7 +2057,7 @@ function cmdRoute(req, res) {
 }
 
 // ---------- POST /audio?name=<Dateiname>: Audiodatei aus dem Finder -> D/audio/<id>.wav (+ .json) ----------
-// Rohdaten (octet-stream), höchstens AUDIO_MAX, sonst 403. -> {ok, video, title, dur} oder {ok: false, code, text}.
+// Rohdaten (octet-stream), höchstens AUDIO_MAX, sonst 403. Temp-Dateien im lokalen Cache, nicht durch iCloud. -> {ok, video, title, dur} oder {ok: false, code, text}.
 // Gleicher Inhalt = gleiche ID, dann wird nicht neu gewandelt. Aufs Pad kommt sie danach per fillpads.
 const AUDIO_MAX = 200 * 1024 * 1024;
 let audioSeq = 0;
@@ -2066,7 +2066,7 @@ function audioRoute(req, res) {
   if (!editorPost(req, /^application\/octet-stream(;|$)/i, AUDIO_MAX)) { deny(403); req.resume(); return; }
   const name = new URL(req.url, 'http://localhost').searchParams.get('name') || 'Audio';
   fs.mkdirSync(AUDIO_DIR, { recursive: true });
-  const tmp = path.join(AUDIO_DIR, `up.${process.pid}.${++audioSeq}.tmp`), out = fs.createWriteStream(tmp), hash = crypto.createHash('sha1');
+  const tmp = path.join(CACHE, `up.${process.pid}.${++audioSeq}.tmp`), out = fs.createWriteStream(tmp), hash = crypto.createHash('sha1');
   let size = 0, bad = false;
   req.on('data', (d) => { size += d.length; hash.update(d); if (size > AUDIO_MAX && !bad) { bad = true; req.unpipe(out); out.destroy(); deny(403); } });
   req.on('close', () => { if (!req.complete && !bad) { bad = true; out.destroy(); } });   // Abbruch im Browser
