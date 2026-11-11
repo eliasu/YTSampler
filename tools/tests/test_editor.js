@@ -306,7 +306,9 @@ t('Regler: Umschalter und Menüs schicken param sofort, kein Undo, kein „gespe
   assert.strictEqual(await b.eval(`$('p-qdiv').selectedOptions[0].textContent`), '1/32');
   assert(await b.eval(`$('ctl').querySelector('.set').getBoundingClientRect().top < $('p-quant').getBoundingClientRect().bottom`), 'Reglerleiste einzeilig');
   assert.strictEqual(await b.eval(`$('p-mode').textContent`), 'Hold');
-  m.log = []; await b.click('#p-mode'); assert.strictEqual((await waitLog((y) => y.cmd === 'param')).value, 0);
+  m.log = []; await b.click('#p-mode'); assert.strictEqual((await waitLog((y) => y.cmd === 'param')).value, 2);   // Hold → Trig+Hold
+  await b.waitFor(`$('p-mode').textContent === 'Trig+Hold'`);
+  m.log = []; await b.click('#p-mode'); assert.strictEqual((await waitLog((y) => y.cmd === 'param')).value, 0);   // → Trigger
   await b.waitFor(`$('p-mode').textContent === 'Trigger'`);
   m.log = []; await b.eval(`$('p-div').value = '10'; $('p-div').dispatchEvent(new Event('change'))`);
   assert.deepStrictEqual(await waitLog((y) => y.cmd === 'param'), { client: last().client, cmd: 'param', name: 'div', value: 10 });

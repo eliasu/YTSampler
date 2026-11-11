@@ -576,7 +576,7 @@ t('/cmd param: gültig → param an [js] und {}, ungültig → badreq, auch bei 
     assert.deepStrictEqual(await cmd({ client: 'c1', cmd: 'param', name, value }), { ok: true }, `${name} ${value}`);
     assert.deepStrictEqual(on('param'), [['param', name, value]]);
   }
-  const bad = [['div', 12], ['div', 2.5], ['div', -1], ['rate', 0.2], ['rate', 2.01], ['mode', 2], ['rev', 0.5], ['tune', -1], ['warp', '1'],
+  const bad = [['div', 12], ['div', 2.5], ['div', -1], ['rate', 0.2], ['rate', 2.01], ['mode', 3], ['mode', 1.5], ['rev', 0.5], ['tune', -1], ['warp', '1'],
     ['quant', true], ['qdiv', 4], ['qdiv', 1.5], ['qcatch', 2], ['vol', -71], ['vol', 6.5], ['voices', 7], ['voices', 1.5], ['base', 128], ['base', 36.5], ['norm', 2], ['norm', 0.5], ['bank', 1], ['toString', 0],
     ['div', null], ['rate', NaN], [undefined, 1]];
   for (const [name, value] of bad) {

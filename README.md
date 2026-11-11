@@ -41,7 +41,7 @@ Seit 3.0 ist das Device nur noch das Bühneninstrument: Bank wählen und spielen
 | Pads | Noten ab Base Note (Standard C1 = 36) spielen Pad 1–16, Pad 1 unten links. **Alle MIDI-Kanäle** spielen Pads, welcher Controller ankommt, regelt der MIDI-Eingang der Spur. Maus-Klick geht auch. |
 | Slice | Notenwert 1/64 … 4 Takte, rechnet mit dem aktuellen Live-Tempo. Drehst du ihn, während Pads klingen (Trigger), endet der klingende Slice gleich am neuen Ende |
 | Rate | 0.25–2×, ändert Tonhöhe, die rhythmische Länge bleibt gleich |
-| Trigger / Hold | Trigger: spielt genau einen Slice (Notenwert). Hold: spielt, solange gedrückt, längstens 16 s (Ende des Snippets) |
+| Mode (Trig / Hold / T+H) | Trig: spielt genau einen Slice (Notenwert). Hold: spielt, solange gedrückt, längstens 16 s (Ende des Snippets). T+H (Trig+Hold): kurz gedrückt spielt den Slice zu Ende wie Trig, länger gehalten spielt weiter, bis du loslässt. Rückwärts wie Trig. |
 | Rev | rückwärts |
 | Tune | stimmt jedes Pad auf Lives aktuelle Skala (Live 12: Skala-Grundton + Skalatyp). Transponiert wird so, dass möglichst viele Töne in der Skala liegen, max. ±6 Halbtöne, plus Korrektur der Stimmung der Aufnahme (Abweichung von A=440). Pads ohne klare Tonart (Drums, Sprache, Rauschen) bleiben, wie sie sind. Ändert sich Grundton oder Skala in Live, ziehen auch Pads mit, die gerade klingen (lange Hold-Samples folgen dem Wechsel). Ohne Warp heißt höher auch schneller. |
 | Warp | Material läuft im Tempo des Sets, Tonhöhe bleibt (Timestretch, élastique über `groove~`). Sind Beats erkannt, folgt jeder Slice dem Beat-Raster des Originals (siehe „Tempo, Beats und Warp“). Rate und Tune ändern dann nur die Tonhöhe. Aus = klassischer Sampler-Modus, knackiger für Drums. |

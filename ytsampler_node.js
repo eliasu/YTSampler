@@ -1897,7 +1897,7 @@ async function edSearch(q) {
 
 // Device-Regler (Spec 3.0 3.1): name -> [min, max, ganz]. Toggles 0/1.
 const PARAMS = {
-  div: [0, 11, true], rate: [0.25, 2, false], mode: [0, 1, true], rev: [0, 1, true], tune: [0, 1, true],
+  div: [0, 11, true], rate: [0.25, 2, false], mode: [0, 2, true], rev: [0, 1, true], tune: [0, 1, true],
   warp: [0, 1, true], quant: [0, 1, true], qdiv: [0, 3, true], qcatch: [0, 1, true], vol: [-70, 6, false], voices: [0, 6, true], base: [0, 127, true],
   norm: [0, 1, true],
 };

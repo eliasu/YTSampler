@@ -257,10 +257,10 @@ function sendBankstate() {
 function playRange(i) {
     var start = effStart(i), from, to, R = warpRatio(i);
     var hi = start + (B ? B.lens[i] : 0);
-    if (P.mode && P.rev) {                     // Hold rückwärts: Fach vom Ende zum Start
+    if (P.mode === 1 && P.rev) {               // Hold rückwärts: Fach vom Ende zum Start
         from = hi; to = start;
     } else {
-        if (R > 0 && !P.mode && beatsOK(i)) {
+        if (R > 0 && P.mode !== 1 && beatsOK(i)) {
             // Warp mit Beats: Slice endet auf dem Raster der Quelle -> folgt schwankendem Tempo
             var end = timeAt(i, xAt(i, start) + DIVS[P.div][1] * 4);
             if (end > start) R = clamp((end - start) / sliceMs(), 0.25, 4);
@@ -277,7 +277,7 @@ function playRange(i) {
 // Abgespielter Quellbereich: Trigger = Slice, Hold = bis Snippet-Ende
 // Warp: Slice = gleicher Notenwert im Tempo der Quelle
 function padSpan(i) {
-    var base = P.mode ? HOLD_MAX : sliceMs();
+    var base = P.mode === 1 ? HOLD_MAX : sliceMs();   // Trig+Hold rechnet wie Trigger, trigger() verlängert
     var R = warpRatio(i);
     return R > 0 ? base * R : base * padRate(i);
 }
@@ -361,6 +361,7 @@ function retime() {
         var v = voices[k], i = v.pad;
         if (i < 0 || v.hold || t >= v.end - v.rel || !B) continue;   // Hold, frei oder schon im Release
         var lo = effStart(i), to = clamp(v.a + v.dir * sliceMs() * v.speed, lo, lo + B.lens[i]);
+        if (v.th) { v.cut = to; continue; }                              // Trig+Hold gehalten: nur das Slice-Ende fürs Loslassen
         var p = v.from + v.dir * v.speed * (t - v.t);                    // aktuelle Position, Song-ms
         var dur = v.dir * (to - p) / v.speed, o = engOut(v.eng);
         outlet(o, "target", k + 1);
@@ -380,7 +381,7 @@ function retime() {
     }
 }
 function rate(v) { P.rate = clamp(v, 0.1, 4); updateSel(); }
-function playmode(v) { P.mode = v ? 1 : 0; updateSel(); }   // 0 = Trigger, 1 = Hold
+function playmode(v) { P.mode = clamp(Math.floor(v) || 0, 0, 2); updateSel(); }   // 0 = Trigger, 1 = Hold, 2 = Trig+Hold
 function reverse(v) { P.rev = v ? 1 : 0; sendBankstate(); }
 function basenote(v) { P.base = Math.floor(v); sendBankstate(); }
 function volume(v) { P.vol = v; sendBankstate(); }                       // dB, am Klang ändert sich hier nichts
@@ -426,14 +427,14 @@ function retune() {
         if (dur <= v.rel) {
             outlet(o, "gateoff", v.rel);
             v.end = t + v.rel;
-            if (!v.hold) outlet(2, "padflash", i, v.rel);
+            if (!v.hold && !v.th) outlet(2, "padflash", i, v.rel);
             outlet(1, "playstop", i);
             continue;
         }
         outlet(o, "ext", toBuf(i, v.to), dur);
         outlet(o, "rel", dur - v.rel, v.rel);
         v.end = t + dur;
-        if (!v.hold) outlet(2, "padflash", i, dur);
+        if (!v.hold && !v.th) outlet(2, "padflash", i, dur);
         outlet(1, "playing", i, p, v.to, dur);
     }
 }
@@ -552,9 +553,13 @@ function trigger(i, vel, late) {
         from += (to >= from ? 1 : -1) * late * speed;
         dur -= late;
     }
+    // Trig+Hold vorwärts: spielt wie Hold bis zum Fachende, Loslassen vor dem Slice-Ende kürzt auf den Slice (noteoff).
+    // Rückwärts wie Trigger: hinter dem Pad-Start kommt nichts mehr
+    var th = P.mode === 2 && to > from, cut = to;
+    if (th) { to = effStart(i) + B.lens[i]; dur = (to - from) / speed; }
     var amp = vel / 127 * padAmp(i);           // > 1 geht: env läuft über line~ in *~, nichts klemmt
     var atk = Math.min(ATK_MS, dur * 0.5);
-    var rel = Math.min(P.mode ? SNIP_FADE_MS : REL_MS, dur * 0.5);   // Hold: am Snippet-Ende kurz ausblenden
+    var rel = Math.min(P.mode === 1 || th ? SNIP_FADE_MS : REL_MS, dur * 0.5);   // Hold: am Snippet-Ende kurz ausblenden
 
     var t = nowMs();
     var k = allocVoice(i);
@@ -568,7 +573,7 @@ function trigger(i, vel, late) {
     }
     voices[k].pad = i; voices[k].end = t + dur; voices[k].t = t; voices[k].eng = eng;
     // für retime(): Anker (Slice-Anfang vor Catch), Richtung, Quell-ms pro ms, Position bei t, Release
-    voices[k].hold = P.mode; voices[k].a = pr.from; voices[k].dir = to >= from ? 1 : -1;
+    voices[k].hold = P.mode === 1 ? 1 : 0; voices[k].th = th; voices[k].cut = cut; voices[k].a = pr.from; voices[k].dir = to >= from ? 1 : -1;
     voices[k].speed = speed; voices[k].from = from; voices[k].rel = rel;
     voices[k].to = to; voices[k].r = r;                                 // für retune(): Ende im Sample, Tonhöhe
 
@@ -579,13 +584,14 @@ function trigger(i, vel, late) {
     else outlet(o, "pos", toBuf(i, from), toBuf(i, to), dur);
     outlet(o, "env", amp, atk);
     outlet(o, "rel", Math.max(0, dur - rel), rel);
-    if (P.mode) outlet(2, "padlight", i, 1);
+    if (P.mode === 1 || th) outlet(2, "padlight", i, 1);
     else outlet(2, "padflash", i, dur);
     outlet(1, "playing", i, from, to, dur);
     updateSel();
 }
 
 function noteoff(i) {
+    if (P.mode === 2) { trigHoldOff(i); return; }
     if (!P.mode) return;                       // Trigger: Note-Off ignorieren
     outlet(2, "padlight", i, 0);
     outlet(1, "playstop", i);
@@ -598,6 +604,30 @@ function noteoff(i) {
             voices[k].rel = REL_MS;                // ab jetzt im Release: retune() lässt sie in Ruhe
         }
     }
+}
+
+// Trig+Hold losgelassen: vor dem Slice-Ende spielt die Stimme bis dorthin weiter (wie Trigger), danach Release wie Hold
+function trigHoldOff(i) {
+    var t = nowMs(), off = 0;
+    for (var k = 0; k < VMAX; k++) {
+        var v = voices[k];
+        if (v.pad !== i || v.end <= t || !v.th) continue;
+        var o = engOut(v.eng), p = v.from + v.dir * v.speed * (t - v.t), dur = (v.cut - p) / v.speed;
+        v.th = 0; v.rel = REL_MS;
+        outlet(o, "target", k + 1);
+        if (dur > REL_MS) {
+            if (!v.eng) outlet(o, "ext", toBuf(i, v.cut), dur);
+            outlet(o, "rel", dur - REL_MS, REL_MS);
+            v.to = v.cut; v.end = t + dur;
+            outlet(2, "padlight", i, 0);
+            outlet(2, "padflash", i, dur);
+            outlet(1, "playing", i, p, v.cut, dur);
+        } else {
+            outlet(o, "gateoff", REL_MS);
+            v.end = t + REL_MS; off = 1;
+        }
+    }
+    if (off) { outlet(2, "padlight", i, 0); outlet(1, "playstop", i); }
 }
 
 // ---------- Laden ----------
@@ -776,7 +806,7 @@ function showBank() {
 function updateSel() {
     var pr = durMs > 0 ? playRange(sel) : { from: 0, to: 0, R: 0 };
     var s = Math.min(pr.from, pr.to), e = Math.max(pr.from, pr.to);
-    var info = P.mode ? "Hold" : DIVS[P.div][0] + " " + Math.round(sliceMs()) + " ms";
+    var info = P.mode === 1 ? "Hold" : DIVS[P.div][0] + " " + Math.round(sliceMs()) + " ms" + (P.mode === 2 ? " +Hold" : "");
     if (durMs > 0 && beatsOK(sel)) {
         var x = Math.round(xAt(sel, s) * 4) / 4;
         var bar = Math.floor(x / 4) + 1, bt = x - (bar - 1) * 4 + 1;

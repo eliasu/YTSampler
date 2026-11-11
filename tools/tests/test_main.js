@@ -814,6 +814,42 @@ t('Mix: padana vor bank verfällt, nach bank gilt, einzeln nach Tempo-Korrektur'
     assert.strictEqual(m.ctx.PA.length, 16);
 });
 
+// Trig+Hold (Mode 2): kurz = Slice wie Trigger, länger gehalten = wie Hold bis zum Loslassen
+t('Trig+Hold: spielt bis Fachende, früh losgelassen bis zum Slice-Ende, spät losgelassen Release', function () {
+    var m = liveDev();
+    m.send('playmode', 2); m.take();
+    m.send('note', 36, 100, 1);
+    var pos = m.on(0, 'pos')[0];
+    assert.strictEqual(pos[2], 0); assert.ok(pos[3] > 250, 'bis Fachende, nicht nur Slice');
+    assert.deepStrictEqual(m.on(2, 'padlight'), [[2, 'padlight', 0, 1]]);
+    m.take(); m.clock += 100; m.send('note', 36, 0, 1);   // vor dem Slice-Ende (250 ms)
+    assert.deepStrictEqual(sig(m, 0), [['target', 1], ['ext', 250, 150], ['rel', 130, 20]]);
+    assert.deepStrictEqual(m.on(2, 'padflash'), [[2, 'padflash', 0, 150]]);
+    assert.deepStrictEqual(m.on(1, 'playstop'), []);
+
+    m = liveDev();
+    m.send('playmode', 2); m.send('note', 36, 100, 1); m.take();
+    m.clock += 400; m.send('note', 36, 0, 1);       // länger als der Slice gehalten
+    assert.deepStrictEqual(sig(m, 0), [['target', 1], ['gateoff', 20]]);
+    assert.deepStrictEqual(m.on(1, 'playstop'), [[1, 'playstop', 0]]);
+});
+
+t('Trig+Hold: rückwärts wie Trigger, Division während des Haltens setzt das Slice-Ende', function () {
+    var m = liveDev();
+    m.send('playmode', 2); m.send('reverse', 1); m.take();
+    m.send('note', 37, 100, 1);                     // Pad 1: 30250 -> 30000 wie Trigger
+    assert.deepStrictEqual(sig(m, 0).slice(0, 3), [['target', 1], ['env', 0], ['pos', 16250, 16000, 250]]);
+    m.take(); m.clock += 50; m.send('note', 37, 0, 1);
+    assert.deepStrictEqual(sig(m, 0), []);
+
+    m = liveDev();
+    m.send('playmode', 2); m.send('note', 36, 100, 1); m.take();
+    m.clock += 100; m.send('division', 7);          // 1/4 = 500 ms: gehalten, nichts zu hören
+    assert.deepStrictEqual(sig(m, 0), []);
+    m.clock += 100; m.send('note', 36, 0, 1);       // Position 10200, Slice-Ende jetzt 10500
+    assert.deepStrictEqual(sig(m, 0), [['target', 1], ['ext', 500, 300], ['rel', 280, 20]]);
+});
+
 // Tune live: Grundton in Live ändert sich, Tune an -> klingende Stimmen in der neuen Tonhöhe weiter
 function tuneDev() {
     var m = liveDev();

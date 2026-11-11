@@ -35,7 +35,7 @@ function beatsOf(video, bpm) {
 }
 function bars(video) { const v = VIDEOS[video], b = beatsOf(video, v[1]); return b.beats.filter((t, k) => k >= 8 && (k - 8) % 4 === 0); }
 // Regler wie Spec 3.0, 3.1: [min, max, ganz]
-const PARAMS = { div: [0, 11, true], rate: [0.25, 2], mode: [0, 1, true], rev: [0, 1, true], tune: [0, 1, true], warp: [0, 1, true],
+const PARAMS = { div: [0, 11, true], rate: [0.25, 2], mode: [0, 2, true], rev: [0, 1, true], tune: [0, 1, true], warp: [0, 1, true],
   quant: [0, 1, true], qdiv: [0, 3, true], qcatch: [0, 1, true], vol: [-70, 6], voices: [0, 6, true], base: [0, 127, true], norm: [0, 1, true] };
 const PARAMS_START = { div: 5, rate: 1, mode: 0, rev: 0, tune: 1, warp: 0, quant: 1, qdiv: 1, qcatch: 0, vol: -3.5, voices: 6, base: 36, bpm: 120, norm: 1 };   // bpm = Lives Tempo
 const DIV_FRAC = [1 / 64, 1 / 32, 1 / 24, 1 / 16, 1 / 12, 1 / 8, 1 / 6, 1 / 4, 1 / 2, 1, 2, 4];

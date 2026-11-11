@@ -1132,9 +1132,9 @@
    {
     "box": {
      "id": "obj-156",
-     "maxclass": "live.text",
+     "maxclass": "live.tab",
      "numinlets": 1,
-     "numoutlets": 2,
+     "numoutlets": 3,
      "patching_rect": [
       900.0,
       220.0,
@@ -1143,9 +1143,9 @@
      ],
      "outlettype": [
       "",
-      ""
+      "",
+      "float"
      ],
-     "text": "Trigger",
      "presentation": 1,
      "presentation_rect": [
       496.0,
@@ -1153,23 +1153,25 @@
       70.0,
       30.0
      ],
-     "mode": 1,
-     "texton": "Hold",
+     "num_lines_patching": 1,
+     "num_lines_presentation": 1,
+     "fontsize": 9.0,
      "saved_attribute_attributes": {
       "valueof": {
        "parameter_longname": "Mode",
        "parameter_shortname": "Mode",
        "parameter_type": 2,
        "parameter_enum": [
-        "off",
-        "on"
+        "Trig",
+        "Hold",
+        "T+H"
        ],
-       "parameter_mmax": 1
+       "parameter_mmax": 2,
+       "parameter_unitstyle": 9
       }
      },
      "parameter_enable": 1,
-     "varname": "Mode",
-     "fontsize": 12.0
+     "varname": "Mode"
     }
    },
    {
