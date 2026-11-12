@@ -1154,9 +1154,11 @@ function wavHeader(dataBytes) {
 
 // ---------- Lautheit pro Pad (Mix-Spec Nachtrag 14) ----------
 // K-Gewichtung nach ITU-R BS.1770 (Vorfilter + RLB-Hochpass), Koeffizienten für 44,1 kHz wie pyloudnorm.
-// Lautheit = −0,691 + 10·log10(Mittel der Kanäle), Blöcke 400 ms / 75 % Überlappung, Absolut-Gate −70, kein relatives Gate.
-// Ausgleich = Ziel − Lautheit, ±12 dB, Anheben nur bis Sample-Peak −1 dBFS. Stille oder leiser als NORM_FLOOR: 0 dB.
-const NORM_TARGET = -14, NORM_MAX = 12, NORM_PEAK = -1, NORM_FLOOR = -60, NORM_MS = 2000;
+// Lautheit = −0,691 + 10·log10(Mittel der Kanäle), Blöcke 400 ms / 75 % Überlappung, Absolut-Gate −70, relatives Gate −10 LU.
+// Ausgleich = Ziel − Lautheit, −12 bis +24 dB. Stille oder leiser als NORM_FLOOR: 0 dB.
+// Seit 4.4: anheben bis +24 dB ohne Peak-Bremse (die Spitzen fängt der Limiter im Device ab), relatives Gate wie LUFS.
+// GAIN_V in der Snippet-.json: ältere Messungen gelten als fehlend und werden einmal nachgemessen
+const NORM_TARGET = -14, NORM_BOOST = 24, NORM_CUT = 12, NORM_FLOOR = -60, NORM_MS = 2000, GAIN_V = 2;
 const K_BIQUADS = (() => {
   const fs = SNIP_SR;
   const shelf = (() => {
@@ -1177,12 +1179,10 @@ function padGain(buf, pos, ms) {
   const n = Math.min(Math.floor(Math.min(ms, NORM_MS) * SNIP_SR / 1000), Math.floor((buf.length - pos) / BPF));
   if (n <= 0) return 0;
   const sq = [new Float64Array(n), new Float64Array(n)];
-  let peak = 0;
   for (let ch = 0; ch < 2; ch++) {
     const st = K_BIQUADS.map(() => [0, 0, 0, 0]);   // x1 x2 y1 y2 pro Biquad
     for (let i = 0; i < n; i++) {
       let x = buf.readInt16LE(pos + i * BPF + ch * 2) / 32768;
-      if (Math.abs(x) > peak) peak = Math.abs(x);
       for (let q = 0; q < 2; q++) {
         const [b0, b1, b2, a1, a2] = K_BIQUADS[q], z = st[q];
         const y = b0 * x + b1 * z[0] + b2 * z[1] - a1 * z[2] - a2 * z[3];
@@ -1192,25 +1192,26 @@ function padGain(buf, pos, ms) {
     }
   }
   const blk = Math.min(n, Math.round(0.4 * SNIP_SR)), hop = Math.max(1, Math.round(blk / 4));
-  let sum = 0, cnt = 0;
+  const lufs = (z) => -0.691 + 10 * Math.log10(z);
+  const zs = [];
   for (let s = 0; s + blk <= n; s += hop) {
     let z = 0;
     for (let i = s; i < s + blk; i++) z += sq[0][i] + sq[1][i];
     z /= 2 * blk;
-    if (z > 0 && -0.691 + 10 * Math.log10(z) > -70) { sum += z; cnt++; }
+    if (z > 0 && lufs(z) > -70) zs.push(z);
   }
-  if (!cnt) return 0;
-  const L = -0.691 + 10 * Math.log10(sum / cnt);
+  if (!zs.length) return 0;
+  // relatives Gate (BS.1770): Blöcke mehr als 10 LU unter dem Mittel zählen nicht, ein stiller Anfang zieht nicht runter
+  const rel = lufs(zs.reduce((a, b) => a + b, 0) / zs.length) - 10, loud = zs.filter((z) => lufs(z) > rel);
+  const L = lufs(loud.reduce((a, b) => a + b, 0) / loud.length);
   if (L < NORM_FLOOR) return 0;
-  let g = Math.max(-NORM_MAX, Math.min(NORM_MAX, NORM_TARGET - L));
-  if (g > 0) g = Math.min(g, Math.max(0, NORM_PEAK - 20 * Math.log10(peak)));
-  return Math.round(g * 10) / 10;
+  return Math.round(Math.max(-NORM_CUT, Math.min(NORM_BOOST, NORM_TARGET - L)) * 10) / 10;
 }
 // Alte .json ohne gain: einmal aus dem Snippet nachmessen, ohne neu zu schneiden, nur das Feld anhängen. -> gain oder null
 function snipGain(id) {
   const j = readJson(snipJson(id));
   if (!isObj(j) || !Array.isArray(j.lens) || j.lens.length !== 16) return null;
-  if (isGain(j.gain)) return j.gain;
+  if (isGain(j.gain) && j.gainv === GAIN_V) return j.gain;
   const tmp = path.join(SNIP_DIR, `${id}.${process.pid}.tmp`);
   try {
     const w = wavInfo(snipWav(id)), fd = fs.openSync(snipWav(id), 'r'), part = Math.round(NORM_MS * SNIP_SR / 1000) * BPF, buf = Buffer.alloc(part);
@@ -1221,7 +1222,7 @@ function snipGain(id) {
         gain.push(got ? padGain(buf.subarray(0, got - (got % BPF)), 0, j.lens[i]) : 0);
       }
     } finally { fs.closeSync(fd); }
-    fs.writeFileSync(tmp, JSON.stringify({ ...j, gain }));   // nur das Feld anhängen, der Rest bleibt, wie er war
+    fs.writeFileSync(tmp, JSON.stringify({ ...j, gain, gainv: GAIN_V }));   // nur die Felder setzen, der Rest bleibt, wie er war
     fs.renameSync(tmp, snipJson(id));
     return gain;
   } catch (e) {
@@ -1229,14 +1230,14 @@ function snipGain(id) {
     return null;
   }
 }
-const isGain = (a) => Array.isArray(a) && a.length === 16 && a.every((x) => typeof x === 'number' && Math.abs(x) <= NORM_MAX);
+const isGain = (a) => Array.isArray(a) && a.length === 16 && a.every((x) => typeof x === 'number' && x >= -NORM_CUT && x <= NORM_BOOST);
 
 // Snippet-.json lesen -> {pads, lens, durs}. Alte Form {video, starts, lens, dur} gilt als Pads aus einem Video
 // (Mix-Spec 2.2), sie bleibt aktuell und wird nicht neu geschnitten. null = fehlt oder unlesbar.
 function readSnip(id) {
   const j = readJson(snipJson(id));
   if (!isObj(j) || !Array.isArray(j.lens) || j.lens.length !== 16) return null;
-  const gain = isGain(j.gain) ? j.gain : null;   // fehlt bei alten .json: snipGain misst nach
+  const gain = isGain(j.gain) && j.gainv === GAIN_V ? j.gain : null;   // fehlt oder alte Messung: snipGain misst nach
   if (isPadList(j.pads)) return { pads: j.pads, lens: j.lens, durs: isObj(j.durs) ? j.durs : {}, gain };
   if (typeof j.video === 'string' && isStarts(j.starts)) {
     return { pads: j.starts.map((start) => ({ video: j.video, start })), lens: j.lens, durs: typeof j.dur === 'number' ? { [j.video]: j.dur } : {}, gain };
@@ -1386,7 +1387,7 @@ function cutSnippets(bank) {
     }
     fs.renameSync(tmp, snipWav(bank.id));
     const pads = bank.pads.map((p) => (p ? { video: p.video, start: p.start } : null));
-    fs.writeFileSync(tmp, JSON.stringify({ pads, lens: src.lens, durs: src.durs, gain }));
+    fs.writeFileSync(tmp, JSON.stringify({ pads, lens: src.lens, durs: src.durs, gain, gainv: GAIN_V }));
     fs.renameSync(tmp, snipJson(bank.id));
   } catch (e) {
     try { fs.unlinkSync(tmp); } catch (e2) { /* weg */ }

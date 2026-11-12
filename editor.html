@@ -1081,7 +1081,11 @@ async function preview(bank, k) {
     }
     if (S.prev !== me) return;
     const t = actx.currentTime, dur = Math.min(me.ms / 1000, buf.duration), src = actx.createBufferSource(), g = actx.createGain();
-    src.buffer = buf; src.connect(g); g.connect(actx.destination);
+    if (!actx.lim) {   // wie der Limiter im Device: angehobene Spitzen nicht übersteuern
+      const c = actx.lim = actx.createDynamicsCompressor();
+      c.threshold.value = -1; c.knee.value = 0; c.ratio.value = 20; c.attack.value = 0.001; c.release.value = 0.08; c.connect(actx.destination);
+    }
+    src.buffer = buf; src.connect(g); g.connect(actx.lim);
     g.gain.setValueAtTime(me.amp, t); g.gain.setValueAtTime(me.amp, t + Math.max(0, dur - 0.01)); g.gain.linearRampToValueAtTime(0, t + dur);
     src.onended = () => { if (S.prev === me) { S.prev = null; markPrev(); } };
     src.start(t, 0, dur); me.src = src; me.gain = g; me.dur = dur;
