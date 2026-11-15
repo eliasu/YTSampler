@@ -202,7 +202,6 @@
   #trimf input, #bankvolf input { width:96px; padding:0; border:none; background:none; accent-color:var(--acc); }
   #trimf .v, #bankvolf .v { min-width:52px; color:var(--dim); }
   #tempo input { width:72px; padding:4px 7px; }
-  #tempo .ok { display:flex; gap:8px; align-items:center; }   /* Hinweis rechts neben „Tempo stimmt“ */
 
   /* Slide-in Suche */
   #shade { position:fixed; inset:0; background:rgba(0,0,0,.45); opacity:0; pointer-events:none; transition:opacity .2s; z-index:20; }
@@ -371,7 +370,7 @@ let savedT;
 function flashSaved() { $('saved').textContent = 'gespeichert ✓'; clearTimeout(savedT); savedT = setTimeout(() => { $('saved').textContent = 'automatisch gespeichert'; }, 900); }
 
 // ---------- Befehle ----------
-const WRITE = new Set(['rename', 'duplicate', 'delete', 'move', 'stage', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'fillpads', 'newmix', 'setpad', 'tempo', 'tempook', 'fetch', 'fetchall']);
+const WRITE = new Set(['rename', 'duplicate', 'delete', 'move', 'stage', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'fillpads', 'newmix', 'setpad', 'tempo', 'tempoauto', 'fetch', 'fetchall']);
 async function cmd(name, fields = {}, quiet = false) {
   let r;
   try {
@@ -989,8 +988,7 @@ function renderPads() {
     + '<label id="trimf" title="Trim dieses Pads, zusätzlich zum Ausgleich (gemessen ' + fmtDb(gain) + '). Doppelklick: 0"><span class="lbl">Trim</span><input type="range" id="trim" min="-12" max="12" step="0.5"><span class="v num" id="trimv"></span></label></div>'
     + '<div class="line"><div class="btns"><button class="small" id="rollbtn">' + icon('dice') + ' Neues Snippet</button><button class="small" id="hitbtn">Anspielen</button></div>'
     + '<div id="tempo"><span class="lbl">Tempo</span><input id="bpm" type="number" min="30" max="300" step="0.1" class="num"><button class="small" id="half">½×</button><button class="small" id="double">2×</button>'
-    + (tb.confirmed ? '' : '<span class="ok"><button class="small" id="tempook">Tempo stimmt</button>'
-      + (tb.bpm ? '<span class="hint" id="tempohint">Tempo aus der Analyse, nicht bestätigt</span>' : '') + '</span>') + '</div></div>';
+    + (tb.confirmed ? '<button class="small" id="tempoauto" title="Eigenes Tempo verwerfen, wieder das gemessene Tempo">Gemessen</button>' : '') + '</div></div>';
   $('inspvideo').textContent = vt + (tb.bpm ? ' · ' + fmtBpm(tb.bpm) + ' BPM' : '');
   $('rollbtn').disabled = !vw.edit; $('rollbtn').onclick = () => roll(S.sel);
   const tr = $('trim'), pad = S.sel;
@@ -1008,7 +1006,7 @@ function renderPads() {
   inp.onchange = () => { const x = parseFloat(inp.value); if (x) setTempo(x); };
   $('half').onclick = () => setTempo(tb.bpm / 2);
   $('double').onclick = () => setTempo(tb.bpm * 2);
-  const ok = $('tempook'); if (ok) { ok.disabled = !tempoOn; ok.onclick = () => cmd('tempook', { video: v }); }
+  const au = $('tempoauto'); if (au) { au.disabled = !tempoOn; au.onclick = () => cmd('tempoauto', { video: v }); }
 }
 
 // ---------- Quell-Grids (Flow-Nachtrag, Nachtrag 12): je 4×4 wie die eigenen Pads, Pad 1 unten links ----------

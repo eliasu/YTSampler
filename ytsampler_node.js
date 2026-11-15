@@ -403,64 +403,16 @@ function tempoFromOnset(onset, fps) {
 }
 
 // =====================================================================
-// Beat-Tracking (dynamische Programmierung nach D. Ellis 2007):
-// sucht die Kette von Schlägen, die möglichst auf Einsätzen liegt und
-// dabei möglichst gleichmäßig im vorgegebenen Tempo bleibt.
+// Schläge: gleichmäßiges Raster im Tempo des Videos (seit 4.6 immer, auch fürs gemessene Tempo),
+// an den Einsätzen ausgerichtet. Die "1" sucht findDownbeat.
 // =====================================================================
 const BEAT_LEAD_MS = 12;   // Slices knapp vor dem Einsatz starten, damit der Anschlag ganz drin ist
 
-function trackBeats(a, bpm) {
-  const env = a.onset, fps = a.fps, n = env.length;
-  if (!n || !(bpm > 0) || !(fps > 0)) return null;
-  const period = 60 * fps / bpm;
-  if (period < 4 || n < period * 4) return null;
-
-  // normieren und leicht glätten
-  let m = 0, v = 0;
-  for (let i = 0; i < n; i++) m += env[i];
-  m /= n;
-  for (let i = 0; i < n; i++) v += (env[i] - m) * (env[i] - m);
-  const sd = Math.sqrt(v / n) || 1;
-  const hw = Math.max(1, Math.round(period / 16));
-  const win = [];
-  for (let k = -hw; k <= hw; k++) win.push(Math.exp(-0.5 * Math.pow(k * 32 / period, 2)));
-  const local = new Float64Array(n);
-  for (let i = 0; i < n; i++) {
-    let s = 0;
-    for (let k = -hw; k <= hw; k++) { const j = i + k; if (j >= 0 && j < n) s += (env[j] / sd) * win[k + hw]; }
-    local[i] = s;
-  }
-
-  const TIGHT = 100;
-  const lo = Math.round(period / 2), hi = Math.round(2 * period);
-  const pen = new Float64Array(hi + 1);
-  for (let d = lo; d <= hi; d++) pen[d] = -TIGHT * Math.pow(Math.log(d / period), 2);
-  const cum = new Float64Array(n), back = new Int32Array(n).fill(-1);
-  for (let i = 0; i < n; i++) {
-    let best = -Infinity, bi = -1;
-    for (let d = lo; d <= hi && i - d >= 0; d++) {
-      const s = cum[i - d] + pen[d];
-      if (s > best) { best = s; bi = i - d; }
-    }
-    cum[i] = local[i] + (bi >= 0 && best > 0 ? best : 0);
-    back[i] = bi >= 0 && best > 0 ? bi : -1;
-  }
-  // Ende: bester Wert im letzten Takt, dann zurückverfolgen
-  let end = n - 1;
-  for (let i = Math.max(0, n - Math.round(period)); i < n; i++) if (cum[i] > cum[end]) end = i;
-  const frames = [];
-  for (let i = end; i >= 0; i = back[i]) frames.push(i);
-  frames.reverse();
-  if (frames.length < 4) return null;
-
-  const beats = frames.map((f) => Math.max(0, Math.round(frameMs(a, f) - BEAT_LEAD_MS)));
-  return { beats, frames, down: findDownbeat(a, frames, period, findIntro(a, frames)) };
-}
 // Frame -> ms. Der Fluss ist am größten, wenn der Einsatz ~3/4 ins Analysefenster gerückt ist.
 const frameMs = (a, f) => ((f * 64 + 0.78 * 512) / a.srd) * 1000;   // N = 512, HOP = 64
 
-// Tempo von Hand bestätigt (seit 4.5): gleichmäßiges Raster genau in diesem Tempo, nur die Lage an den Einsätzen
-// ausgerichtet. So folgt Warp der eingestellten Zahl, jeder Slice gleich schnell. Gleiche Rückgabe wie trackBeats.
+// Raster genau in diesem Tempo, nur die Lage an den Einsätzen ausgerichtet. So folgt Warp der Zahl, jeder Slice gleich schnell.
+// -> {beats (ms), frames, down} oder null
 function gridBeats(a, bpm) {
   const env = a.onset, fps = a.fps, n = env.length;
   if (!n || !(bpm > 0) || !(fps > 0)) return null;
@@ -815,7 +767,6 @@ const ERR = {
   cutfail: 'Snippets schneiden fehlgeschlagen',
   nosnip: 'Snippets fehlen – Bank nicht ladbar',
   idtaken: 'Bank existiert schon',
-  notempo: 'Kein Tempo erkannt',
   superseded: 'Neuere Suche läuft',
   searchfail: 'Suche fehlgeschlagen',
   loadfail: 'Download fehlgeschlagen',
@@ -1087,12 +1038,17 @@ const LIB = {
     const s = lib.banks[i].pads;
     [s[a], s[b]] = [s[b], s[a]];
   },
-  // tempo und tempook aus dem Editor: bestätigtes Tempo des Videos
+  // tempo aus dem Editor: eigenes Tempo des Videos (confirmed)
   tempo(lib, { video, bpm }) {
     const v = roundBpm(bpm);
     need(typeof video === 'string' && has(lib.videos, video));
     lib.videos[video].bpm = v;
     return { bpm: v };
+  },
+  // zurück zum gemessenen Tempo (seit 4.6): Bestätigung weg, es gilt wieder die Analyse (Schlagerkennung statt festem Raster)
+  tempoauto(lib, { video }) {
+    need(typeof video === 'string' && has(lib.videos, video));
+    delete lib.videos[video].bpm;
   },
 };
 
@@ -1501,7 +1457,6 @@ function cacheSize() {
 // =====================================================================
 // Beats und Würfeln für den Editor (Spec 3.1)
 // =====================================================================
-const TEMPO_MIN_CONF = 0.3;   // wie tempoTrusted() in [js]
 const beatStore = new Map();  // video -> {bpm, beats, down}
 
 // Beats gültig: bpm bestätigt oder Analyse-Konfidenz ≥ 0,3. Getrackt mit bestätigtem bpm, sonst Analyse-Tempo.
@@ -1512,12 +1467,12 @@ function beatsOf(v, a) {
   const conf = a ? a.bpmConf : 0;
   let r = beatStore.get(v);
   if (a && (!r || r.bpm !== bpm || r.confirmed !== confirmed)) {
-    const tb = bpm > 0 ? (confirmed ? gridBeats(a, bpm) : trackBeats(a, bpm)) : null;
+    const tb = bpm > 0 ? gridBeats(a, bpm) : null;
     r = { bpm, confirmed, beats: tb ? tb.beats : [], down: tb && tb.down < tb.beats.length ? tb.down : 0 };
     beatStore.set(v, r);
   }
   if (!a || !r) r = { beats: [], down: 0 };
-  return { video: v, bpm, conf, confirmed, ok: r.beats.length >= 4 && (confirmed || conf >= TEMPO_MIN_CONF), beats: r.beats, down: r.down };
+  return { video: v, bpm, conf, confirmed, ok: r.beats.length >= 4, beats: r.beats, down: r.down };
 }
 // SSE beats für den Track der aktiven Bank
 const videoBeats = (v) => beatsOf(v, getAnalysis(v, true));
@@ -2020,14 +1975,9 @@ const CMD = {
     libChange('tempo', { video: q.video, bpm: q.bpm }, by);
     bpmToDevice(q.video);
   },
-  tempook(q, by) {
-    if (!libNow.lib) throw libBroken();
-    need(typeof q.video === 'string' && has(libNow.lib.videos, q.video));
-    const a = getAnalysis(q.video, true);
-    if (!a || !(a.bpm > 0)) throw libErr('notempo');
-    const r = libChange('tempo', { video: q.video, bpm: a.bpm }, by);
+  tempoauto(q, by) {
+    libChange('tempoauto', { video: q.video }, by);
     bpmToDevice(q.video);
-    return r;
   },
   fetch(q) {
     need(isVideo(q.video));
@@ -2349,7 +2299,7 @@ Max.outlet('needsession');
 // Für tools/tests/ (unter Max ohne Wirkung)
 module.exports = {
   errMsg, DATA, LOCAL, CACHE, SESSIONS, LIB_FILE, LIB_LOCK, BACKUP_DIR, ERR, LIB, libErr, libParse, libRead, libChange, libBackup, libEvents, get libNow() { return libNow; },
-  AN, SNIP_DIR, SNIP_MS, computeAnalysis, tempoFromOnset, saveAnalysis, readAnalysis, getAnalysis, trackBeats, gridBeats, silentRanges,
+  AN, SNIP_DIR, SNIP_MS, computeAnalysis, tempoFromOnset, saveAnalysis, readAnalysis, getAnalysis, gridBeats, silentRanges,
   hasWav, isAudio, AUDIO_DIR, readSnip, snipGain, padGain, NORM_TARGET, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, keepCleanup, KEEP_DIR, cacheSize, videoFail,
   beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, fillPads, get anaMap() { return anaMap; },
   parseSearchPage, runCmd, peaks, snipPad, get webPort() { return webPort; }, get activeId() { return activeId; },

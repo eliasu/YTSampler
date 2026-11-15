@@ -143,7 +143,7 @@ t('padana pro Pad für zwei Videos: bpm, cent, Fenster ± 4 Schläge, off auf di
   assert.deepStrictEqual(again.map((p) => [p.i, p.bpm]), [[1, 101], [3, 101]]);
   assert.ok(!max.out.some((m) => m[0] === 'bpm'), 'bpm <video> <bpm> gibt es nicht mehr');
   max.out.length = 0;
-  await node.runCmd({ cmd: 'tempook', video: V });
+  await node.runCmd({ cmd: 'tempoauto', video: V });
   assert.deepStrictEqual(padana(max.out).map((p) => p.i), [0]);
   for (const h of ['beattrack', 'analyzeall']) assert.ok(!(h in max.handlers), h);
   done();
@@ -261,23 +261,21 @@ t('roll: ein Start, nicht schon belegt', () => {
   done();
 });
 
-t('ohne gültige Beats frei würfeln, bestätigtes bpm macht Beats gültig', () => {
+t('ohne Puls (Sinus, Konfidenz 0): trotzdem Raster aus dem gemessenen Tempo, Würfeln darauf; Tempo von Hand ersetzt es', () => {
   const home = tempHome(false);
   const { node } = loadNode(home);
   const W = 'NNNNNNNNNNN';
   writeWav(path.join(node.CACHE, `${W}.wav`), 40 * SR, (f) => { const s = Math.round(6000 * Math.sin(2 * Math.PI * 220 * f / SR)); return [s, s]; });
   const b = node.videoBeats(W);
-  assert.strictEqual(b.ok, false);
+  assert.ok(b.bpm > 0 && b.ok && !b.confirmed, JSON.stringify({ bpm: b.bpm, ok: b.ok }));   // seit 4.6 gilt das gemessene Tempo immer
   const s = node.rollBank(W);
   assert.strictEqual(new Set(s).size, 16);
-  assert.ok(s.every((x) => Number.isInteger(x) && x >= 0 && x <= 24000));
-  assert.ok(s.some((x) => near(x, 2000) > 30), 'frei, nicht auf einem Raster');
+  assert.ok(s.every((x) => b.beats.includes(x)), 'auf dem Raster');
   node.libChange('create', { video: W, title: 'Sinus', starts: s }, 't');
   node.libChange('tempo', { video: W, bpm: 120 }, 't');
   const c = node.videoBeats(W);
-  assert.strictEqual(c.confirmed, true);
-  assert.strictEqual(c.bpm, 120);
-  assert.strictEqual(c.ok, c.beats.length >= 4);
+  assert.ok(c.confirmed && c.bpm === 120 && c.ok);
+  assert.ok(c.beats.slice(1).every((x, k) => Math.abs(x - c.beats[k] - 500) <= 1), '120 BPM: 500 ms');
   fs.rmSync(home, { recursive: true, force: true });
 });
 

@@ -411,7 +411,7 @@ t('setstart, setstarts, swap, roll: neu schneiden, aktive Bank lädt danach; ohn
   done();
 });
 
-t('tempo, tempook: padana an [js] nur für die aktive Bank, notempo; bpmset gibt es nicht mehr', async () => {
+t('tempo, tempoauto: padana an [js] nur für die aktive Bank; bpmset und tempook gibt es nicht mehr', async () => {
   const { node, max, ids, on, cmd, events, done } = await setup();
   const a = events();
   await cmd({ cmd: 'select', id: ids[0] });
@@ -427,12 +427,19 @@ t('tempo, tempook: padana an [js] nur für die aktive Bank, notempo; bpmset gibt
   assert.strictEqual((await cmd({ cmd: 'tempo', video: V1, bpm: 20 })).code, 'badreq');
   assert.strictEqual((await cmd({ cmd: 'tempo', video: V3, bpm: 100 })).code, 'badreq');
 
-  const ok = await cmd({ cmd: 'tempook', video: V1 });
-  assert.ok(ok.ok && Math.abs(ok.bpm - 120) < 2, JSON.stringify(ok));
-  assert.deepStrictEqual(on('padana').map((m) => m[2]), Array(16).fill(ok.bpm));
-  fs.writeFileSync(path.join(node.SNIP_DIR, `${V2}.chroma`), 'kaputt');
-  fs.unlinkSync(path.join(node.CACHE, `${V2}.chroma`));
-  assert.deepStrictEqual(await cmd({ cmd: 'tempook', video: V2 }), { ok: false, code: 'notempo', text: 'Kein Tempo erkannt' });
+  const ana = node.getAnalysis(V1, true).bpm;
+  assert.ok(Math.abs(ana - 120) < 2, 'gemessen ' + ana);
+  const ok = { bpm: ana };
+  // zurück zum gemessenen Tempo: Bestätigung weg, padana wieder mit der Analyse
+  max.out = [];
+  await cmd({ cmd: 'tempo', video: V1, bpm: 80 });
+  max.out = [];
+  assert.deepStrictEqual(await cmd({ cmd: 'tempoauto', video: V1 }), { ok: true });
+  assert.ok(!('bpm' in node.libNow.lib.videos[V1]));
+  assert.ok(on('padana').every((m) => Math.abs(m[2] - ok.bpm) < 0.5), 'wieder gemessen');
+  await a.wait((ev, d) => ev === 'beats' && !d.confirmed, 'beats unbestätigt');
+  assert.strictEqual((await cmd({ cmd: 'tempoauto', video: V3 })).code, 'badreq');
+  assert.strictEqual((await cmd({ cmd: 'tempook', video: V1 })).code, 'badreq', 'tempook gibt es nicht mehr');
 
   for (const h of ['bpmset', 'load', 'key', 'analyze', 'beattrack', 'analyzeall']) assert.ok(!(h in max.handlers), h);
   done();

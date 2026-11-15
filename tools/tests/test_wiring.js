@@ -127,7 +127,7 @@ need(Object.keys(PV).sort().join() === Object.keys(HANDLER).sort().join(), 'PARA
 Object.keys(PV).forEach(function (n) {
     var box = pat.boxes.filter(function (b) { return b.box.varname === PV[n]; })[0];
     if (!box) return need(false, 'PARAM_VAR ' + n + ': kein Objekt mit varname ' + PV[n]);
-    var o = box.box.maxclass === 'live.gain~' ? 3 : 0;     // live.gain~: Ausgang 3 = Wert in dB
+    var o = box.box.maxclass === 'live.gain~' ? 2 : 0;     // live.gain~: Ausgang 2 = Wert in dB (3 = roh 0–1)
     var pre = outs(box.box.id, o).filter(function (d) { return B[d[0]].text === 'prepend ' + HANDLER[n]; });
     need(pre.length === 1 && has(outs(pre[0][0], 0), JS, 0), PV[n] + ' Ausgang ' + o + ' geht nicht über prepend ' + HANDLER[n] + ' an [js]');
     need(jsFns[HANDLER[n]], '[js]: keine Funktion ' + HANDLER[n]);

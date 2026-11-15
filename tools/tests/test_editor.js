@@ -72,21 +72,21 @@ t('Layout: Liste, 4×4 mit Pad 1 unten links, Marker, Kopfzeile, Fuß', async ()
   assert.deepStrictEqual(b.errors, []);
 });
 
-t('Tempo: „Tempo stimmt“ nur unbestätigt, ½×/2×/Zahlenfeld/tempook senden', async () => {
+t('Tempo: kein „Tempo stimmt“, ½×/2×/Zahlenfeld senden, „Gemessen“ nur bei eigenem Tempo', async () => {
   await open('normal');
   await b.click('#banklist li:nth-child(2)');
   await waitLog((x) => x.cmd === 'select' && x.id === 3);
-  await b.waitFor(`/Tempo stimmt/.test($('insp').textContent)`);
+  await b.waitFor(`$('insp').textContent.includes('Tempo') && !$('tempoauto') && !/Tempo stimmt/.test($('insp').textContent)`);
   await b.click('#half'); assert.deepStrictEqual(await waitLog((x) => x.cmd === 'tempo'), { client: last().client, cmd: 'tempo', video: 'Cv1tAm1nC0x', bpm: 58 });
-  await b.waitFor(`$('bpm').value === '58' && !/Tempo stimmt/.test($('insp').textContent)`);
+  await b.waitFor(`$('bpm').value === '58' && !!$('tempoauto')`);
   await b.click('#double'); await waitLog((x) => x.cmd === 'tempo' && x.bpm === 116);
   await b.waitFor(`$('bpm').value === '116'`);
   await b.click('#bpm'); await b.eval(`$('bpm').select()`); await b.type('120.5'); await b.key('Enter', 'Enter', 13);
   await waitLog((x) => x.cmd === 'tempo' && x.bpm === 120.5);
-  await open('normal');
-  m.lib.videos.Cv1tAm1nC0x = { title: 'Can – Vitamin C' };
-  await b.click('#banklist li:nth-child(2)'); await b.waitFor(`!!$('tempook')`);
-  await b.click('#tempook'); await waitLog((x) => x.cmd === 'tempook' && x.video === 'Cv1tAm1nC0x');
+  // „Gemessen“ nur bestätigt: verwirft das eigene Tempo, danach wieder „Tempo stimmt“
+  await b.waitFor(`!!$('tempoauto')`); m.log = [];
+  await b.click('#tempoauto'); assert.strictEqual((await waitLog((x) => x.cmd === 'tempoauto')).video, 'Cv1tAm1nC0x');
+  await b.waitFor(`!$('tempoauto')`);
   assert.strictEqual(await b.eval(`$('undo').disabled`), true, 'Tempo ist kein Schritt');
 });
 
@@ -885,14 +885,6 @@ t('Pad-Icons: × oben, Würfel darunter, immer sichtbar (ohne Hover), verdecken 
   m.log = []; await b.click('#pad6 .roll'); await waitLog((x) => x.cmd === 'roll' && x.pad === 6);
   assert(!m.log.some((x) => x.cmd === 'hit'), 'Würfel spielt nicht an');
   assert.deepStrictEqual(b.errors, []);
-});
-
-t('Tempo-Hinweis steht rechts neben „Tempo stimmt“', async () => {
-  await open('normal');
-  await b.click('#banklist li:nth-child(2)'); await b.waitFor(`!!$('tempohint')`);
-  const r = await b.eval(`(() => { const k = $('tempook').getBoundingClientRect(), h = $('tempohint').getBoundingClientRect(); return { left: h.left - k.right, dy: Math.abs((h.top + h.bottom) / 2 - (k.top + k.bottom) / 2), text: $('tempohint').textContent }; })()`);
-  assert.strictEqual(r.text, 'Tempo aus der Analyse, nicht bestätigt');
-  assert.ok(r.left >= 0 && r.left < 20 && r.dy < 3, JSON.stringify(r));
 });
 
 t('Vorhören: Klick aufs Quell-Pad holt /snip, spielt Slice-Länge (Device-Tempo), zweiter Klick stoppt, anderes Pad wechselt, Ziehen geht', async () => {

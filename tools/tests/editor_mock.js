@@ -13,9 +13,9 @@ const EDITOR = path.join(__dirname, '..', '..', 'editor.html');
 const ERR = {
   nobank: 'Bank gibt es nicht mehr', libbroken: 'Bibliothek kaputt – Speichern gesperrt', libnewer: 'Bibliothek aus neuerer Version',
   playonly: 'Track fehlt – nur spielbar', nosnip: 'Snippets fehlen – Bank nicht ladbar', idtaken: 'Bank existiert schon',
-  notempo: 'Kein Tempo erkannt', cachebusy: 'Downloads oder Schnitte laufen – danach noch einmal', superseded: 'Neuere Suche läuft', badreq: 'Ungültiger Befehl',
+  cachebusy: 'Downloads oder Schnitte laufen – danach noch einmal', superseded: 'Neuere Suche läuft', badreq: 'Ungültiger Befehl',
 };
-const WRITE = ['rename', 'duplicate', 'delete', 'move', 'stage', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'fillpads', 'newmix', 'setpad', 'trim', 'bankvol', 'tempo', 'tempook', 'fetch', 'fetchall'];
+const WRITE = ['rename', 'duplicate', 'delete', 'move', 'stage', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'fillpads', 'newmix', 'setpad', 'trim', 'bankvol', 'tempo', 'tempoauto', 'fetch', 'fetchall'];
 
 // Videos: id → [Titel, Analyse-BPM, Dauer s]
 const VIDEOS = {
@@ -132,7 +132,7 @@ function createMock(opts = {}) {
     const v = m.dev.video; if (!VIDEOS[v]) return null;
     const conf = m.lib.videos[v] && m.lib.videos[v].bpm ? 0.8 : 0.42, bpm = (m.lib.videos[v] && m.lib.videos[v].bpm) || VIDEOS[v][1];
     const confirmed = !!(m.lib.videos[v] && m.lib.videos[v].bpm);
-    return { video: v, bpm, conf, confirmed, ok: m.beatsOk != null ? m.beatsOk : (confirmed || conf >= 0.3), ...beatsOf(v, bpm) };
+    return { video: v, bpm, conf, confirmed, ok: m.beatsOk != null ? m.beatsOk : true, ...beatsOf(v, bpm) };
   }
   function send(res, ev, data) { res.write(`event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`); }
   m.emit = function (ev, data) { for (const c of m.clients) send(c, ev, data); };
@@ -294,12 +294,11 @@ function createMock(opts = {}) {
         if (m.dev.video === q.video) m.emit('beats', beatsMsg());
         return { ok: true };
       }
-      case 'tempook': {
+      case 'tempoauto': {
         if (!m.lib.videos[q.video]) return fail('badreq');
-        if (!VIDEOS[q.video]) return fail('notempo');
-        const bpm = VIDEOS[q.video][1]; m.lib.videos[q.video].bpm = bpm; changed(q.client);
+        delete m.lib.videos[q.video].bpm; changed(q.client);
         if (m.dev.video === q.video) m.emit('beats', beatsMsg());
-        return { ok: true, bpm };
+        return { ok: true };
       }
       case 'fetch': {
         const v = q.video; if (!m.lib.videos[v]) return fail('badreq');
