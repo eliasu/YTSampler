@@ -453,10 +453,29 @@ function trackBeats(a, bpm) {
   frames.reverse();
   if (frames.length < 4) return null;
 
-  // Frame -> ms. Der Fluss ist am größten, wenn der Einsatz ~3/4 ins Analysefenster gerückt ist.
-  const N = 512, HOP = 64;
-  const toMs = (f) => ((f * HOP + 0.78 * N) / a.srd) * 1000;
-  const beats = frames.map((f) => Math.max(0, Math.round(toMs(f) - BEAT_LEAD_MS)));
+  const beats = frames.map((f) => Math.max(0, Math.round(frameMs(a, f) - BEAT_LEAD_MS)));
+  return { beats, frames, down: findDownbeat(a, frames, period, findIntro(a, frames)) };
+}
+// Frame -> ms. Der Fluss ist am größten, wenn der Einsatz ~3/4 ins Analysefenster gerückt ist.
+const frameMs = (a, f) => ((f * 64 + 0.78 * 512) / a.srd) * 1000;   // N = 512, HOP = 64
+
+// Tempo von Hand bestätigt (seit 4.5): gleichmäßiges Raster genau in diesem Tempo, nur die Lage an den Einsätzen
+// ausgerichtet. So folgt Warp der eingestellten Zahl, jeder Slice gleich schnell. Gleiche Rückgabe wie trackBeats.
+function gridBeats(a, bpm) {
+  const env = a.onset, fps = a.fps, n = env.length;
+  if (!n || !(bpm > 0) || !(fps > 0)) return null;
+  const period = 60 * fps / bpm;
+  if (period < 4 || n < period * 4) return null;
+  let best = -1, ph = 0;
+  for (let p = 0; p < period; p += 0.25) {   // Lage, die in Summe die stärksten Einsätze trifft
+    let sum = 0;
+    for (let f = p; f + 1 < n; f += period) { const i = Math.floor(f), t = f - i; sum += env[i] * (1 - t) + env[i + 1] * t; }   // zwischen den Frames gemittelt, sonst landet die Lage zu früh
+    if (sum > best) { best = sum; ph = p; }
+  }
+  const at = [];
+  for (let f = ph; f < n; f += period) at.push(f);
+  const frames = at.map(Math.round);
+  const beats = at.map((f) => Math.max(0, Math.round(frameMs(a, f) - BEAT_LEAD_MS)));
   return { beats, frames, down: findDownbeat(a, frames, period, findIntro(a, frames)) };
 }
 
@@ -983,6 +1002,13 @@ const LIB = {
     const t = Math.round(trim * 10) / 10;
     if (t) lib.banks[i].pads[pad].trim = t; else delete lib.banks[i].pads[pad].trim;
   },
+  // Lautstärke der ganzen Bank in dB (seit 4.5), zusätzlich zu Ausgleich und Trim, 0 = Feld weg
+  bankvol(lib, { id, vol }) {
+    const i = bankIndex(lib, id);
+    need(typeof vol === 'number' && Math.abs(vol) <= TRIM_MAX);
+    const v = Math.round(vol * 10) / 10;
+    if (v) lib.banks[i].vol = v; else delete lib.banks[i].vol;
+  },
   // beim Start: videos-Einträge ohne Pad weg
   prune(lib) { dropOrphans(lib); },
   // fillpads: mehrere Plätze aus einem Video in einem Schritt
@@ -1485,9 +1511,9 @@ function beatsOf(v, a) {
   const bpm = confirmed ? lv.bpm : a ? a.bpm : 0;
   const conf = a ? a.bpmConf : 0;
   let r = beatStore.get(v);
-  if (a && (!r || r.bpm !== bpm)) {
-    const tb = bpm > 0 ? trackBeats(a, bpm) : null;
-    r = { bpm, beats: tb ? tb.beats : [], down: tb && tb.down < tb.beats.length ? tb.down : 0 };
+  if (a && (!r || r.bpm !== bpm || r.confirmed !== confirmed)) {
+    const tb = bpm > 0 ? (confirmed ? gridBeats(a, bpm) : trackBeats(a, bpm)) : null;
+    r = { bpm, confirmed, beats: tb ? tb.beats : [], down: tb && tb.down < tb.beats.length ? tb.down : 0 };
     beatStore.set(v, r);
   }
   if (!a || !r) r = { beats: [], down: 0 };
@@ -1686,7 +1712,7 @@ function sendBank(b) {
 function sendGains(b) {
   if (!b || b.id !== activeId || !loaded.gain) return;
   loaded.pads.forEach((p, i) => {
-    const t = p && samePad(p, b.pads[i]) ? b.pads[i].trim || 0 : 0;
+    const t = p && samePad(p, b.pads[i]) ? Math.round(((b.pads[i].trim || 0) + (b.vol || 0)) * 10) / 10 : 0;   // Trim + Lautstärke der Bank
     if (t !== loaded.trim[i]) { loaded.trim[i] = t; Max.outlet('padgain', i, loaded.gain[i], t); }
   });
 }
@@ -1936,6 +1962,7 @@ const CMD = {
     libChange('setpad', { id: q.id, pad: q.pad, video: q.video, start: q.start, info: q.info, trim: q.video === null ? undefined : q.trim }, by);
   },
   trim: (q, by) => { libChange('trim', { id: q.id, pad: q.pad, trim: q.trim }, by); },
+  bankvol: (q, by) => { libChange('bankvol', { id: q.id, vol: q.vol }, by); },
   rename(q, by) {
     libChange('rename', { id: q.id, name: q.name }, by);
     if (q.id === activeId) Max.outlet('bankname', q.id, clean(bankById(q.id).name));
@@ -2117,7 +2144,7 @@ const ED = {
     const L = libNow.lib;
     const m = { rev: L ? L.rev : 0, by: libBy, state: libNow.state, cache: cacheSize(), banks: [], videos: {} };
     if (!L) { m.error = `${ERR[libNow.state === 'neuer' ? 'libnewer' : 'libbroken']}: ${libNow.error}`; return m; }
-    m.banks = L.banks.map((b) => ({ id: b.id, name: b.name, pads: b.pads, mix: isMix(b), stage: onStage(b), ...snipStatus(b) }));
+    m.banks = L.banks.map((b) => ({ id: b.id, name: b.name, pads: b.pads, mix: isMix(b), stage: onStage(b), vol: b.vol || 0, ...snipStatus(b) }));
     // Songdauer: aus dem Cache, sonst aus einer Snippet-.json
     const durs = {};
     for (const b of L.banks) {
@@ -2322,7 +2349,7 @@ Max.outlet('needsession');
 // Für tools/tests/ (unter Max ohne Wirkung)
 module.exports = {
   errMsg, DATA, LOCAL, CACHE, SESSIONS, LIB_FILE, LIB_LOCK, BACKUP_DIR, ERR, LIB, libErr, libParse, libRead, libChange, libBackup, libEvents, get libNow() { return libNow; },
-  AN, SNIP_DIR, SNIP_MS, computeAnalysis, tempoFromOnset, saveAnalysis, readAnalysis, getAnalysis, trackBeats, silentRanges,
+  AN, SNIP_DIR, SNIP_MS, computeAnalysis, tempoFromOnset, saveAnalysis, readAnalysis, getAnalysis, trackBeats, gridBeats, silentRanges,
   hasWav, isAudio, AUDIO_DIR, readSnip, snipGain, padGain, NORM_TARGET, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, keepCleanup, KEEP_DIR, cacheSize, videoFail,
   beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, fillPads, get anaMap() { return anaMap; },
   parseSearchPage, runCmd, peaks, snipPad, get webPort() { return webPort; }, get activeId() { return activeId; },

@@ -430,12 +430,16 @@ t('Tempo pro Pad: Warp ohne Beats festes Verhältnis, mit Beats folgt das Raster
     assert.ok(Math.abs(wp[3] - 1.2) < 1e-9, 'festes Verhältnis 120/100');
     assert.ok(Math.abs((wr[2] + wr[3]) - 2000) < 1e-6, '1 Takt bei 120 BPM');
     assert.ok(m.on(2, 'selinfo').pop()[2].indexOf(' T') < 0, 'ohne Beats keine Taktposition');
-    // Beats weichen vom Tempo ab (96 statt 100 BPM): Slice endet auf dem Raster der Quelle
-    m.send.apply(null, padanaMsg(0, 100, 0, beatsFor(96, 400000), 0, STARTS[0], LENS[0]));
+    // Beats weichen vom Tempo ab (97 statt 100 BPM, unter 4 %): Slice endet auf dem Raster der Quelle
+    m.send.apply(null, padanaMsg(0, 100, 0, beatsFor(97, 400000), 0, STARTS[0], LENS[0]));
     assert.ok(m.ctx.beatsOK(0));
     m.take(); m.send('note', 36, 100, 1);
     wp = m.on(3, 'wplay')[0]; wr = m.on(3, 'rel')[0];
-    assert.ok(Math.abs((wr[2] + wr[3]) * wp[3] - 4 * 60000 / 96) < 1, 'Raster der Quelle: 4 Schläge à 625 ms');
+    assert.ok(Math.abs((wr[2] + wr[3]) * wp[3] - 4 * 60000 / 97) < 1, 'Raster der Quelle: 4 Schläge à 618,6 ms');
+    // Beats weit daneben (80 statt 100 BPM): Warp höchstens 4 % neben 120/100
+    m.send.apply(null, padanaMsg(0, 100, 0, beatsFor(80, 400000), 0, STARTS[0], LENS[0]));
+    m.take(); m.send('note', 36, 100, 1);
+    assert.ok(Math.abs(m.on(3, 'wplay')[0][3] - 1.2 * 1.04) < 1e-9, 'auf +4 % begrenzt: ' + m.on(3, 'wplay')[0][3]);
     assert.ok(/  T\d+\.\d/.test(m.on(2, 'selinfo').pop()[2]), 'Taktposition mit Beats');
     // Pad ohne padana: W: kein Tempo, Sampler-Stimme
     m.take(); m.send('note', 37, 100, 1);
@@ -812,6 +816,14 @@ t('Mix: padana vor bank verfällt, nach bank gilt, einzeln nach Tempo-Korrektur'
     assert.ok(Math.abs(m.on(3, 'wplay')[0][3] - 1.25) < 1e-9);
     m.send('padana', 99, 96, 0, 0); m.send('padana', -1, 96, 0, 0);   // außerhalb: nichts
     assert.strictEqual(m.ctx.PA.length, 16);
+});
+
+t('Bankname am Device gekürzt: lange Wörter und lange Namen mit …, kurze unverändert', function () {
+    var m = load(SRC);
+    assert.strictEqual(m.ctx.fitName('Kurz'), 'Kurz');
+    assert.strictEqual(m.ctx.fitName('AFAR - tell me more // Laut & Luise // HUSO8SO'), 'AFAR - tell me more // Laut & Luise\u2026');
+    assert.strictEqual(m.ctx.fitName('A EinSehrSehrLangesWortOhneLeerzeichen'), 'A EinSehrSehrLangesWo\u2026');
+    assert.strictEqual(m.ctx.fitName(undefined), '');
 });
 
 // Trig+Hold (Mode 2): kurz = Slice wie Trigger, länger gehalten = wie Hold bis zum Loslassen

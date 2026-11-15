@@ -87,6 +87,7 @@ Solange das Device läuft: Button **Editor** im Device drücken, oder **http://l
 | vorhören | Quell-Pad anklicken: spielt sein Snippet im Browser (Lautsprecher des Macs, nicht über Live), so lang wie der Slice des Device im Tempo des Sets, ohne Warp/Rate/Tune, mit Ausgleich (wenn „Norm“ an ist) und Trim; ohne Device-Regler 2 s. Noch ein Klick stoppt, ein anderes Pad wechselt. Das Pad leuchtet, solange es spielt. |
 | Platz leeren | × rechts oben am Pad (immer sichtbar), darunter der Würfel für ein neues Snippet. Klick in die Mitte spielt an |
 | anspielen | Pad klicken, klingt am Device |
+| Bank-Lautstärke | Schieber „Bank“ in der Kopfzeile: −12 … +12 dB für die ganze Bank, zusätzlich zu Ausgleich und Trim, für Bänke, die trotz Ausgleich zu laut oder zu leise klingen. Doppelklick = 0, jede Änderung ist ein Schritt im Rückgängig. |
 | Trim | Schieber „Trim“ neben dem Track des gewählten Pads: −12 … +12 dB in halben Schritten, zusätzlich zum automatischen Ausgleich (der gemessene Wert steht im Tooltip). Doppelklick = 0. Jede Änderung ist ein Schritt im Rückgängig. Der Trim gehört zum Pad und wandert beim Kopieren, Verschieben und Tauschen mit. |
 | Tempo | Zahlenfeld, ½×, 2×, „Tempo stimmt“ (daneben der Hinweis, solange das Tempo nur aus der Analyse kommt) für das Video des gewählten Pads (gilt für alle Bänke mit diesem Video) |
 | Device-Regler | Leiste über den Pads, siehe unten |
@@ -141,7 +142,7 @@ Beim ersten Laden eines Videos wird ein Chromagramm berechnet (ca. 3 s bei 10 Mi
 
 ## Tempo, Beats und Warp
 
-Beim ersten Laden eines Videos werden Tempo, Schläge und die „1“ erkannt und gecacht. Der Status zeigt z. B. „94 BPM“, bei einer Bank aus mehreren Tracks „3 Tracks“. Jedes Pad warpt aus dem Tempo seines eigenen Tracks. Ist das Tempo falsch (typisch: halb/doppelt, z. B. 172 → 86 bei Drum & Bass), korrigiert man es **im Editor** (Zahlenfeld, ½×, 2×, „Tempo stimmt“). Das Tempo steht dann in der Bibliothek und gilt für alle Bänke des Videos, das Raster wird sofort neu berechnet.
+Beim ersten Laden eines Videos werden Tempo, Schläge und die „1“ erkannt und gecacht. Der Status zeigt z. B. „94 BPM“, bei einer Bank aus mehreren Tracks „3 Tracks“. Jedes Pad warpt aus dem Tempo seines eigenen Tracks. Ist das Tempo falsch (typisch: halb/doppelt, z. B. 172 → 86 bei Drum & Bass), korrigiert man es **im Editor** (Zahlenfeld, ½×, 2×, „Tempo stimmt“). Das Tempo steht dann in der Bibliothek und gilt für alle Bänke des Videos. Ein Tempo von Hand legt ein gleichmäßiges Raster genau in diesem Tempo über den Track (an den Schlägen ausgerichtet): Die Linien verdichten sich bei 2× und dünnen bei ½× aus, Warp läuft in jedem Slice gleich schnell. Ohne Handtempo folgt Warp den erkannten Schlägen, aber höchstens 4 % neben dem Gesamttempo.
 
 Der Beat-Tracker folgt leichten Tempo-Schwankungen, eine echte Band ist also kein Problem. Die „1“ jedes Takts schätzt er aus der Kick und aus Harmoniewechseln. Ein Intro ohne Beat (Stille, Gerede, Flächen) wird übersprungen, Takt 1 ist dort, wo der Beat einsetzt.
 

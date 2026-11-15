@@ -204,7 +204,7 @@ t('SSE: retry, hello, lib, device, cache beim Verbinden; beats erst mit aktiver 
   assert.deepStrictEqual(lib.banks.map((b) => [b.id, b.name, b.mix, b.snip === 'ok' && b.id !== ids[1] ? 'stale' : b.snip, b.wav]),
     [[ids[0], 'Eins', false, 'stale', true], [ids[1], 'Zwei', false, 'ok', false], [ids[2], 'Drei', false, 'stale', true]]);
   assert.deepStrictEqual(lib.banks[0].pads, PADS(V1));
-  assert.deepStrictEqual(Object.keys(lib.banks[0]), ['id', 'name', 'pads', 'mix', 'stage', 'snip', 'wav', 'gain']);
+  assert.deepStrictEqual(Object.keys(lib.banks[0]), ['id', 'name', 'pads', 'mix', 'stage', 'vol', 'snip', 'wav', 'gain']);
   // dur aus dem Cache, ohne WAV aus der Snippet-.json
   assert.deepStrictEqual(lib.videos, { [V1]: { title: 'Titel ' + V1, wav: true, dur: DUR }, [V2]: { title: 'Titel ' + V2, wav: false, dur: DUR } });
   assert.deepStrictEqual(Object.keys(lib.cache), ['bytes', 'warn']);
@@ -790,6 +790,27 @@ t('Trim pro Pad (Nachtrag 14): trim und setpad mit trim, padgain an [js] nur fü
   }
   assert.strictEqual((await cmd({ cmd: 'setpad', id: ids[0], pad: 0, video: V1, start: 0, trim: 20 })).code, 'badreq');
   assert.ok(Math.abs(node.libNow.lib.banks[0].pads[0].start - STARTS[0]) === 0, 'setpad mit falschem trim ändert nichts');
+  done();
+});
+
+t('Lautstärke pro Bank (4.5): bankvol in der Bibliothek, padgain = Trim + Bank für alle Pads, 0 = Feld weg, SSE lib vol', async () => {
+  const { node, ids, on, cmd, max, done } = await setup();
+  await cmd({ cmd: 'select', id: ids[0] });
+  await until(() => on('padgain').length === 16, 'padgain nach bank');
+  await cmd({ cmd: 'trim', id: ids[0], pad: 2, trim: -2 });
+  max.out = [];
+  assert.deepStrictEqual(await cmd({ cmd: 'bankvol', id: ids[0], vol: 3.5 }), { ok: true });
+  assert.strictEqual(node.libNow.lib.banks[0].vol, 3.5);
+  const pg = on('padgain');
+  assert.strictEqual(pg.length, 16, 'alle Pads neu');
+  assert.strictEqual(pg.find((m) => m[1] === 2)[3], 1.5, 'Trim −2 + Bank +3,5');
+  assert.strictEqual(pg.find((m) => m[1] === 0)[3], 3.5);
+  max.out = [];
+  await cmd({ cmd: 'bankvol', id: ids[2], vol: -6 });
+  assert.deepStrictEqual(on('padgain'), [], 'andere Bank: nichts an [js]');
+  await cmd({ cmd: 'bankvol', id: ids[0], vol: 0 });
+  assert.ok(!('vol' in node.libNow.lib.banks[0]));
+  for (const bad of [{ vol: 12.5 }, { vol: '1' }, {}]) assert.strictEqual((await cmd({ cmd: 'bankvol', id: ids[0], ...bad })).code, 'badreq', JSON.stringify(bad));
   done();
 });
 

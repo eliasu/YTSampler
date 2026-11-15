@@ -47,6 +47,21 @@ t('Tempo, Beats und „1“ aus erzeugter WAV, Beats gültig', () => {
   done();
 });
 
+t('Tempo von Hand: festes Raster genau im Tempo, an den Einsätzen; ×2 verdichtet, ½ dünnt aus', () => {
+  const { node, done } = setup();
+  mkBank(node, V);
+  const step = (b) => { const d = []; for (let k = 1; k < b.beats.length; k++) d.push(b.beats[k] - b.beats[k - 1]); return d; };
+  for (const [bpm, ms] of [[120, 500], [240, 250], [60, 1000], [100, 600]]) {
+    node.libChange('tempo', { video: V, bpm }, 't');
+    const b = node.videoBeats(V);
+    assert.strictEqual(b.confirmed, true);
+    assert.ok(step(b).every((d) => Math.abs(d - ms) <= 1), `${bpm} BPM: Abstand ${ms} ms, ${step(b).slice(0, 5)}`);
+    if (bpm !== 100) assert.ok(near(b.beats[10], 500) < 25 || near(b.beats[10], 250) < 25, `${bpm}: an den Einsätzen`);
+  }
+  assert.strictEqual(node.gridBeats(node.getAnalysis(V, false), 0), null);
+  done();
+});
+
 t('Ergebnis aus dem Bank-Ordner gleich wie aus der WAV, ohne ganze WAV; kein silence; Status Track-Bank', async () => {
   const { node, max, wav, done } = setup();
   const id = mkBank(node, V);

@@ -437,6 +437,18 @@ t('Device-Teil meldet sich nicht (Session 0): nach 3 s Hinweis statt nur „Kein
   await b.waitFor(`$('conntext').textContent === 'steuert: 3-YT Sampler' && !$('conn').classList.contains('silent')`, 6000);
 });
 
+t('Lautstärke pro Bank: Schieber in der Kopfzeile schickt bankvol, ein Undo-Schritt, Doppelklick 0, folgt der Bank', async () => {
+  await open('normal');
+  assert.strictEqual(await b.eval(`$('bankvolv').textContent`), '0,0 dB');
+  m.log = []; await b.eval(`(() => { const e = $('bankvol'); e.value = '-3.5'; e.dispatchEvent(new Event('change')); })()`);
+  const c = await waitLog((y) => y.cmd === 'bankvol');
+  assert.strictEqual(c.vol, -3.5);
+  await b.waitFor(`curBank().vol === -3.5 && $('bankvolv').textContent === '−3,5 dB' && !$('undo').disabled`);
+  m.log = []; await b.click('#undo'); assert.strictEqual((await waitLog((y) => y.cmd === 'bankvol')).vol, 0);
+  await b.waitFor(`!curBank().vol && $('bankvol').value === '0'`);
+  assert(await b.eval(`$('bankvolf').getBoundingClientRect().bottom <= document.querySelector('header').getBoundingClientRect().bottom + 1`), 'Kopfzeile einzeilig');
+});
+
 t('Viele Bänke: nur die Liste links scrollt, Knöpfe unten bleiben sichtbar, Seite scrollt nicht', async () => {
   await open('normal');
   await b.eval(`Promise.all(Array.from({ length: 40 }, () => cmd('newmix')))`);

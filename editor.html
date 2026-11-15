@@ -198,9 +198,9 @@
   #insp .row b { color:var(--text); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
   #insp .btns { display:flex; gap:6px; flex-wrap:wrap; }
   #tempo { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
-  #trimf { display:flex; gap:6px; align-items:center; }
-  #trimf input { width:96px; padding:0; border:none; background:none; accent-color:var(--acc); }
-  #trimf .v { min-width:52px; color:var(--dim); }
+  #trimf, #bankvolf { display:flex; gap:6px; align-items:center; }
+  #trimf input, #bankvolf input { width:96px; padding:0; border:none; background:none; accent-color:var(--acc); }
+  #trimf .v, #bankvolf .v { min-width:52px; color:var(--dim); }
   #tempo input { width:72px; padding:4px 7px; }
   #tempo .ok { display:flex; gap:8px; align-items:center; }   /* Hinweis rechts neben „Tempo stimmt“ */
 
@@ -260,6 +260,7 @@
       <div id="navname"></div>
       <button class="ghost" id="next" title="Nächste Bank (↓)"><svg class="i"><use href="#i-r"/></svg></button>
     </div>
+    <label id="bankvolf" title="Lautstärke der ganzen Bank, zusätzlich zu Ausgleich und Trim. Doppelklick: 0"><span class="lbl">Bank</span><input type="range" id="bankvol" min="-12" max="12" step="0.5"><span class="v num" id="bankvolv"></span></label>
     <button class="ghost" id="undo" disabled><svg class="i"><use href="#i-undo"/></svg></button>
     <button class="ghost" id="redo" disabled><svg class="i"><use href="#i-redo"/></svg></button>
     <span id="saved">automatisch gespeichert</span>
@@ -489,6 +490,9 @@ async function swap(a, c) {
   const r = await cmd('swap', { id: b.id, a, b: c });
   if (r.ok) { const id = b.id; S.sel = c; pushStep({ label: 'Pad ' + (a + 1) + ' ↔ ' + (c + 1) + ' getauscht', undo: onBank(id, () => ['swap', { id, a, b: c }]), redo: onBank(id, () => ['swap', { id, a, b: c }]) }); }
 }
+$('bankvol').oninput = () => { $('bankvolv').textContent = fmtDb(+$('bankvol').value); };
+$('bankvol').onchange = () => { $('bankvol').blur(); setBankVol(+$('bankvol').value); };   // loslassen = ein Schritt
+$('bankvol').ondblclick = () => { $('bankvol').blur(); setBankVol(0); };
 const padCopy = (p) => (p.trim ? { video: p.video, start: p.start, trim: p.trim } : { video: p.video, start: p.start });
 // Trim pro Pad (Nachtrag 14): ein Undo-Schritt pro Änderung
 async function setTrim(i, v) {
@@ -497,6 +501,15 @@ async function setTrim(i, v) {
   if (v === old) return;
   const r = await cmd('trim', { id, pad: i, trim: v });
   if (r.ok) pushStep({ label: 'Trim Pad ' + (i + 1), undo: onBank(id, () => ['trim', { id, pad: i, trim: old }]), redo: onBank(id, () => ['trim', { id, pad: i, trim: v }]) });
+  else render();
+}
+// Lautstärke der Bank (seit 4.5): ein Undo-Schritt pro Änderung
+async function setBankVol(v) {
+  const b = curBank(); if (!b || !writable()) return;
+  const id = b.id, old = b.vol || 0; v = Math.max(-12, Math.min(12, Math.round(v * 2) / 2));
+  if (v === old) return;
+  const r = await cmd('bankvol', { id, vol: v });
+  if (r.ok) pushStep({ label: 'Lautstärke Bank', undo: onBank(id, () => ['bankvol', { id, vol: old }]), redo: onBank(id, () => ['bankvol', { id, vol: v }]) });
   else render();
 }
 const fmtDb = (v) => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' dB';
@@ -646,6 +659,9 @@ function renderHeader() {
   else $('navname').innerHTML = '<span>–</span>';
   $('prev').disabled = !S.conn || n === 0 || i === 0;
   $('next').disabled = !S.conn || n === 0 || i === n - 1;
+  const bv = $('bankvol'), vol = (b && b.vol) || 0;
+  if (document.activeElement !== bv) { bv.value = vol; $('bankvolv').textContent = fmtDb(vol); }
+  bv.disabled = !b || !writable();
   $('conntext').textContent = silent() ? 'Device antwortet nicht' : S.conn && S.hello ? 'steuert: ' + (S.hello.track || 'YT Sampler') : 'kein Device';
   $('conn').classList.toggle('silent', silent());
   $('opensearch').disabled = !writable() || !curBank();
@@ -1065,7 +1081,7 @@ async function preview(bank, k) {
   const old = S.prev; stopPreview();
   if (old && old.id === bank.id && old.pad === k) return;   // zweiter Klick aufs selbe Pad stoppt
   const pd = bank.pads[k]; if (!pd) return;
-  const p = S.dev && S.dev.params, db = (p && p.norm === 0 ? 0 : (bank.gain && bank.gain[k]) || 0) + (pd.trim || 0);   // wie am Device
+  const p = S.dev && S.dev.params, db = (p && p.norm === 0 ? 0 : (bank.gain && bank.gain[k]) || 0) + (pd.trim || 0) + (bank.vol || 0);   // wie am Device
   const me = S.prev = { id: bank.id, pad: k, ms: previewMs(), src: null, gain: null, amp: Math.pow(10, db / 20) }, key = [bank.id, k, pd.video, pd.start].join('/');
   markPrev();
   try {

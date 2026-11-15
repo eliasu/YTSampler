@@ -15,7 +15,7 @@ const ERR = {
   playonly: 'Track fehlt – nur spielbar', nosnip: 'Snippets fehlen – Bank nicht ladbar', idtaken: 'Bank existiert schon',
   notempo: 'Kein Tempo erkannt', cachebusy: 'Downloads oder Schnitte laufen – danach noch einmal', superseded: 'Neuere Suche läuft', badreq: 'Ungültiger Befehl',
 };
-const WRITE = ['rename', 'duplicate', 'delete', 'move', 'stage', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'fillpads', 'newmix', 'setpad', 'trim', 'tempo', 'tempook', 'fetch', 'fetchall'];
+const WRITE = ['rename', 'duplicate', 'delete', 'move', 'stage', 'restore', 'setstart', 'setstarts', 'swap', 'roll', 'fillpads', 'newmix', 'setpad', 'trim', 'bankvol', 'tempo', 'tempook', 'fetch', 'fetchall'];
 
 // Videos: id → [Titel, Analyse-BPM, Dauer s]
 const VIDEOS = {
@@ -167,7 +167,7 @@ function createMock(opts = {}) {
   function cmd(q) {
     const c = q.cmd, b = q.id != null ? byId(q.id) : null;
     if (WRITE.includes(c) && (m.lib.state === 'kaputt' || m.lib.state === 'neuer')) return fail(m.lib.state === 'kaputt' ? 'libbroken' : 'libnewer');
-    if (['select', 'rename', 'duplicate', 'delete', 'move', 'stage', 'setstart', 'setstarts', 'swap', 'roll', 'setpad', 'trim', 'fillpads'].includes(c) && !b) return fail(q.id == null ? 'badreq' : 'nobank');
+    if (['select', 'rename', 'duplicate', 'delete', 'move', 'stage', 'setstart', 'setstarts', 'swap', 'roll', 'setpad', 'trim', 'bankvol', 'fillpads'].includes(c) && !b) return fail(q.id == null ? 'badreq' : 'nobank');
     const pad = b && isPad(q.pad) ? b.pads[q.pad] : null, padWav = pad && m.lib.videos[pad.video].wav;
     const known = (video, start) => m.lib.banks.some((x) => x.pads.some((p) => p && p.video === video && p.start === start)); // Quelle ohne WAV (Spec 2.2)
     switch (c) {
@@ -238,6 +238,11 @@ function createMock(opts = {}) {
         if (q.trim !== undefined && !(typeof q.trim === 'number' && Math.abs(q.trim) <= 12)) return fail('badreq');
         b.pads[q.pad] = { video: q.video, start: q.start }; if (q.trim) b.pads[q.pad].trim = q.trim;
         changed(q.client); syncDev(); return { ok: true };
+      }
+      case 'bankvol': { // 4.5: Lautstärke der Bank, 0 = Feld weg
+        if (typeof q.vol !== 'number' || Math.abs(q.vol) > 12) return fail('badreq');
+        if (q.vol) b.vol = Math.round(q.vol * 10) / 10; else delete b.vol;
+        changed(q.client); return { ok: true };
       }
       case 'trim': { // Nachtrag 14: Trim pro Pad, 0 = Feld weg
         if (!pad || typeof q.trim !== 'number' || Math.abs(q.trim) > 12) return fail('badreq');

@@ -21,6 +21,7 @@ var SNIP_MS = 16000;     // Länge eines Fachs in der Snippet-Datei
 var SNIP_FADE_MS = 10;   // Hold: Ausblenden am Snippet-Ende
 var BANK_REST = 350;     // Bank-Regler / Prev / Next: so lange ruhen, dann laden
 var FLASH_MS = 2000;     // kurze Statusmeldung, danach wieder die normale Zeile
+var WARP_DEV = 0.04;   // Warp mit Beats: Abweichung pro Slice vom Verhältnis Set-Tempo/Quelltempo
 var HOLD_MAX = 1e9;     // Hold-Modus: bis Snippet-Ende (playRange begrenzt)
 var VMAX = 16;          // Anzahl Instanzen im poly~
 var VOICE_OPTS = [1, 2, 3, 4, 5, 8, 16];
@@ -263,7 +264,8 @@ function playRange(i) {
         if (R > 0 && P.mode !== 1 && beatsOK(i)) {
             // Warp mit Beats: Slice endet auf dem Raster der Quelle -> folgt schwankendem Tempo
             var end = timeAt(i, xAt(i, start) + DIVS[P.div][1] * 4);
-            if (end > start) R = clamp((end - start) / sliceMs(), 0.25, 4);
+            // höchstens ±4 % vom Gesamttempo: ein Fehlgriff der Schlagerkennung macht keinen Tempo-Sprung
+            if (end > start) R = clamp((end - start) / sliceMs(), Math.max(0.25, R * (1 - WARP_DEV)), Math.min(4, R * (1 + WARP_DEV)));
             to = Math.min(start + sliceMs() * R, hi);
         } else {
             to = Math.min(start + padSpan(i), hi);
@@ -795,7 +797,16 @@ function peekTo(nr) {
 // große Anzeige im linken Block
 function show(nr, name) {
     outlet(2, "shownr", String(nr));
-    outlet(2, "showname", name || "");
+    outlet(2, "showname", fitName(name));
+}
+// Banknamen fürs Device kürzen: Der Kommentar (160 × 30 px) bricht nur an Leerzeichen um, lange Wörter liefen in die Pads.
+// shortcut: Zeichen statt Pixel gezählt (~22 pro Zeile, 2 Zeilen), bei sehr breiten Buchstaben knapp
+var NAME_WORD = 20, NAME_MAX = 36;
+function fitName(name) {
+    var w = String(name || "").split(" "), k;
+    for (k = 0; k < w.length; k++) if (w[k].length > NAME_WORD) w[k] = w[k].slice(0, NAME_WORD - 1) + "\u2026";
+    var t = w.join(" ");
+    return t.length > NAME_MAX ? t.slice(0, NAME_MAX - 1).replace(/\s+$/, "") + "\u2026" : t;
 }
 function showBank() {
     if (B) show(B.nr > 0 ? B.nr : "-", bankName);
