@@ -89,10 +89,10 @@ t('Bank-Regler am Device: banksel -> bank mit Starts, Längen, Pfad -> padana pr
   dev.ctx.banknum(3);
   await until(() => bankMsgs().length, 'bank');
   const m = bankMsgs()[0];
-  assert.deepStrictEqual(m.slice(1, 3), [ids[2], 3]);
-  assert.deepStrictEqual(m.slice(3, 19), STARTS);
-  assert.deepStrictEqual(m.slice(19, 35), STARTS.map((s) => Math.min(16000, DUR - s)));
-  assert.deepStrictEqual(m.slice(35), [path.join(node.SNIP_DIR, `${ids[2]}.wav`)]);
+  assert.deepStrictEqual(m.slice(1, 4), [ids[2], 3, 32000]);
+  assert.deepStrictEqual(m.slice(4, 20), STARTS);
+  assert.deepStrictEqual(m.slice(20, 36), STARTS.map((s) => Math.min(32000, DUR - s)));
+  assert.deepStrictEqual(m.slice(36), [path.join(node.SNIP_DIR, `${ids[2]}.wav`)]);
   // Analyse pro Pad: 16 × padana mit demselben Tempo, dann analysisready
   await until(() => max.out.some((o) => o[0] === 'analysisready'), 'analysisready');
   const pa = max.out.filter((o) => o[0] === 'padana');
@@ -166,11 +166,11 @@ t('Mix-Bank Ende zu Ende: newmix, setpad aus zwei Track-Bänken, ein Platz gelee
   await set({ pad: 2, video: V1, start: STARTS[5] });
   max.out = []; dev.out = [];
   await set({ pad: 2, video: null });                                                       // Icon „leeren“
-  const lens = [16000, 5000, ...Array(14).fill(0)];
-  await until(() => bankMsgs().some((m) => m[1] === r.id && m.slice(19, 35).join() === lens.join()), 'bank mit Mix-Längen');
+  const lens = [32000, 5000, ...Array(14).fill(0)];
+  await until(() => bankMsgs().some((m) => m[1] === r.id && m.slice(20, 36).join() === lens.join()), 'bank mit Mix-Längen');
   await until(() => max.out.some((o) => o[0] === 'analysisready'), 'analysisready');
   const m = bankMsgs().pop();
-  assert.deepStrictEqual(m.slice(3, 19), [STARTS[3], STARTS[15], ...Array(14).fill(0)]);
+  assert.deepStrictEqual(m.slice(4, 20), [STARTS[3], STARTS[15], ...Array(14).fill(0)]);
   const pa = max.out.filter((o) => o[0] === 'padana');
   assert.deepStrictEqual(pa.map((o) => o[1]), [0, 1]);                                   // nur belegte Pads
   assert.ok(Math.abs(pa[0][2] - 120) < 1.5 && Math.abs(pa[1][2] - 100) < 1.5, pa.map((o) => o[2]).join());
@@ -184,7 +184,7 @@ t('Mix-Bank Ende zu Ende: newmix, setpad aus zwei Track-Bänken, ein Platz gelee
   const w = dev.on(3, 'wplay');
   assert.strictEqual(w.length, 2, 'leerer Platz spielt nicht ' + JSON.stringify([dev.ctx.bankBusy, dev.ctx.muted, dev.ctx.durMs, dev.out.slice(0, 8)]));
   assert.ok(Math.abs(w[0][2]) < 1 && Math.abs(w[0][3] - 1) < 0.03, 'Pad 1: ' + w[0]);
-  assert.ok(Math.abs(w[1][2] - 16000) < 1 && Math.abs(w[1][3] - 1.2) < 0.03, 'Pad 2: ' + w[1]);
+  assert.ok(Math.abs(w[1][2] - 32000) < 1 && Math.abs(w[1][3] - 1.2) < 0.03, 'Pad 2: ' + w[1]);
   assert.match(dev.on(2, 'selinfo').pop().slice(2).join(' '), /leer/);
   await b.waitFor(`S.dev.sel === 2 && S.dev.video === '-'`);
   dev.ctx.padhit(1);

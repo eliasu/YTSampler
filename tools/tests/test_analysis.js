@@ -116,7 +116,7 @@ t('padana pro Pad für zwei Videos: bpm, cent, Fenster ± 4 Schläge, off auf di
   node.libChange('setpad', { id, pad: 3, video: X, start: 50000 }, 't');   // nur 10 s bis zum Ende
   const out = await deviceOut(node, max, id);
   // neue Bank liegt in der Ablage: Nummer 0
-  assert.deepStrictEqual(out[1], ['bank', id, 0, 8000, 6000, 0, 50000, ...Array(12).fill(0), 16000, 16000, 0, 10000, ...Array(12).fill(0), path.join(node.SNIP_DIR, `${id}.wav`)]);
+  assert.deepStrictEqual(out[1], ['bank', id, 0, 32000, 8000, 6000, 0, 50000, ...Array(12).fill(0), 32000, 32000, 0, 10000, ...Array(12).fill(0), path.join(node.SNIP_DIR, `${id}.wav`)]);
   const pa = padana(out);
   assert.deepStrictEqual(pa.map((p) => p.i), [0, 1, 3], 'leere Plätze: kein padana');
   assert.deepStrictEqual(out.filter((m) => m[0] === 'padinfo').map((m) => m[1]), [0, 1, 3]);
@@ -124,7 +124,7 @@ t('padana pro Pad für zwei Videos: bpm, cent, Fenster ± 4 Schläge, off auf di
   assert.ok(Math.abs(p0.bpm - 120) < 1 && Math.abs(p1.bpm - 100) < 1, `bpm ${p0.bpm} ${p1.bpm}`);
   assert.strictEqual(p0.cent, Math.round(node.anaMap.get(V).tuning * 100));
   assert.strictEqual(p1.cent, Math.round(node.anaMap.get(X).tuning * 100));
-  for (const [p, start, len, beat] of [[p0, 8000, 16000, 500], [p1, 6000, 16000, 600], [p3, 50000, 10000, 600]]) {
+  for (const [p, start, len, beat] of [[p0, 8000, 32000, 500], [p1, 6000, 32000, 600], [p3, 50000, 10000, 600]]) {
     const from = start - 4 * 60000 / p.bpm, to = start + len + 4 * 60000 / p.bpm;
     assert.ok(p.beats.every((x) => x >= from && x <= to), `Pad ${p.i} im Fenster`);
     assert.ok(p.beats[0] - from < beat + 30 && Math.min(to, p.i === 3 ? 60000 : to) - p.beats[p.beats.length - 1] < beat + 30, `Pad ${p.i} Fenster voll`);   // Pad 4 endet mit dem Track

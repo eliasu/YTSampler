@@ -93,7 +93,7 @@ function sse(port) {
 }
 
 // bank <id> <nr> <s×16> <l×16> <pfad> (Mix-Spec 3.3)
-const bankArgs = (m) => ({ id: m[1], nr: m[2], starts: m.slice(3, 19), lens: m.slice(19, 35), path: m[35], n: m.length });
+const bankArgs = (m) => ({ id: m[1], nr: m[2], slot: m[3], starts: m.slice(4, 20), lens: m.slice(20, 36), path: m[36], n: m.length });
 const PADS = (v, st = STARTS) => st.map((start) => ({ video: v, start }));
 const starts = (b) => b.pads.map((p) => p && p.start);
 
@@ -124,7 +124,7 @@ t('/snip: Fach eines Pads als WAV bis lens, 404 leer/fehlend, 400 falsch, 403 PO
   const { node, port, ids, cmd, done } = await setup();
   const get = (url, headers) => req(port, { method: 'GET', url, headers });
   const src = fs.readFileSync(SRC);
-  for (const [k, len] of [[0, 16000], [3, 16000], [15, 5000]]) {
+  for (const [k, len] of [[0, 32000], [3, 32000], [15, 5000]]) {
     const r = await get(`/snip/${ids[1]}/${k}`);
     assert.strictEqual(r.status, 200, 'Pad ' + k);
     assert.strictEqual(r.headers['content-type'], 'audio/wav');
@@ -145,6 +145,26 @@ t('/snip: Fach eines Pads als WAV bis lens, 404 leer/fehlend, 400 falsch, 403 PO
   assert.strictEqual((await get(`/snip/${ids[1]}/2`)).status, 404, 'leerer Platz');
   fs.unlinkSync(path.join(node.SNIP_DIR, `${ids[1]}.wav`));
   assert.strictEqual((await get(`/snip/${ids[1]}/0`)).status, 404, 'WAV fehlt');
+  done();
+});
+
+t('/snip aus alter 16-s-Datei (ohne slot): Fach k ab k × 16 s', async () => {
+  const { node, port, ids, done } = await setup();
+  const id = ids[1], wf = path.join(node.SNIP_DIR, `${id}.wav`), jf = path.join(node.SNIP_DIR, `${id}.json`);
+  const neu = fs.readFileSync(wf), j = JSON.parse(fs.readFileSync(jf, 'utf8'));
+  const NEW = 32000 * 44.1 * 4, OLD = 16000 * 44.1 * 4, parts = [];
+  for (let k = 0; k < 16; k++) parts.push(neu.subarray(44 + k * NEW, 44 + k * NEW + OLD));
+  const head = Buffer.from(neu.subarray(0, 44)); head.writeUInt32LE(36 + 16 * OLD, 4); head.writeUInt32LE(16 * OLD, 40);
+  fs.writeFileSync(wf, Buffer.concat([head, ...parts]));
+  const { slot, ...old } = j;
+  fs.writeFileSync(jf, JSON.stringify({ ...old, lens: j.lens.map((l) => Math.min(16000, l)) }));
+  const src = fs.readFileSync(SRC);
+  for (const [k, len] of [[3, 16000], [15, 5000]]) {
+    const r = await req(port, { method: 'GET', url: `/snip/${id}/${k}` });
+    assert.strictEqual(r.buf.length, 44 + len * 44.1 * 4, 'Pad ' + k);
+    const from = 44 + STARTS[k] * 44.1 * 4, at = 44 + len * 44.1 * 4 - 8820;
+    assert.ok(r.buf.subarray(at, at + 8820).equals(src.subarray(from + at - 44, from + at - 44 + 8820)), 'Audio bis zum Ende, Pad ' + k);
+  }
   done();
 });
 
@@ -232,7 +252,7 @@ t('select: bankname, bank mit Starts, Längen, Songdauer, Video, Pfad; danach di
   assert.deepStrictEqual(max.out.slice(0, 2).map((m) => m[0]), ['bankname', 'bank']);
   assert.deepStrictEqual(on('bankname')[0], ['bankname', ids[2], 'Drei']);
   const b = bankArgs(on('bank')[0]);
-  assert.deepStrictEqual(b, { id: ids[2], nr: 3, starts: STARTS, lens: STARTS.map((s) => Math.min(16000, DUR - s)), path: path.join(node.SNIP_DIR, `${ids[2]}.wav`), n: 36 });
+  assert.deepStrictEqual(b, { id: ids[2], nr: 3, starts: STARTS, lens: STARTS.map((s) => Math.min(32000, DUR - s)), path: path.join(node.SNIP_DIR, `${ids[2]}.wav`), n: 37, slot: 32000 });
   assert.strictEqual(b.lens[15], 5000);
   assert.ok(fs.existsSync(b.path));
   await until(() => on('analysisready').length, 'analysisready');
@@ -383,7 +403,7 @@ t('setstart, setstarts, swap, roll: neu schneiden, aktive Bank lädt danach; ohn
   assert.deepStrictEqual(on('bank'), [], 'erst nach dem Schneiden');
   await until(() => on('bank').length, 'bank nach dem Schnitt');
   const b = bankArgs(on('bank')[0]);
-  assert.deepStrictEqual([b.starts[3], b.lens[3]], [12345, 16000]);
+  assert.deepStrictEqual([b.starts[3], b.lens[3]], [12345, 27655]);
   await sleep(700);
   assert.strictEqual(on('bank').length, 1, 'nur einmal laden');
 
@@ -633,9 +653,9 @@ t('newmix, setpad (mit/ohne info, null), leerer Platz badreq, device.video und b
   for (const bad of [{ pad: 16, video: null }, { pad: 0, video: 'kurz', start: 0 }, { pad: 0, video: V1, start: -1 }, { pad: 0, video: V1 }]) {
     assert.strictEqual((await cmd({ cmd: 'setpad', id: 4, ...bad })).code, 'badreq', JSON.stringify(bad));
   }
-  await until(() => { const l = on('bank').pop(); return l && bankArgs(l).lens[2] === 16000; }, 'Mix-Bank neu geschnitten');
+  await until(() => { const l = on('bank').pop(); return l && bankArgs(l).lens[2] === 32000; }, 'Mix-Bank neu geschnitten');
   const lb = bankArgs(on('bank').pop());
-  assert.deepStrictEqual([lb.starts.slice(0, 4), lb.lens.slice(0, 4)], [[STARTS[2], STARTS[15], 0, 0], [16000, 5000, 16000, 0]]);
+  assert.deepStrictEqual([lb.starts.slice(0, 4), lb.lens.slice(0, 4)], [[STARTS[2], STARTS[15], 0, 0], [32000, 5000, 32000, 0]]);
   // leerer Platz: setstart, roll -> badreq
   assert.strictEqual((await cmd({ cmd: 'setstart', id: 4, pad: 5, ms: 1 })).code, 'badreq');
   assert.strictEqual((await cmd({ cmd: 'roll', id: 4, pad: 5 })).code, 'badreq');

@@ -1106,14 +1106,17 @@ function libBackup() {
 }
 
 // =====================================================================
-// Snippets (Spec 2.3): D/snippets/<bankId>.wav + .json. 16 Fächer à 16 s, Fach i ab i × 16000 ms,
-// kürzere mit Stille aufgefüllt. Zustand snip/wav/fail nur im Speicher.
+// Snippets (Spec 2.3): D/snippets/<bankId>.wav + .json. 16 Fächer à slot ms, Fach i ab i × slot,
+// kürzere mit Stille aufgefüllt. Neu geschnitten wird mit 32 s (4.7, .json slot 32000), alte Dateien ohne slot haben 16 s. Zustand snip/wav/fail nur im Speicher.
 // libEvents für Paket 4: 'status' (snip/wav/fail geändert -> SSE lib mit gleicher rev), 'job', 'msg', 'cache'.
 // =====================================================================
 const SNIP_DIR = path.join(DATA, 'snippets');
-const SNIP_MS = 16000;
+const SNIP_MS = 32000;                               // Fachlänge beim Schneiden
+const OLD_SLOT = 16000;                              // Fachlänge alter Dateien (.json ohne slot)
 const SNIP_SR = 44100, BPF = 4;                      // 16 Bit Stereo: 4 Byte pro Frame
-const SLOT_BYTES = SNIP_MS * SNIP_SR / 1000 * BPF;   // ein Fach
+const slotBytes = (ms) => ms * SNIP_SR / 1000 * BPF;
+const SLOT_BYTES = slotBytes(SNIP_MS);               // ein Fach
+const snipSlot = (j) => (isInt(j.slot, 1) ? j.slot : OLD_SLOT);
 const SNIP_DEBOUNCE = 150;
 const SNIP_KEEP_MS = 7 * 86400000;                   // Snippets gelöschter Bänke (Undo)
 const CACHE_WARN = 10000000000;
@@ -1197,10 +1200,10 @@ function snipGain(id) {
   const tmp = path.join(SNIP_DIR, `${id}.${process.pid}.tmp`);
   try {
     const w = wavInfo(snipWav(id)), fd = fs.openSync(snipWav(id), 'r'), part = Math.round(NORM_MS * SNIP_SR / 1000) * BPF, buf = Buffer.alloc(part);
-    const gain = [];
+    const gain = [], sb = slotBytes(snipSlot(j));
     try {
       for (let i = 0; i < 16; i++) {
-        const got = j.lens[i] > 0 && i * SLOT_BYTES < w.dataSize ? fs.readSync(fd, buf, 0, Math.min(part, w.dataSize - i * SLOT_BYTES), w.offset + i * SLOT_BYTES) : 0;
+        const got = j.lens[i] > 0 && i * sb < w.dataSize ? fs.readSync(fd, buf, 0, Math.min(part, w.dataSize - i * sb), w.offset + i * sb) : 0;
         gain.push(got ? padGain(buf.subarray(0, got - (got % BPF)), 0, j.lens[i]) : 0);
       }
     } finally { fs.closeSync(fd); }
@@ -1214,15 +1217,16 @@ function snipGain(id) {
 }
 const isGain = (a) => Array.isArray(a) && a.length === 16 && a.every((x) => typeof x === 'number' && x >= -NORM_CUT && x <= NORM_BOOST);
 
-// Snippet-.json lesen -> {pads, lens, durs}. Alte Form {video, starts, lens, dur} gilt als Pads aus einem Video
+// Snippet-.json lesen -> {pads, lens, durs, gain, slot} (slot = Fachlänge dieser Datei in ms). Alte Form {video, starts, lens, dur} gilt als Pads aus einem Video
 // (Mix-Spec 2.2), sie bleibt aktuell und wird nicht neu geschnitten. null = fehlt oder unlesbar.
 function readSnip(id) {
   const j = readJson(snipJson(id));
   if (!isObj(j) || !Array.isArray(j.lens) || j.lens.length !== 16) return null;
   const gain = isGain(j.gain) && j.gainv === GAIN_V ? j.gain : null;   // fehlt oder alte Messung: snipGain misst nach
-  if (isPadList(j.pads)) return { pads: j.pads, lens: j.lens, durs: isObj(j.durs) ? j.durs : {}, gain };
+  const slot = snipSlot(j);
+  if (isPadList(j.pads)) return { pads: j.pads, lens: j.lens, durs: isObj(j.durs) ? j.durs : {}, gain, slot };
   if (typeof j.video === 'string' && isStarts(j.starts)) {
-    return { pads: j.starts.map((start) => ({ video: j.video, start })), lens: j.lens, durs: typeof j.dur === 'number' ? { [j.video]: j.dur } : {}, gain };
+    return { pads: j.starts.map((start) => ({ video: j.video, start })), lens: j.lens, durs: typeof j.dur === 'number' ? { [j.video]: j.dur } : {}, gain, slot };
   }
   return null;
 }
@@ -1232,6 +1236,14 @@ const samePad = (a, b) => (a && b ? a.video === b.video && a.start === b.start :
 function snipCurrent(bank) {
   const j = readSnip(bank.id);
   return !!j && bank.pads.every((p, i) => samePad(p, j.pads[i])) && fs.existsSync(snipWav(bank.id));
+}
+
+// 4.7: aktuelle Snippets mit einem Pad, das länger sein könnte (altes 16-s-Fach o. ä.) und dessen ganze WAV da ist.
+// Zählt nicht als veraltet (sonst schnitte jede Änderung alle alten Bänke auf einmal), nur der Start schneidet nach (snipUpgrade).
+function snipShort(bank) {
+  const j = readSnip(bank.id);
+  return !!j && bank.pads.some((p, i) => p && hasWav(p.video)
+    && j.lens[i] < Math.min(SNIP_MS, typeof j.durs[p.video] === 'number' ? j.durs[p.video] - p.start : SNIP_MS));
 }
 
 // Für SSE lib: banks[].snip und .wav = alle Videos der Bank im Cache (videos[].fail steht in videoFail)
@@ -1260,7 +1272,7 @@ function findSlot(p, bankId, memo) {
   // Undo-Vorrat (geleerte/überschriebene Pads, Flow-Nachtrag): ein Fach pro {video, start}
   const kb = keepBase(p), kj = kb && readJson(kb + '.json');
   if (isObj(kj) && isInt(kj.len, 0)) {
-    try { return { file: kb + '.wav', k: 0, j: { lens: [kj.len], durs: typeof kj.dur === 'number' ? { [p.video]: kj.dur } : {} }, w: wavInfo(kb + '.wav') }; } catch (e) { /* WAV fehlt */ }
+    try { return { file: kb + '.wav', k: 0, j: { slot: SNIP_MS, lens: [kj.len], durs: typeof kj.dur === 'number' ? { [p.video]: kj.dur } : {} }, w: wavInfo(kb + '.wav') }; } catch (e) { /* WAV fehlt */ }
   }
   return null;
 }
@@ -1332,8 +1344,9 @@ function snipSource(bank) {
     const s = findSlot(p, bank.id, memo);
     if (!s) return null;
     if (!has(durs, p.video) && typeof s.j.durs[p.video] === 'number') durs[p.video] = s.j.durs[p.video];
-    lens.push(s.j.lens[s.k]);
-    slots.push([s.file || snipWav(s.id), s.w.offset + s.k * SLOT_BYTES, Math.max(0, Math.min(SLOT_BYTES, s.w.dataSize - s.k * SLOT_BYTES))]);
+    const sb = Math.min(SLOT_BYTES, slotBytes(s.j.slot)), at = s.k * slotBytes(s.j.slot);   // Fachlänge der Quelldatei
+    lens.push(Math.min(SNIP_MS, s.j.lens[s.k]));
+    slots.push([s.file || snipWav(s.id), s.w.offset + at, Math.max(0, Math.min(sb, s.w.dataSize - at))]);
   }
   return { slots, lens, durs, whole: [...whole.keys()] };
 }
@@ -1369,7 +1382,7 @@ function cutSnippets(bank) {
     }
     fs.renameSync(tmp, snipWav(bank.id));
     const pads = bank.pads.map((p) => (p ? { video: p.video, start: p.start } : null));
-    fs.writeFileSync(tmp, JSON.stringify({ pads, lens: src.lens, durs: src.durs, gain, gainv: GAIN_V }));
+    fs.writeFileSync(tmp, JSON.stringify({ pads, lens: src.lens, durs: src.durs, gain, gainv: GAIN_V, slot: SNIP_MS }));
     fs.renameSync(tmp, snipJson(bank.id));
   } catch (e) {
     try { fs.unlinkSync(tmp); } catch (e2) { /* weg */ }
@@ -1479,17 +1492,20 @@ const videoBeats = (v) => beatsOf(v, getAnalysis(v, true));
 
 // Würfeln auf der ganzen WAV: immer aufs Raster, solange Beats da sind (auch bei unsicherem Tempo, es wird ja
 // kuratiert): erst Taktanfänge, dann Schläge, frei nur ohne Beats. Keine Slice (16 s) ganz in Stille, kein Start doppelt.
+// Gewürfelt wird mit 16 s (ROLL_MS = längster Slice, 4 Bars bei 60 BPM), nicht mit dem 32-s-Fach: so bleiben bei kurzen
+// Tracks alle Starts wie bisher möglich, das Fach wird am Track-Ende eben kürzer (lens).
 // -> (belegte Starts) => ganze ms. Ohne WAV libErr playonly.
+const ROLL_MS = 16000;
 function roller(v) {
   if (!hasWav(v)) throw libErr('playonly');
-  const last = wavDurationMs(cacheWav(v)) - SNIP_MS;
+  const last = wavDurationMs(cacheWav(v)) - ROLL_MS;
   const a = getAnalysis(v, false);
   const sil = a ? silentRanges(a) : [];
   const b = beatsOf(v, a);
   const usable = b.beats.length >= 4 ? b.beats.filter((t) => t <= last) : [];
   const bars = usable.filter((t) => (b.beats.indexOf(t) - b.down) % 4 === 0);
   const silent = (t) => {
-    for (let k = 0; k + 1 < sil.length; k += 2) if (sil[k] <= t && t + SNIP_MS <= sil[k + 1]) return true;
+    for (let k = 0; k + 1 < sil.length; k += 2) if (sil[k] <= t && t + ROLL_MS <= sil[k + 1]) return true;
     return false;
   };
   return (taken) => {
@@ -1644,7 +1660,7 @@ const stageBanks = () => (libNow.lib ? libNow.lib.banks.filter(onStage) : []);
 const bankNr = (id) => stageBanks().findIndex((b) => b.id === id) + 1;
 const readText = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return ''; } };
 
-// Bank ins Device: bankname, bank <id> <nr> <s×16> <l×16> <pfad…>, danach die Analyse pro Pad (Mix-Spec 3.3).
+// Bank ins Device: bankname, bank <id> <nr> <slot> <s×16> <l×16> <pfad…>, danach die Analyse pro Pad (Mix-Spec 3.3).
 // Ohne Snippets bankfail an [js] und libErr.
 function sendBank(b) {
   let s;
@@ -1656,7 +1672,7 @@ function sendBank(b) {
   activeSnip = readText(snipJson(b.id));
   loaded = { pads: s.pads, lens: s.pads.map((p, i) => (p ? s.lens[i] : 0)), gain: s.pads.map((p, i) => (p && s.gain ? s.gain[i] : 0)), trim: Array(16).fill(null) };
   Max.outlet('bankname', b.id, clean(b.name));
-  Max.outlet('bank', b.id, bankNr(b.id), ...s.pads.map((p) => (p ? p.start : 0)), ...loaded.lens, s.path);
+  Max.outlet('bank', b.id, bankNr(b.id), s.slot, ...s.pads.map((p) => (p ? p.start : 0)), ...loaded.lens, s.path);
   sendGains(b);
   sendAnalysis(clean(b.name)).catch((e) => status('Tonart-Analyse fehlgeschlagen: ' + clean(e.message).slice(0, 80)));
   edDirty('device'); edDirty('beats');
@@ -2196,7 +2212,7 @@ function snipPad(id, k) {
   if (!b || !j || !b.pads[k] || !samePad(b.pads[k], j.pads[k]) || !(j.lens[k] > 0)) return null;
   let w;
   try { w = wavInfo(snipWav(id)); } catch (e) { return null; }
-  const from = k * SLOT_BYTES, bytes = Math.min(Math.round(j.lens[k] * SNIP_SR / 1000) * BPF, w.dataSize - from);
+  const from = k * slotBytes(j.slot), bytes = Math.min(Math.round(j.lens[k] * SNIP_SR / 1000) * BPF, w.dataSize - from);
   if (w.sr !== SNIP_SR || w.channels !== 2 || w.bits !== 16 || bytes <= 0) return null;
   const out = Buffer.alloc(44 + bytes);
   wavHeader(bytes).copy(out);
@@ -2274,15 +2290,20 @@ startWeb(WEB_PORT, 5);
 try { libBackup(); } catch (e) { Max.post(`YT Sampler: Sicherung fehlgeschlagen: ${e.message}`); }
 libWatch();
 try { snipCleanup(); keepCleanup(); } catch (e) { Max.post(`YT Sampler: Aufräumen fehlgeschlagen: ${e.message}`); }
-// Alte Snippets ohne gain einmal nachmessen (Nachtrag 14), Bank für Bank, damit der Start nicht hängt
-(async () => {
-  for (const b of libNow.lib ? libNow.lib.banks : []) {
-    const j = readSnip(b.id);
-    if (j && !j.gain) snipGain(b.id);
-    await new Promise((r) => setImmediate(r));
+// Beim Start Bank für Bank, damit der Start nicht hängt: zu kurze Fächer (alte 16-s-Dateien) neu schneiden, wo die
+// ganze WAV da ist (4.7), sonst alte Snippets ohne gain einmal nachmessen (Nachtrag 14). Die aktive Bank lädt danach
+// von selbst neu (job cut done). Nichts wird heruntergeladen.
+async function snipUpgrade() {
+  for (const id of libNow.lib ? libNow.lib.banks.map((b) => b.id) : []) {
+    const b = bankById(id), j = b && readSnip(id);
+    if (j && snipCurrent(b) && snipShort(b)) {
+      try { cutSnippets(b); } catch (e) { Max.post(`YT Sampler: Bank ${id} nicht neu geschnitten: ${e.text || e.message}`); }
+    } else if (j && !j.gain) snipGain(id);
+    await new Promise((r) => setTimeout(r, 20));
   }
   libEvents.emit('status');
-})().catch((e) => Max.post(`YT Sampler: Nachmessen fehlgeschlagen: ${e.message}`));
+}
+const snipUpgradeDone = snipUpgrade().catch((e) => Max.post(`YT Sampler: Nachschneiden fehlgeschlagen: ${e.message}`));
 
 // Startcheck; Session vom Device anfordern
 if (DATA_SETUP.error) status(DATA_SETUP.error);
@@ -2300,7 +2321,7 @@ Max.outlet('needsession');
 module.exports = {
   errMsg, DATA, LOCAL, CACHE, SESSIONS, LIB_FILE, LIB_LOCK, BACKUP_DIR, ERR, LIB, libErr, libParse, libRead, libChange, libBackup, libEvents, get libNow() { return libNow; },
   AN, SNIP_DIR, SNIP_MS, computeAnalysis, tempoFromOnset, saveAnalysis, readAnalysis, getAnalysis, gridBeats, silentRanges,
-  hasWav, isAudio, AUDIO_DIR, readSnip, snipGain, padGain, NORM_TARGET, snipCurrent, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, keepCleanup, KEEP_DIR, cacheSize, videoFail,
+  hasWav, isAudio, AUDIO_DIR, readSnip, snipGain, padGain, NORM_TARGET, snipCurrent, snipShort, snipUpgrade, snipUpgradeDone, snipStatus, cutSnippets, snipEnsure, snipRefresh, snipCopy, snipCleanup, keepCleanup, KEEP_DIR, cacheSize, videoFail,
   beatsOf, videoBeats, rollStart, rollBank, fetchVideo, fetchAll, fillPads, get anaMap() { return anaMap; },
   parseSearchPage, runCmd, peaks, snipPad, get webPort() { return webPort; }, get activeId() { return activeId; },
 };

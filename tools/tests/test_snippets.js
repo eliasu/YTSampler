@@ -7,7 +7,7 @@ const { SR, rampWav, rampFrame, writeWav } = require('./wav');
 
 const V = 'VVVVVVVVVVV', W = 'WWWWWWWWWWW';
 const DUR = 40000;                 // Track 40 s
-const SLOT = 16000 * SR / 1000 * 4;
+const SLOT = 32000 * SR / 1000 * 4;
 // Pad 16 startet 5 s vor dem Ende -> kürzeres Snippet
 const STARTS = [0, 1000, 2500, 3333, 5000, 7000, 9000, 11000, 13000, 15000, 17000, 19000, 21000, 23000, 30000, DUR - 5000];
 
@@ -42,7 +42,7 @@ t('Schneiden aus der ganzen WAV: Inhalt pro Fach, .json mit lens und dur', () =>
   }
   const j = snipJ(node, id);
   const { gain, ...rest } = j;   // Rampe = fast nur Gleichanteil, Ausgleich prüft der Lautheits-Test
-  assert.deepStrictEqual(rest, { pads: PADS(V, STARTS), lens: STARTS.map((s) => Math.min(16000, DUR - s)), durs: { [V]: DUR }, gainv: 2 });
+  assert.deepStrictEqual(rest, { pads: PADS(V, STARTS), lens: STARTS.map((s) => Math.min(32000, DUR - s)), durs: { [V]: DUR }, gainv: 2, slot: 32000 });
   assert.ok(gain.length === 16 && gain.every((x) => x >= -12 && x <= 24));
   assert.ok(node.snipCurrent(bank()));
   assert.deepStrictEqual(st(node.snipStatus(bank())), { snip: 'ok', wav: true });
@@ -85,7 +85,7 @@ t('swap ohne WAV: Fächer aus der alten Datei, Undo des Tauschs auch', () => {
   assert.strictEqual(slotFrame(buf, 15), 0);
   assert.ok(buf.subarray(44 + 5000 * SR / 1000 * 4, 44 + SLOT).every((b) => b === 0), 'Stille wandert mit');
   const j = snipJ(node, id);
-  assert.deepStrictEqual([j.lens[0], j.lens[15], j.durs[V]], [5000, 16000, DUR]);
+  assert.deepStrictEqual([j.lens[0], j.lens[15], j.durs[V]], [5000, 32000, DUR]);
   node.libChange('swap', { id, a: 0, b: 15 }, 'test');
   node.cutSnippets(bank());
   buf = snipBuf(node, id);
@@ -138,7 +138,7 @@ t('alte .json (video, starts, dur) gilt als aktuell: kein Neuschnitt, auch ohne 
   fs.writeFileSync(f, JSON.stringify({ video: V, starts: STARTS, lens, dur: DUR }));
   fs.unlinkSync(path.join(node.CACHE, `${V}.wav`));
   assert.ok(node.snipCurrent(bank()));
-  assert.deepStrictEqual(node.readSnip(id), { pads: PADS(V, STARTS), lens, durs: { [V]: DUR }, gain: null });
+  assert.deepStrictEqual(node.readSnip(id), { pads: PADS(V, STARTS), lens, durs: { [V]: DUR }, gain: null, slot: 16000 });
   const t0 = fs.statSync(path.join(node.SNIP_DIR, `${id}.wav`)).mtimeMs;
   const r = node.snipEnsure(bank());
   assert.deepStrictEqual([r.pads[3], r.lens[15], r.durs[V]], [{ video: V, start: 3333 }, 5000, DUR]);
@@ -162,7 +162,7 @@ t('Mix aus zwei WAVs, leerer Platz still mit lens 0, durs pro Video', () => {
   for (const i of [2, 4, 15]) assert.ok(silent(buf, i), `Fach ${i} still`);
   const j = snipJ(node, id);
   assert.deepStrictEqual(j.pads, [...pads, ...Array(12).fill(null)]);
-  assert.deepStrictEqual(j.lens, [16000, 16000, 0, 10000, ...Array(12).fill(0)]);
+  assert.deepStrictEqual(j.lens, [32000, 18000, 0, 10000, ...Array(12).fill(0)]);
   assert.deepStrictEqual(j.durs, { [V]: DUR, [W]: 20000 });
   assert.ok(node.snipCurrent(mix));
   assert.deepStrictEqual(st(node.snipStatus(mix)), { snip: 'ok', wav: true });
@@ -187,7 +187,7 @@ t('Quelle aus einer anderen Bank ohne WAV; leeren geht ohne Quelle; keine Quelle
   assert.strictEqual(slotFrame(buf, 7), Math.round(STARTS[15] * SR / 1000));
   assert.strictEqual(slotFrame(buf, 0, 100), Math.round(STARTS[3] * SR / 1000) + 100);
   let j = snipJ(node, mid);
-  assert.deepStrictEqual([j.lens[7], j.lens[0], j.lens[1], j.durs], [5000, 16000, 0, { [V]: DUR }]);
+  assert.deepStrictEqual([j.lens[7], j.lens[0], j.lens[1], j.durs], [5000, 32000, 0, { [V]: DUR }]);
   // Platz leeren ohne WAV: Fach wird still
   node.libChange('setpad', { id: mid, pad: 0, video: null }, 'test');
   node.cutSnippets(mix());
@@ -283,7 +283,7 @@ t('Ablage: Leeren/Überschreiben ohne Cache, Undo spielt wieder; videos bleibt; 
   const buf = snipBuf(node, id), j = snipJ(node, id);
   assert.strictEqual(slotFrame(buf, 3, 100), Math.round(3333 * SR / 1000) + 100);
   assert.strictEqual(slotFrame(buf, 4, 100), Math.round(5000 * SR / 1000) + 100);
-  assert.deepStrictEqual([j.lens[3], j.lens[4], j.durs[V]], [16000, 16000, DUR]);
+  assert.deepStrictEqual([j.lens[3], j.lens[4], j.durs[V]], [32000, 32000, DUR]);
   // letztes Pad eines Videos geleert: videos-Eintrag und .chroma bleiben während der Sitzung
   rampWav(path.join(node.CACHE, `${Z}.wav`), 20);
   await node.runCmd({ cmd: 'setpad', id, pad: 6, video: Z, start: 0, info: { title: 'Z' } });
@@ -372,6 +372,74 @@ t('Ausgleich in der Snippet-.json; alte .json ohne gain wird einmal nachgemessen
   fs.writeFileSync(path.join(node.SNIP_DIR, `${id}.json`), JSON.stringify(old));
   assert.strictEqual(node.snipGain(id).length, 16);
   assert.deepStrictEqual(snipJ(node, id).gain, gain);
+  done();
+});
+
+// ---------- 4.7: Fächer à 32 s, alte Dateien mit 16 s ----------
+const OLD = 16000 * SR / 1000 * 4;
+const MS = (ms) => Math.round(ms * SR / 1000);
+// Snippet-Datei wie vor 4.7: 16 Fächer à 16 s aus der Rampe, .json ohne slot
+function writeOld(node, id, starts = STARTS) {
+  const lens = starts.map((x) => Math.min(16000, DUR - x));
+  writeWav(path.join(node.SNIP_DIR, `${id}.wav`), 16 * OLD / 4, (f) => {
+    const i = Math.floor(f * 4 / OLD), k = f - i * OLD / 4;
+    if (k >= MS(lens[i])) return [0, 0];
+    const g = MS(starts[i]) + k;
+    return [g & 0x7fff, g >> 15];
+  });
+  fs.writeFileSync(path.join(node.SNIP_DIR, `${id}.json`), JSON.stringify({ pads: PADS(V, starts), lens, durs: { [V]: DUR }, gain: Array(16).fill(0), gainv: 2 }));
+  return lens;
+}
+
+t('4.7: neue Bank hat slot 32000, Fächer à 32 s mit Inhalt über 16 s hinaus', () => {
+  const { node, id, bank, done } = setup();
+  node.cutSnippets(bank());
+  const buf = snipBuf(node, id), j = snipJ(node, id);
+  assert.strictEqual(j.slot, 32000);
+  assert.strictEqual(buf.length, 44 + 16 * 32000 * SR / 1000 * 4);
+  for (const i of [0, 3, 7]) assert.strictEqual(slotFrame(buf, i, MS(25000)), MS(STARTS[i]) + MS(25000), `Fach ${i} bei 25 s`);
+  assert.strictEqual(j.lens[0], 32000);
+  assert.strictEqual(node.readSnip(id).slot, 32000);
+  done();
+});
+
+t('4.7: alte 16-s-Datei ohne Quelle spielt weiter; mit ganzer WAV schneidet der Start auf 32 s nach', async () => {
+  const { node, id, bank, done } = setup();
+  const lens = writeOld(node, id);
+  const wav = path.join(node.CACHE, `${V}.wav`);
+  fs.renameSync(wav, wav + '.weg');
+  assert.ok(node.snipCurrent(bank()) && !node.snipShort(bank()));
+  const t0 = fs.statSync(path.join(node.SNIP_DIR, `${id}.wav`)).mtimeMs;
+  const r = node.snipEnsure(bank());
+  assert.deepStrictEqual([r.slot, r.lens], [16000, lens]);
+  await node.snipUpgrade();
+  assert.strictEqual(fs.statSync(path.join(node.SNIP_DIR, `${id}.wav`)).mtimeMs, t0, 'ohne Quelle kein Neuschnitt');
+  assert.strictEqual(snipJ(node, id).slot, undefined);
+  fs.renameSync(wav + '.weg', wav);
+  assert.ok(node.snipCurrent(bank()) && node.snipShort(bank()), 'aktuell, aber zu kurz');
+  assert.deepStrictEqual(st(node.snipStatus(bank())), { snip: 'ok', wav: true });
+  await node.snipUpgrade();
+  const j = snipJ(node, id), buf = snipBuf(node, id);
+  assert.deepStrictEqual([j.slot, j.lens], [32000, STARTS.map((x) => Math.min(32000, DUR - x))]);
+  assert.strictEqual(slotFrame(buf, 2, MS(20000)), MS(STARTS[2]) + MS(20000));
+  assert.ok(!node.snipShort(bank()));
+  done();
+});
+
+t('4.7: Pad aus altem 16-s-Fach ohne WAV in eine neue Bank: richtiger Inhalt, lens ≤ 16000', () => {
+  const { node, id, done } = setup();
+  writeOld(node, id);
+  fs.unlinkSync(path.join(node.CACHE, `${V}.wav`));
+  const { id: mid } = node.libChange('newmix', {}, 'test');
+  node.libChange('setpad', { id: mid, pad: 2, video: V, start: STARTS[4] }, 'test');
+  node.libChange('setpad', { id: mid, pad: 9, video: V, start: STARTS[15] }, 'test');
+  node.cutSnippets(node.libNow.lib.banks.find((b) => b.id === mid));
+  const buf = snipBuf(node, mid), j = snipJ(node, mid);
+  assert.deepStrictEqual([j.slot, j.lens[2], j.lens[9]], [32000, 16000, 5000]);
+  assert.strictEqual(slotFrame(buf, 2), MS(STARTS[4]));
+  assert.strictEqual(slotFrame(buf, 2, MS(16000) - 1), MS(STARTS[4]) + MS(16000) - 1);
+  assert.strictEqual(slotFrame(buf, 9, 100), MS(STARTS[15]) + 100);
+  assert.ok(buf.subarray(44 + 2 * SLOT + OLD, 44 + 3 * SLOT).every((b) => b === 0), 'hinter 16 s still');
   done();
 });
 

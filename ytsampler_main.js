@@ -2,7 +2,7 @@
 // outlet 0 -> poly~ (Voices)   outlet 1 -> node.script (bankload, bankstate, …)
 // outlet 2 -> UI-Router        outlet 3 -> poly~ Warp-Voices (ytwarpvoice)
 // outlet 4 -> buffer~ (replace <pfad>, clear)
-// Gespielt wird nur eine Bank: Im Buffer liegt pro Pad ein Snippet (Fach i ab i × 16 s). Intern wird in Song-ms
+// Gespielt wird nur eine Bank: Im Buffer liegt pro Pad ein Snippet (Fach i ab i × slotMs, 32 s, alte Bänke 16 s). Intern wird in Song-ms
 // gerechnet, umgerechnet wird nur an den Ausgängen (toBuf).
 // Zustand (nur bankId) wird vom Node-Teil als Datei gespeichert (D/sessions/<session>.json).
 // Die Session-Nummer ist ein unsichtbarer Live-Parameter und steckt damit im Set.
@@ -17,12 +17,13 @@ var DIVS = [
     ["1/2", 1 / 2], ["1 Bar", 1], ["2 Bars", 2], ["4 Bars", 4]   // nur hinten anhängen: Index = Wert des live.menu
 ];
 var NPADS = 16;
-var SNIP_MS = 16000;     // Länge eines Fachs in der Snippet-Datei
+var SLOT_DEF = 16000;    // Fachlänge ohne Bank
+var slotMs = SLOT_DEF;   // Länge eines Fachs in der geladenen Snippet-Datei (kommt mit bank)
 var SNIP_FADE_MS = 10;   // Hold: Ausblenden am Snippet-Ende
 var BANK_REST = 350;     // Bank-Regler / Prev / Next: so lange ruhen, dann laden
 var FLASH_MS = 2000;     // kurze Statusmeldung, danach wieder die normale Zeile
 var WARP_DEV = 0.04;   // Warp mit Beats: Abweichung pro Slice vom Verhältnis Set-Tempo/Quelltempo
-var HOLD_MAX = 1e9;     // Hold-Modus: bis Snippet-Ende (playRange begrenzt)
+var HOLD_BARS = [16, 12, 8];   // Hold: endet nach so vielen Takten, der längsten, die ins Fach passt
 var VMAX = 16;          // Anzahl Instanzen im poly~
 var VOICE_OPTS = [1, 2, 3, 4, 5, 8, 16];
 var NOTE = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
@@ -76,9 +77,9 @@ var statusLine = "";
 var flashTask = new Task(function () { outlet(2, "status", statusLine); }, this);
 var trackApi = null;
 
-function bufMs() { return NPADS * SNIP_MS; }
+function bufMs() { return NPADS * slotMs; }
 // Song-ms von Pad i -> Buffer-ms
-function toBuf(i, t) { return i * SNIP_MS + (t - pads[i]); }
+function toBuf(i, t) { return i * slotMs + (t - pads[i]); }
 
 // Stimmenverwaltung: welche Stimme spielt welches Pad, bis wann
 var voices = [];
@@ -233,7 +234,7 @@ function sendGridUI() {
 }
 function sendPadMarks() {
     var a = ["grid", "pads", sel];
-    for (var i = 0; i < NPADS; i++) a.push(i * SNIP_MS);
+    for (var i = 0; i < NPADS; i++) a.push(i * slotMs);
     outlet(2, a);
     sendBankstate();
 }
@@ -258,10 +259,11 @@ function sendBankstate() {
 function playRange(i) {
     var start = effStart(i), from, to, R = warpRatio(i);
     var hi = start + (B ? B.lens[i] : 0);
-    if (P.mode === 1 && P.rev) {               // Hold rückwärts: Fach vom Ende zum Start
-        from = hi; to = start;
+    if (P.mode === 1) {                        // Hold: ab dem Start 16/12/8 Takte, rückwärts derselbe Bereich zum Start hin
+        from = start; to = start + holdLen(i);
+        if (P.rev) { from = to; to = start; }
     } else {
-        if (R > 0 && P.mode !== 1 && beatsOK(i)) {
+        if (R > 0 && beatsOK(i)) {
             // Warp mit Beats: Slice endet auf dem Raster der Quelle -> folgt schwankendem Tempo
             var end = timeAt(i, xAt(i, start) + DIVS[P.div][1] * 4);
             // höchstens ±4 % vom Gesamttempo: ein Fehlgriff der Schlagerkennung macht keinen Tempo-Sprung
@@ -276,12 +278,21 @@ function playRange(i) {
     return { from: from, to: to, R: R };
 }
 
-// Abgespielter Quellbereich: Trigger = Slice, Hold = bis Snippet-Ende
+// Abgespielter Quellbereich (Trigger, Trig+Hold rechnet wie Trigger, trigger() verlängert)
 // Warp: Slice = gleicher Notenwert im Tempo der Quelle
 function padSpan(i) {
-    var base = P.mode === 1 ? HOLD_MAX : sliceMs();   // Trig+Hold rechnet wie Trigger, trigger() verlängert
     var R = warpRatio(i);
-    return R > 0 ? base * R : base * padRate(i);
+    return R > 0 ? sliceMs() * R : sliceMs() * padRate(i);
+}
+
+// Hold (und gehaltenes Trig+Hold): Länge im Sample ab dem Pad-Start, Song-ms. 16 Takte, sonst 12, sonst 8,
+// was davon ins Fach (lens) passt, sonst bis zum Fachende. Takt = 4 Schläge im gespielten Tempo:
+// mit Warp 4 Schläge der Quelle, ohne Warp ein Takt im Live-Tempo × Geschwindigkeit (Rate × Tonhöhe)
+function holdLen(i) {
+    var len = B ? B.lens[i] : 0, R = warpRatio(i);
+    var bar = 240000 / Math.max(20, P.bpm) * (R > 0 ? R : padRate(i));
+    for (var n = 0; n < HOLD_BARS.length; n++) if (HOLD_BARS[n] * bar <= len + 1e-6) return HOLD_BARS[n] * bar;
+    return len;
 }
 
 function fmt(ms) {
@@ -555,13 +566,13 @@ function trigger(i, vel, late) {
         from += (to >= from ? 1 : -1) * late * speed;
         dur -= late;
     }
-    // Trig+Hold vorwärts: spielt wie Hold bis zum Fachende, Loslassen vor dem Slice-Ende kürzt auf den Slice (noteoff).
+    // Trig+Hold vorwärts: spielt wie Hold bis zur Taktgrenze (holdLen), Loslassen vor dem Slice-Ende kürzt auf den Slice (noteoff).
     // Rückwärts wie Trigger: hinter dem Pad-Start kommt nichts mehr
     var th = P.mode === 2 && to > from, cut = to;
-    if (th) { to = effStart(i) + B.lens[i]; dur = (to - from) / speed; }
+    if (th) { to = Math.max(cut, effStart(i) + holdLen(i)); dur = (to - from) / speed; }
     var amp = vel / 127 * padAmp(i);           // > 1 geht: env läuft über line~ in *~, nichts klemmt
     var atk = Math.min(ATK_MS, dur * 0.5);
-    var rel = Math.min(P.mode === 1 || th ? SNIP_FADE_MS : REL_MS, dur * 0.5);   // Hold: am Snippet-Ende kurz ausblenden
+    var rel = Math.min(P.mode === 1 || th ? SNIP_FADE_MS : REL_MS, dur * 0.5);   // Hold: am Ende kurz ausblenden
 
     var t = nowMs();
     var k = allocVoice(i);
@@ -655,14 +666,16 @@ function loadTarget() {
 }
 
 // ---------- Bänke ----------
-// bank <id> <nr> <s×16> <l×16> <pfad…>  (leerer Platz: l = 0). Tempo, Stimmung, Schläge kommen danach per padana
+// bank <id> <nr> <slot> <s×16> <l×16> <pfad…>  (slot = Fachlänge der Datei in ms, leerer Platz: l = 0).
+// Tempo, Stimmung, Schläge kommen danach per padana
 function bank() {
     var a = arrayfromargs(arguments), i;
     var id = Math.floor(a[0]), nr = Math.floor(a[1]);
     if (bankBusy) busyGotBank = 1;
-    var lens = a.slice(18, 34);
+    slotMs = a[2] > 0 ? a[2] : SLOT_DEF;
+    var lens = a.slice(19, 35);
     st.bankId = id;
-    pads = a.slice(2, 18);
+    pads = a.slice(3, 19);
     durMs = bufMs();
     B = { nr: nr, lens: lens };
     if (pendingName && pendingName.id === id) bankName = pendingName.name;
@@ -675,7 +688,7 @@ function bank() {
     if (!peekWait) peekNr = 0;                     // wer noch dreht, behält seine Anzeige
     if (nr > 0) setNamed("bank", "set", Math.min(nr, 128));
     for (i = 0; i < VMAX; i++) killVoice(i, 5);      // klickfrei aus, bevor der Buffer wechselt
-    pendingPath = a.slice(34).join(" ");
+    pendingPath = a.slice(35).join(" ");
     replaceTask.cancel();
     replaceTask.schedule(10);
     save();
@@ -700,7 +713,7 @@ function sendEmpty() {
 // nichts mehr geladen: Stimmen aus, Pads tun nichts (der Buffer wird beim nächsten replace überschrieben)
 function unload() {
     for (var k = 0; k < VMAX; k++) killVoice(k, 5);
-    B = null; durMs = 0;
+    B = null; durMs = 0; slotMs = SLOT_DEF;
     resetAnalysis();
     sendEmpty();
 }

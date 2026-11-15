@@ -49,9 +49,9 @@ function bankstates(m) { return m.on(1, 'bankstate'); }
 var STARTS = [], LENS = [];
 for (var i = 0; i < 16; i++) { STARTS.push(10000 + i * 20000); LENS.push(16000); }
 LENS[5] = 3000;                                    // kurzes Snippet (Track endet früh)
-// bank <id> <nr> <s×16> <l×16> <pfad…> (Spec Mix 3.3)
-function bankMsg(id, nr, pathName, starts, lens) {
-    return ['bank', id, nr].concat(starts || STARTS, lens || LENS, pathName.split(' '));
+// bank <id> <nr> <slot> <s×16> <l×16> <pfad…> (Spec Mix 3.3, slot seit 4.7). Vorgabe: alte 16-s-Bank wie in 3.0
+function bankMsg(id, nr, pathName, starts, lens, slot) {
+    return ['bank', id, nr, slot || 16000].concat(starts || STARTS, lens || LENS, pathName.split(' '));
 }
 // wie Node: bank, danach bei bekanntem Tempo padana pro Pad (ohne Schläge)
 function sendBank(m, id, nr, bpm, pathName) {
@@ -679,7 +679,7 @@ t('bankbusy: Anschlag wartet auf neue Snippets im Buffer und spielt dann die neu
     assert.strictEqual(m.on(1, 'playing').length, 0, 'wartet');
     m.send('bufloaded');                   // alter Ladevorgang: zählt erst nach bank
     assert.strictEqual(m.on(1, 'playing').length, 0, 'noch keine neue Bank');
-    var neu = bankMsg(7, 1, '/x/7.wav'); neu[3 + 2] = 77777;   // ['bank', id, nr, s0, s1, s2 …]
+    var neu = bankMsg(7, 1, '/x/7.wav'); neu[4 + 2] = 77777;   // ['bank', id, nr, slot, s0, s1, s2 …]
     m.send.apply(null, neu);
     assert.strictEqual(m.on(1, 'playing').length, 0, 'Buffer lädt noch');
     m.send('bufloaded');
@@ -1067,6 +1067,58 @@ function closeEnough(a, b, where) {
         for (var k = 0; k < a.length; k++) closeEnough(a[k], b[k], where);
     } else assert.strictEqual(a, b, where);
 }
+
+// 4.7: Fächer à 32 s, Hold endet nach 16/12/8 Takten
+var L32 = []; for (var q = 0; q < 16; q++) L32.push(32000);
+L32[5] = 20000; L32[6] = 15000;                     // kurze Fächer am Track-Ende
+function bank32(m) { m.send.apply(null, bankMsg(9, 1, '/x/9.wav', STARTS, L32, 32000)); }
+
+t('32-s-Bank: toBuf, Grid dur 512000 und Fachgrenzen, Trigger wie bisher', function () {
+    var m = load(SRC);
+    startDevice(m);
+    m.send('bpm', 120); bank32(m);
+    var g = m.on(2, 'grid');
+    assert.deepStrictEqual(g.filter(function (o) { return o[2] === 'dur'; }).pop(), [2, 'grid', 'dur', 512000]);
+    var bounds = []; for (var i = 0; i < 16; i++) bounds.push(i * 32000);
+    assert.deepStrictEqual(g.filter(function (o) { return o[2] === 'pads'; }).pop().slice(4), bounds);
+    m.take(); m.send('note', 36 + 3, 100, 1);
+    assert.deepStrictEqual(m.on(0, 'pos')[0].slice(2, 5), [96000, 96250, 250], 'Fach 3 ab 3 × 32000, 1/8 = 250 ms');
+    assert.deepStrictEqual(m.on(2, 'wsel').pop().slice(2), [96000, 96250]);
+    m.send('unload');
+    assert.strictEqual(m.ctx.bufMs(), 256000, 'ohne Bank 16 s pro Fach');
+});
+
+t('Hold: 16 Takte, sonst 12, sonst 8, sonst Fachende; rückwärts derselbe Bereich; Rate; Warp; Trig+Hold', function () {
+    var m = load(SRC);
+    startDevice(m);
+    bank32(m); m.send('playmode', 1);
+    var hold = function (pad) { m.take(); m.send('note', 36 + pad, 100, 1); var p = m.on(0, 'pos')[0]; m.send('note', 36 + pad, 0, 1); return p.slice(2, 5); };
+    m.send('bpm', 120);
+    assert.deepStrictEqual(hold(0), [0, 32000, 32000], '120 BPM: 16 Takte = 32 s passen genau');
+    var rel = m.on(0, 'rel')[0];
+    assert.deepStrictEqual([rel[2] + rel[3], rel[3]], [32000, 10], 'kurz ausblenden am Ende');
+    m.send('bpm', 100);
+    assert.deepStrictEqual(hold(1), [32000, 32000 + 28800, 28800], '100 BPM: 16 Takte = 38,4 s zu lang, 12 Takte = 28,8 s');
+    assert.deepStrictEqual(hold(5), [160000, 160000 + 19200, 19200], 'Fach 20 s: 8 Takte = 19,2 s');
+    assert.deepStrictEqual(hold(6), [192000, 192000 + 15000, 15000], 'Fach 15 s: nicht einmal 8 Takte -> Fachende');
+    m.send('reverse', 1);
+    assert.deepStrictEqual(hold(1), [32000 + 28800, 32000, 28800], 'rückwärts: von 12 Takten zurück zum Start');
+    m.send('reverse', 0); m.send('bpm', 120); m.send('rate', 2);
+    assert.deepStrictEqual(hold(2), [64000, 96000, 16000], 'Rate 2: Takt im Sample 4 s, 8 Takte = 32 s in 16 s Spielzeit');
+    m.send('rate', 1);
+    // Warp: Quelle 100 BPM, Live 120 -> 4 Schläge der Quelle = 2400 ms, 12 Takte = 28800 im Sample
+    m.send('warp', 1); m.send('padana', 3, 100, 0, 0); m.take();
+    m.send('note', 36 + 3, 100, 1);
+    var wp = m.on(3, 'wplay')[0], wr = m.on(3, 'rel')[0];
+    assert.strictEqual(wp[2], 96000);
+    assert.ok(Math.abs((wr[2] + wr[3]) * wp[3] - 28800) < 1e-6, 'Warp: 12 Takte der Quelle: ' + (wr[2] + wr[3]) * wp[3]);
+    m.send('note', 36 + 3, 0, 1); m.send('warp', 0);
+    // Trig+Hold: gehalten bis zur Taktgrenze statt Fachende
+    m.send('playmode', 2); m.send('bpm', 100); m.take();
+    m.send('note', 36 + 4, 100, 1);
+    assert.deepStrictEqual(m.on(0, 'pos')[0].slice(2, 4), [128000, 128000 + 28800], 'Trig+Hold: 12 Takte');
+});
+
 function goldenRun(loader) {
     var m = load(SRC);
     m.ctx.retime = function () {};                 // Division live (4.x) gab es in 3.0 nicht, eigener Test oben
