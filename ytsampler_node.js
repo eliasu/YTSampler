@@ -1143,7 +1143,8 @@ function wavHeader(dataBytes) {
 // Ausgleich = Ziel − Lautheit, −12 bis +24 dB. Stille oder leiser als NORM_FLOOR: 0 dB.
 // Seit 4.4: anheben bis +24 dB ohne Peak-Bremse (die Spitzen fängt der Limiter im Device ab), relatives Gate wie LUFS.
 // GAIN_V in der Snippet-.json: ältere Messungen gelten als fehlend und werden einmal nachgemessen
-const NORM_TARGET = -14, NORM_BOOST = 24, NORM_CUT = 12, NORM_FLOOR = -60, NORM_MS = 2000, GAIN_V = 2;
+// Ziel −20 statt −14 (seit 4.8): 6 dB Reserve, damit sich überlagernde Pads nicht ständig im Limiter landen
+const NORM_TARGET = -20, NORM_BOOST = 24, NORM_CUT = 12, NORM_FLOOR = -60, NORM_MS = 2000, GAIN_V = 3;
 const K_BIQUADS = (() => {
   const fs = SNIP_SR;
   const shelf = (() => {
