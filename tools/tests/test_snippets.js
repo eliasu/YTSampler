@@ -42,8 +42,8 @@ t('Schneiden aus der ganzen WAV: Inhalt pro Fach, .json mit lens und dur', () =>
   }
   const j = snipJ(node, id);
   const { gain, ...rest } = j;   // Rampe = fast nur Gleichanteil, Ausgleich prüft der Lautheits-Test
-  assert.deepStrictEqual(rest, { pads: PADS(V, STARTS), lens: STARTS.map((s) => Math.min(32000, DUR - s)), durs: { [V]: DUR }, gainv: 3, slot: 32000 });
-  assert.ok(gain.length === 16 && gain.every((x) => x >= -12 && x <= 24));
+  assert.deepStrictEqual(rest, { pads: PADS(V, STARTS), lens: STARTS.map((s) => Math.min(32000, DUR - s)), durs: { [V]: DUR }, gainv: 4, slot: 32000 });
+  assert.ok(gain.length === 16 && gain.every((x) => x >= -24 && x <= 24));
   assert.ok(node.snipCurrent(bank()));
   assert.deepStrictEqual(st(node.snipStatus(bank())), { snip: 'ok', wav: true });
   assert.ok(!fs.readdirSync(node.SNIP_DIR).some((n) => n.endsWith('.tmp')));
@@ -311,16 +311,16 @@ function sineBuf(sec, fn) {
   return b;
 }
 
-t('Lautheit: 12 dB leiser = 12 dB mehr Ausgleich, +24/−12 greifen, keine Peak-Bremse, relatives Gate, Stille 0, nur die ersten 2 s ab Start', () => {
+t('Lautheit: 12 dB leiser = 12 dB mehr Ausgleich, +24/−24 greifen, keine Peak-Bremse, relatives Gate, Stille 0, nur die ersten 2 s ab Start', () => {
   const { node, done } = setup();
   const g = (a, opt = {}) => node.padGain(sineBuf(opt.sec || 3, sineFn(a, opt.hz, opt.spike)), 0, opt.ms || 16000);
   const loud = g(0.5), soft = g(0.5 / 3.981);   // −12 dB
   assert.ok(Math.abs(soft - loud - 12) < 0.2, `Differenz ${soft - loud}`);
   // 1 kHz, Mittel der Kanäle: Lautheit ≈ 20·log10(a) − 3,01 + K-Gewichtung (≈ +0,7 dB) − 0,691 → Ziel NORM_TARGET
   assert.ok(Math.abs(loud - (node.NORM_TARGET - (20 * Math.log10(0.5) - 3.01 + 0.69 - 0.691))) < 0.5, `laut ${loud}`);
-  assert.ok(g(0.01) > 20 && g(0.01) < 24, 'leise: über +12 hinaus ' + g(0.01));
+  assert.ok(g(0.005) > 20 && g(0.005) < 24, 'leise: über +12 hinaus ' + g(0.005));
   assert.strictEqual(g(0.003), 24, 'sehr leise: auf +24 begrenzt');
-  assert.strictEqual(g(1, { hz: 3000 }), -12, 'laut: auf −12 begrenzt');
+  assert.strictEqual(g(1, { hz: 3000 }), -24, 'laut: auf −24 begrenzt');
   assert.ok(g(0.5, { hz: 30 }) > g(0.5) + 6, 'K-Gewichtung: 30 Hz zählt weniger');
   // Seit 4.4 keine Peak-Bremse (Limiter im Device): eine laute Spitze ändert den Ausgleich kaum
   assert.ok(Math.abs(g(0.05, { spike: 0.9 }) - g(0.05)) < 0.5, 'ohne Peak-Bremse ' + g(0.05, { spike: 0.9 }));
@@ -387,7 +387,7 @@ function writeOld(node, id, starts = STARTS) {
     const g = MS(starts[i]) + k;
     return [g & 0x7fff, g >> 15];
   });
-  fs.writeFileSync(path.join(node.SNIP_DIR, `${id}.json`), JSON.stringify({ pads: PADS(V, starts), lens, durs: { [V]: DUR }, gain: Array(16).fill(0), gainv: 3 }));
+  fs.writeFileSync(path.join(node.SNIP_DIR, `${id}.json`), JSON.stringify({ pads: PADS(V, starts), lens, durs: { [V]: DUR }, gain: Array(16).fill(0), gainv: 4 }));
   return lens;
 }
 

@@ -54,7 +54,7 @@ Bänke anlegen und bearbeiten: Video suchen, Starts setzen, würfeln, Tempo korr
 _Avoid_: Laden (für das Anlegen einer Bank)
 
 **Ausgleich**:
-Die automatische Lautstärkekorrektur eines Pads in dB, gemessen beim Schneiden an den ersten 2 s seines Snippets (Ziel −20 LUFS, seit 4.8; vorher −14; −12 bis +24 dB). Gehört zum Snippet, wirkt nur mit „Norm“.
+Die automatische Lautstärkekorrektur eines Pads in dB, gemessen beim Schneiden an den ersten 2 s seines Snippets (Ziel −26 LUFS seit 4.9, vorher −20 bzw. −14; −24 bis +24 dB). Gehört zum Snippet, wirkt nur mit „Norm“.
 _Avoid_: Normalisierung (klingt nach Spitzenwert), Gain
 
 **Trim**:

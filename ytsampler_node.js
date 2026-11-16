@@ -1140,11 +1140,12 @@ function wavHeader(dataBytes) {
 // ---------- Lautheit pro Pad (Mix-Spec Nachtrag 14) ----------
 // K-Gewichtung nach ITU-R BS.1770 (Vorfilter + RLB-Hochpass), Koeffizienten für 44,1 kHz wie pyloudnorm.
 // Lautheit = −0,691 + 10·log10(Mittel der Kanäle), Blöcke 400 ms / 75 % Überlappung, Absolut-Gate −70, relatives Gate −10 LU.
-// Ausgleich = Ziel − Lautheit, −12 bis +24 dB. Stille oder leiser als NORM_FLOOR: 0 dB.
+// Ausgleich = Ziel − Lautheit, −24 bis +24 dB. Stille oder leiser als NORM_FLOOR: 0 dB.
 // Seit 4.4: anheben bis +24 dB ohne Peak-Bremse (die Spitzen fängt der Limiter im Device ab), relatives Gate wie LUFS.
 // GAIN_V in der Snippet-.json: ältere Messungen gelten als fehlend und werden einmal nachgemessen
-// Ziel −20 statt −14 (seit 4.8): 6 dB Reserve, damit sich überlagernde Pads nicht ständig im Limiter landen
-const NORM_TARGET = -20, NORM_BOOST = 24, NORM_CUT = 12, NORM_FLOOR = -60, NORM_MS = 2000, GAIN_V = 3;
+// Ziel −26 (seit 4.9, vorher −20 bzw. −14): 12 dB Reserve, damit sich überlagernde Pads nicht im Limiter landen.
+// Absenken bis 24 dB, sonst blieben laut gemasterte Tracks (um −8 LUFS) über dem Ziel
+const NORM_TARGET = -26, NORM_BOOST = 24, NORM_CUT = 24, NORM_FLOOR = -60, NORM_MS = 2000, GAIN_V = 4;
 const K_BIQUADS = (() => {
   const fs = SNIP_SR;
   const shelf = (() => {
